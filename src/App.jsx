@@ -67,8 +67,8 @@ const AuthenticatedApp = () => {
           <Route path="/book-in" element={<BookIn />} />
           <Route path="/jobs" element={<Jobs />} />
           <Route path="/job-cards/:id" element={<JobCardDetail />} />
-          <Route path="/invoice-queue" element={<RoleGuard allowedRoles={["admin", "accountant"]}><InvoiceQueue /></RoleGuard>} />
-          <Route path="/admin/users" element={<RoleGuard allowedRoles={["admin"]}><UserAdmin /></RoleGuard>} />
+          <Route path="/invoice-queue" element={<RoleGuard allowedRoles={["Admin", "Accountant"]}><InvoiceQueue /></RoleGuard>} />
+          <Route path="/admin/users" element={<RoleGuard allowedRoles={["Admin"]}><UserAdmin /></RoleGuard>} />
         </Route>
       </Route>
 

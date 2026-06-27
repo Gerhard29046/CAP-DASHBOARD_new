@@ -2,29 +2,7 @@ import React, { createContext, useState, useContext, useEffect } from "react";
 
 const AuthContext = createContext();
 
-const demoUsers = [
-  {
-    id: 1,
-    full_name: "Admin User",
-    email: "admin@connoisseurauto.co.za",
-    password: "admin123",
-    role: "Admin",
-  },
-  {
-    id: 2,
-    full_name: "Technician User",
-    email: "technician@connoisseurauto.co.za",
-    password: "tech123",
-    role: "Technician",
-  },
-  {
-    id: 3,
-    full_name: "Manager User",
-    email: "manager@connoisseurauto.co.za",
-    password: "manager123",
-    role: "Manager",
-  },
-];
+const API_URL = "http://127.0.0.1:8000/api";
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
@@ -34,48 +12,110 @@ export const AuthProvider = ({ children }) => {
   const [authChecked, setAuthChecked] = useState(false);
 
   useEffect(() => {
-    const savedUser = localStorage.getItem("demo_user");
+    checkUserAuth();
+  }, []);
 
-    if (savedUser) {
-      const parsedUser = JSON.parse(savedUser);
-      setUser(parsedUser);
-      setIsAuthenticated(true);
+  const checkUserAuth = async () => {
+    const token = localStorage.getItem("auth_token");
+
+    if (!token) {
+      setUser(null);
+      setIsAuthenticated(false);
+      setIsLoadingAuth(false);
+      setAuthChecked(true);
+      return;
     }
 
-    setIsLoadingAuth(false);
-    setAuthChecked(true);
-  }, []);
+    try {
+      const response = await fetch(`${API_URL}/me`, {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error("Session expired");
+      }
+
+      const data = await response.json();
+
+      setUser(data.user);
+      setIsAuthenticated(true);
+    } catch (error) {
+      localStorage.removeItem("auth_token");
+      setUser(null);
+      setIsAuthenticated(false);
+    } finally {
+      setIsLoadingAuth(false);
+      setAuthChecked(true);
+    }
+  };
 
   const login = async (email, password) => {
     setAuthError(null);
 
-    const foundUser = demoUsers.find(
-      (demoUser) =>
-        demoUser.email.toLowerCase() === email.toLowerCase() &&
-        demoUser.password === password
-    );
-
-    if (!foundUser) {
-      setAuthError({
-        type: "invalid_credentials",
-        message: "Invalid email or password",
+    try {
+      const response = await fetch(`${API_URL}/login`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({ email, password }),
       });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        setAuthError({
+          type: "invalid_credentials",
+          message:
+            data?.message ||
+            data?.errors?.email?.[0] ||
+            "Invalid email or password",
+        });
+
+        return false;
+      }
+
+      localStorage.setItem("auth_token", data.token);
+      setUser(data.user);
+      setIsAuthenticated(true);
+
+      return true;
+    } catch (error) {
+      setAuthError({
+        type: "server_error",
+        message: "Could not connect to the login server.",
+      });
+
       return false;
     }
-
-    const { password: _, ...safeUser } = foundUser;
-
-    localStorage.setItem("demo_user", JSON.stringify(safeUser));
-    setUser(safeUser);
-    setIsAuthenticated(true);
-
-    return true;
   };
 
-  const logout = () => {
-    localStorage.removeItem("demo_user");
+  const logout = async () => {
+    const token = localStorage.getItem("auth_token");
+
+    try {
+      if (token) {
+        await fetch(`${API_URL}/logout`, {
+          method: "POST",
+          headers: {
+            Accept: "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+        });
+      }
+    } catch (error) {
+      console.error("Logout failed:", error);
+    }
+
+    localStorage.removeItem("auth_token");
     setUser(null);
     setIsAuthenticated(false);
+    window.location.href = "/login";
   };
 
   const navigateToLogin = () => {
@@ -95,7 +135,7 @@ export const AuthProvider = ({ children }) => {
         login,
         logout,
         navigateToLogin,
-        checkUserAuth: async () => {},
+        checkUserAuth,
         checkAppState: async () => {},
       }}
     >

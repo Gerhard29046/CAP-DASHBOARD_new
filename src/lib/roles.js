@@ -1,19 +1,17 @@
-// Defines which roles can access which nav routes
-// Defines which roles can access which nav routes
 export const ROLE_LABELS = {
-  admin: "Admin",
-  technician: "Technician",
-  accountant: "Accountant",
+  Admin: "Administrator",
+  Technician: "Technician",
+  Accountant: "Accountant",
 };
 
 export const ROLE_COLORS = {
-  admin: "bg-red-500/15 text-red-400",
-  technician: "bg-blue-500/15 text-blue-400",
-  accountant: "bg-emerald-500/15 text-emerald-400",
+  Admin: "bg-red-500/15 text-red-400",
+  Technician: "bg-blue-500/15 text-blue-400",
+  Accountant: "bg-emerald-500/15 text-emerald-400",
 };
 
 export const ROLE_NAV_ACCESS = {
-  admin: [
+  Admin: [
     "/",
     "/clients",
     "/upcoming-services",
@@ -23,7 +21,7 @@ export const ROLE_NAV_ACCESS = {
     "/admin/users",
   ],
 
-  technician: [
+  Technician: [
     "/",
     "/clients",
     "/upcoming-services",
@@ -31,7 +29,7 @@ export const ROLE_NAV_ACCESS = {
     "/jobs",
   ],
 
-  accountant: [
+  Accountant: [
     "/",
     "/clients",
     "/jobs",
@@ -40,7 +38,7 @@ export const ROLE_NAV_ACCESS = {
 };
 
 export const ROLE_CAPABILITIES = {
-  admin: {
+  Admin: {
     canCreate: true,
     canEdit: true,
     canDelete: true,
@@ -50,7 +48,7 @@ export const ROLE_CAPABILITIES = {
     canInvoice: true,
   },
 
-  technician: {
+  Technician: {
     canCreate: true,
     canEdit: true,
     canDelete: false,
@@ -60,7 +58,7 @@ export const ROLE_CAPABILITIES = {
     canInvoice: false,
   },
 
-  accountant: {
+  Accountant: {
     canCreate: false,
     canEdit: true,
     canDelete: false,
