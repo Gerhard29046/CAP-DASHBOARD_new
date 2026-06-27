@@ -15,6 +15,7 @@ export const ROLE_NAV_ACCESS = {
     "/",
     "/clients",
     "/upcoming-services",
+    "/service-records",   // <-- ADD THIS
     "/book-in",
     "/jobs",
     "/invoice-queue",
@@ -25,6 +26,7 @@ export const ROLE_NAV_ACCESS = {
     "/",
     "/clients",
     "/upcoming-services",
+    "/service-records",   // <-- ADD THIS
     "/book-in",
     "/jobs",
   ],

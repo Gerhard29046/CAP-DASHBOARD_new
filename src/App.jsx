@@ -22,12 +22,14 @@ import ClientDetail from '@/pages/ClientDetail';
 import AddClient from '@/pages/AddClient';
 import MachineDetail from '@/pages/MachineDetail';
 import UpcomingServices from '@/pages/UpcomingServices';
+import ServiceRecords from "@/pages/ServiceRecords";
 import BookIn from '@/pages/BookIn';
 import JobCardDetail from '@/pages/JobCardDetail';
 import UserAdmin from '@/pages/UserAdmin';
 import InvoiceQueue from '@/pages/InvoiceQueue';
 import RoleGuard from '@/components/RoleGuard';
 import Jobs from '@/pages/Jobs';
+
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
@@ -64,6 +66,7 @@ const AuthenticatedApp = () => {
           <Route path="/clients/:id" element={<ClientDetail />} />
           <Route path="/machines/:id" element={<MachineDetail />} />
           <Route path="/upcoming-services" element={<UpcomingServices />} />
+          <Route path="/service-records" element={<ServiceRecords />} />
           <Route path="/book-in" element={<BookIn />} />
           <Route path="/jobs" element={<Jobs />} />
           <Route path="/job-cards/:id" element={<JobCardDetail />} />

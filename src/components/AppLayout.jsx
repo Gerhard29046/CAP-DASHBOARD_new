@@ -10,6 +10,7 @@ import {
   Wind,
   User2,
   ClipboardList,
+  ClipboardCheck,
   ShieldCheck,
   Receipt,
 } from "lucide-react";
@@ -20,6 +21,7 @@ const ALL_NAV_ITEMS = [
   { label: "Dashboard", path: "/", icon: LayoutDashboard },
   { label: "Clients", path: "/clients", icon: Users },
   { label: "Upcoming Services", path: "/upcoming-services", icon: CalendarClock },
+  { label: "Service Records", path: "/service-records", icon: ClipboardCheck },
   { label: "Book In", path: "/book-in", icon: ClipboardList },
   { label: "Jobs", path: "/jobs", icon: ClipboardList },
   { label: "Invoice Queue", path: "/invoice-queue", icon: Receipt },

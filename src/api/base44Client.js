@@ -73,12 +73,14 @@ function makeEntity(entityName) {
       }),
 
     filter: async (conditions = {}) => {
-      const allItems = await request(`/${endpoint}`);
+  const allItems = await request(`/${endpoint}`);
 
-      return allItems.filter((item) =>
-        Object.entries(conditions).every(([key, value]) => item[key] === value)
-      );
-    },
+  return allItems.filter((item) =>
+    Object.entries(conditions).every(([key, value]) => {
+      return String(item[key]) === String(value);
+    })
+  );
+},
   };
 }
 

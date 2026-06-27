@@ -85,12 +85,17 @@ export default function MachineDetail() {
   };
 
   const handleEditService = async (form) => {
-    setSaving(true);
-    await base44.entities.ServiceRecord.update(editService.id, form);
-    setSaving(false);
-    setEditService(null);
-    load();
-  };
+  setSaving(true);
+
+  await base44.entities.ServiceRecord.update(editService.id, {
+    ...form,
+    machine_id: Number(id),
+  });
+
+  setSaving(false);
+  setEditService(null);
+  load();
+};
 
   const handleDeleteService = async (svcId) => {
     await base44.entities.ServiceRecord.delete(svcId);
@@ -267,10 +272,10 @@ export default function MachineDetail() {
                   </div>
                   <div>
                     <p className="text-sm font-medium text-foreground">{moment(s.service_date).format("MMM D, YYYY")}</p>
-                    {s.technician && (
+                    {s.technician_name && (
                       <div className="flex items-center gap-1 mt-0.5">
                         <User2 className="w-3 h-3 text-muted-foreground" />
-                        <p className="text-xs text-muted-foreground">{s.technician}</p>
+                        <p className="text-xs text-muted-foreground">{s.technician_name}</p>
                       </div>
                     )}
                   </div>
@@ -298,7 +303,7 @@ export default function MachineDetail() {
                   </AlertDialog>
                 </div>
               </div>
-              {s.service_notes && <p className="text-sm text-foreground mb-2">{s.service_notes}</p>}
+              {s.work_performed && <p className="text-sm text-foreground mb-2">{s.work_performed}</p>}
               {s.recommendations && (
                 <div className="flex items-start gap-1.5 mb-2">
                   <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
