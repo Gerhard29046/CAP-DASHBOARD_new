@@ -1,0 +1,28 @@
+{
+  "name": "Site",
+  "type": "object",
+  "properties": {
+    "client_id": {
+      "type": "string",
+      "title": "Client",
+      "relationType": "one-to-many",
+      "relationEntity": "Client"
+    },
+    "site_name": {
+      "type": "string",
+      "title": "Site Name"
+    },
+    "address": {
+      "type": "string",
+      "title": "Address"
+    },
+    "notes": {
+      "type": "string",
+      "title": "Notes"
+    }
+  },
+  "required": [
+    "client_id",
+    "site_name"
+  ]
+}

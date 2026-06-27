@@ -1,0 +1,117 @@
+{
+  "name": "JobCard",
+  "type": "object",
+  "properties": {
+    "machine_id": {
+      "type": "string",
+      "title": "Machine",
+      "relationType": "one-to-many",
+      "relationEntity": "Machine"
+    },
+    "job_number": {
+      "type": "string",
+      "title": "Job Number"
+    },
+    "date_booked_in": {
+      "type": "string",
+      "format": "date",
+      "title": "Date Booked In"
+    },
+    "machine_type": {
+      "type": "string",
+      "title": "Machine Type"
+    },
+    "problem_description": {
+      "type": "string",
+      "title": "Problem Description"
+    },
+    "accessories_received": {
+      "type": "string",
+      "title": "Accessories / Items Received With Machine"
+    },
+    "condition_on_arrival": {
+      "type": "string",
+      "title": "Condition on Arrival",
+      "enum": [
+        "Good",
+        "Fair",
+        "Poor",
+        "Damaged"
+      ]
+    },
+    "condition_notes": {
+      "type": "string",
+      "title": "Condition Notes"
+    },
+    "arrival_photos": {
+      "type": "array",
+      "title": "Arrival Photos",
+      "items": {
+        "type": "string"
+      }
+    },
+    "status": {
+      "type": "string",
+      "title": "Status",
+      "enum": [
+        "Open",
+        "In Progress",
+        "Completed",
+        "Collected"
+      ],
+      "default": "Open"
+    },
+    "technician": {
+      "type": "string",
+      "title": "Assigned Technician"
+    },
+    "date_completed": {
+      "type": "string",
+      "format": "date",
+      "title": "Date Completed"
+    }
+  },
+  "required": [
+    "machine_id",
+    "date_booked_in"
+  ],
+  "rls": {
+    "create": {},
+    "read": {
+      "$or": [
+        {
+          "created_by_id": "{{user.id}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "update": {
+      "$or": [
+        {
+          "created_by_id": "{{user.id}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "delete": {
+      "$or": [
+        {
+          "created_by_id": "{{user.id}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    }
+  }
+}

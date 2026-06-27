@@ -1,0 +1,38 @@
+{
+  "name": "JobCardLine",
+  "type": "object",
+  "properties": {
+    "job_card_id": {
+      "type": "string",
+      "title": "Job Card",
+      "relationType": "one-to-many",
+      "relationEntity": "JobCard"
+    },
+    "line_type": {
+      "type": "string",
+      "title": "Type",
+      "enum": [
+        "Labour",
+        "Part / Product",
+        "Diagnosis",
+        "Other"
+      ]
+    },
+    "description": {
+      "type": "string",
+      "title": "Description"
+    },
+    "quantity": {
+      "type": "number",
+      "title": "Quantity"
+    },
+    "unit_price": {
+      "type": "number",
+      "title": "Unit Price"
+    }
+  },
+  "required": [
+    "job_card_id",
+    "description"
+  ]
+}

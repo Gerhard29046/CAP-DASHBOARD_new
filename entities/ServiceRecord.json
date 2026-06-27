@@ -1,0 +1,45 @@
+{
+  "name": "ServiceRecord",
+  "type": "object",
+  "properties": {
+    "machine_id": {
+      "type": "string",
+      "title": "Machine",
+      "relationType": "one-to-many",
+      "relationEntity": "Machine"
+    },
+    "service_date": {
+      "type": "string",
+      "format": "date",
+      "title": "Service Date"
+    },
+    "technician": {
+      "type": "string",
+      "title": "Technician"
+    },
+    "service_notes": {
+      "type": "string",
+      "title": "Service Notes"
+    },
+    "recommendations": {
+      "type": "string",
+      "title": "Recommendations"
+    },
+    "next_service_date": {
+      "type": "string",
+      "format": "date",
+      "title": "Next Service Date"
+    },
+    "photos": {
+      "type": "array",
+      "title": "Service Photos",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "machine_id",
+    "service_date"
+  ]
+}
