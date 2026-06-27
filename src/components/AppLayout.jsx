@@ -153,8 +153,8 @@ export default function AppLayout() {
         </aside>
 
         <main className="flex-1 min-h-screen">
-          <div className="max-w-5xl mx-auto px-4 py-6 md:px-8 md:py-8">
-            <Outlet />
+      <div className="w-full px-4 py-6 md:px-8 md:py-8">            
+  <Outlet />
           </div>
         </main>
       </div>
