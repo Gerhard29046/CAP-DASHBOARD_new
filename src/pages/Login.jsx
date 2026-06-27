@@ -169,8 +169,8 @@ export default function Login() {
                 technician@connoisseurauto.co.za / tech123
               </p>
               <p>
-                <strong className="text-[#006b3c]">Manager:</strong>{" "}
-                manager@connoisseurauto.co.za / manager123
+                  <strong className="text-[#006b3c]">Accountant:</strong>{" "}
+                  accounts@connoisseurauto.co.za / acc123
               </p>
             </div>
           </section>

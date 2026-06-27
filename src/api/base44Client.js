@@ -1,4 +1,4 @@
-const API_BASE_URL = "http://127.0.0.1:8000/api";
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
 const endpointMap = {
   Client: "clients",
@@ -7,17 +7,33 @@ const endpointMap = {
   JobCard: "job-cards",
   JobCardLine: "job-card-lines",
   Site: "sites",
+  User: "users",
 };
+
+function getAuthHeaders() {
+  const token = localStorage.getItem("auth_token");
+
+  return {
+    "Content-Type": "application/json",
+    Accept: "application/json",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+}
 
 async function request(path, options = {}) {
   const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...options,
     headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json",
+      ...getAuthHeaders(),
       ...(options.headers || {}),
     },
-    ...options,
   });
+
+  if (response.status === 401) {
+    localStorage.removeItem("auth_token");
+    window.location.href = "/login";
+    throw new Error("Unauthenticated");
+  }
 
   if (!response.ok) {
     const errorText = await response.text();
@@ -47,7 +63,7 @@ function makeEntity(entityName) {
 
     update: async (id, data) =>
       request(`/${endpoint}/${id}`, {
-        method: "PUT",
+        method: "PATCH",
         body: JSON.stringify(data),
       }),
 
@@ -74,17 +90,18 @@ export const base44 = {
     JobCard: makeEntity("JobCard"),
     JobCardLine: makeEntity("JobCardLine"),
     Site: makeEntity("Site"),
+    User: makeEntity("User"),
   },
 
   auth: {
-    me: async () => ({
-      id: "local-user",
-      email: "local@test.com",
-      full_name: "Local User",
-      role: "admin",
-    }),
+    me: async () => request("/me"),
 
-    login: async () => true,
-    logout: async () => true,
+    logout: async () => {
+      try {
+        await request("/logout", { method: "POST" });
+      } catch {}
+      localStorage.removeItem("auth_token");
+      window.location.href = "/login";
+    },
   },
 };
