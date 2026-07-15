@@ -17,10 +17,10 @@ export default function LogServiceModal({ onClose, onDone }) {
   const [selectedMachine, setSelectedMachine] = useState(null);
   const [form, setForm] = useState({
     service_date: new Date().toISOString().split("T")[0],
-    technician: "",
-    service_notes: "",
-    recommendations: "",
-    next_service_date: "",
+    technician_name: "",
+    work_performed: "",
+    notes: "",
+    next_service_due: "",
   });
   const [photos, setPhotos] = useState([]);
   const [uploading, setUploading] = useState(false);
@@ -64,7 +64,6 @@ export default function LogServiceModal({ onClose, onDone }) {
     await apiClient.entities.ServiceRecord.create({
       machine_id: selectedMachine.id,
       ...form,
-      photos,
     });
     setSaving(false);
     onDone?.();
@@ -176,22 +175,22 @@ export default function LogServiceModal({ onClose, onDone }) {
 
               <div>
                 <Label>Technician</Label>
-                <Input value={form.technician} onChange={e => setField("technician", e.target.value)} placeholder="Technician name" className="mt-1 h-11 rounded-xl" />
+                <Input value={form.technician_name} onChange={e => setField("technician_name", e.target.value)} placeholder="Technician name" className="mt-1 h-11 rounded-xl" />
               </div>
 
               <div>
                 <Label>Service Notes</Label>
-                <Textarea value={form.service_notes} onChange={e => setField("service_notes", e.target.value)} placeholder="Describe the work performed…" className="mt-1 rounded-xl" rows={3} />
+                <Textarea value={form.work_performed} onChange={e => setField("work_performed", e.target.value)} placeholder="Describe the work performed…" className="mt-1 rounded-xl" rows={3} />
               </div>
 
               <div>
                 <Label>Recommendations</Label>
-                <Textarea value={form.recommendations} onChange={e => setField("recommendations", e.target.value)} placeholder="Any recommendations for the client…" className="mt-1 rounded-xl" rows={2} />
+                <Textarea value={form.notes} onChange={e => setField("notes", e.target.value)} placeholder="Any recommendations for the client…" className="mt-1 rounded-xl" rows={2} />
               </div>
 
               <div>
                 <Label>Next Service Date</Label>
-                <Input type="date" value={form.next_service_date} onChange={e => setField("next_service_date", e.target.value)} className="mt-1 h-11 rounded-xl" />
+                <Input type="date" value={form.next_service_due} onChange={e => setField("next_service_due", e.target.value)} className="mt-1 h-11 rounded-xl" />
               </div>
 
               {/* Photos */}

@@ -16,20 +16,27 @@ export default function Dashboard() {
 
   const loadData = async () => {
     try {
-      const [clients, machines, services, jobCards] = await Promise.all([
+      const results = await Promise.allSettled([
         apiClient.entities.Client.list(),
         apiClient.entities.Machine.list(),
         apiClient.entities.ServiceRecord.list("-service_date", 100),
         apiClient.entities.JobCard.list(),
       ]);
-      const activeJobs = jobCards.filter(j => j.status === "Open" || j.status === "In Progress").length;
+      const labels = ["clients", "machines", "service records", "job cards"];
+      results.forEach((result, index) => {
+        if (result.status === "rejected") console.error(`Dashboard failed to load ${labels[index]}:`, result.reason);
+      });
+      const [clients, machines, services, jobCards] = results.map(result =>
+        result.status === "fulfilled" && Array.isArray(result.value) ? result.value : []
+      );
+      const activeJobs = jobCards.filter(j => ["Open", "Booked In", "In Progress"].includes(j.status)).length;
       setStats({ clients: clients.length, machines: machines.length, services: services.length, activeJobs });
-      setRecentClients(clients.slice(0, 5));
+      setRecentClients([...clients].sort((a, b) => (b.created_at || "").localeCompare(a.created_at || "")).slice(0, 5));
 
       const today = moment().format("YYYY-MM-DD");
       const next30 = moment().add(30, "days").format("YYYY-MM-DD");
-      const upcomingList = services.filter(s => s.next_service_date && s.next_service_date >= today && s.next_service_date <= next30);
-      upcomingList.sort((a, b) => a.next_service_date.localeCompare(b.next_service_date));
+      const upcomingList = services.filter(s => s.next_service_due && s.next_service_due >= today && s.next_service_due <= next30);
+      upcomingList.sort((a, b) => a.next_service_due.localeCompare(b.next_service_due));
 
       const machineMap = {};
       machines.forEach(m => { machineMap[m.id] = m; });
@@ -42,8 +49,8 @@ export default function Dashboard() {
         client: machineMap[s.machine_id] ? clientMap[machineMap[s.machine_id].client_id] : null,
       }));
       setUpcoming(enriched);
-    } catch (e) { /* empty state */ }
-    setLoading(false);
+    } catch (e) { console.error("Dashboard data load failed:", e); }
+    finally { setLoading(false); }
   };
 
   useEffect(() => { loadData(); }, []);
@@ -106,7 +113,7 @@ export default function Dashboard() {
                     {s.machine ? `${s.machine.brand} ${s.machine.model}` : "Machine"}
                   </p>
                   <p className="text-xs text-muted-foreground truncate">
-                    {s.client?.company_name || "—"} · {moment(s.next_service_date).format("MMM D, YYYY")}
+                    {s.client?.company_name || "—"} · {moment(s.next_service_due).format("MMM D, YYYY")}
                   </p>
                 </div>
                 <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-foreground shrink-0" />

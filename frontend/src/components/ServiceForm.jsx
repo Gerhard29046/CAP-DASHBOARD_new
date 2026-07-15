@@ -10,8 +10,8 @@ export default function ServiceForm({ initial, onSubmit, onCancel, loading }) {
     technician_name: initial?.technician_name || "",
     work_performed: initial?.work_performed || "",
     findings: initial?.findings || "",
-    recommendations: initial?.recommendations || "",
-    next_service_date: initial?.next_service_date || "",
+    notes: initial?.notes || "",
+    next_service_due: initial?.next_service_due || "",
   });
 
   const set = (key, value) => {
@@ -74,8 +74,8 @@ export default function ServiceForm({ initial, onSubmit, onCancel, loading }) {
       <div>
         <Label>Recommendations</Label>
         <Textarea
-          value={form.recommendations}
-          onChange={(e) => set("recommendations", e.target.value)}
+          value={form.notes}
+          onChange={(e) => set("notes", e.target.value)}
           className="mt-1"
           rows={2}
           placeholder="Recommended repairs, parts, or follow-up actions..."
@@ -86,8 +86,8 @@ export default function ServiceForm({ initial, onSubmit, onCancel, loading }) {
         <Label>Next Service Date</Label>
         <Input
           type="date"
-          value={form.next_service_date}
-          onChange={(e) => set("next_service_date", e.target.value)}
+          value={form.next_service_due}
+          onChange={(e) => set("next_service_due", e.target.value)}
           className="mt-1"
         />
       </div>

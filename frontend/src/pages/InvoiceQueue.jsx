@@ -46,11 +46,11 @@ export default function InvoiceQueue() {
         id:             jc.id,
         status:         jc.status,
         job_number:     jc.job_number || `JC-${jc.id.slice(-6).toUpperCase()}`,
-        date_booked_in: jc.date_booked_in,
+        date_booked_in: jc.date_received,
         date_completed: jc.date_completed,
-        technician:     jc.technician,
+        technician:     jc.technician_name,
         machine_type:   jc.machine_type,
-        problem_description: jc.problem_description,
+        problem_description: jc.fault_description,
 
         // Client / Customer (maps to Sage Customer)
         customer: {

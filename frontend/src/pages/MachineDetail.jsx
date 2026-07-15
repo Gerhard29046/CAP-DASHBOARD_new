@@ -56,7 +56,7 @@ export default function MachineDetail() {
     setClient(c);
     svc.sort((a, b) => (b.service_date || "").localeCompare(a.service_date || ""));
     setServices(svc);
-    jcs.sort((a, b) => (b.date_booked_in || "").localeCompare(a.date_booked_in || ""));
+    jcs.sort((a, b) => (b.date_received || "").localeCompare(a.date_received || ""));
     setJobCards(jcs);
     setLoading(false);
   };
@@ -234,7 +234,7 @@ export default function MachineDetail() {
               </div>
               <div className="flex-1 min-w-0">
                 <p className="font-medium text-foreground text-sm">{jc.job_number || `#${jc.id.slice(-6).toUpperCase()}`}</p>
-                <p className="text-xs text-muted-foreground">{moment(jc.date_booked_in).format("DD MMM YYYY")} · {jc.status}</p>
+                <p className="text-xs text-muted-foreground">{moment(jc.date_received).format("DD MMM YYYY")} · {jc.status}</p>
               </div>
               <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-primary shrink-0" />
             </Link>
@@ -304,10 +304,10 @@ export default function MachineDetail() {
                 </div>
               </div>
               {s.work_performed && <p className="text-sm text-foreground mb-2">{s.work_performed}</p>}
-              {s.recommendations && (
+              {s.notes && (
                 <div className="flex items-start gap-1.5 mb-2">
                   <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
-                  <p className="text-xs text-muted-foreground italic">{s.recommendations}</p>
+                  <p className="text-xs text-muted-foreground italic">{s.notes}</p>
                 </div>
               )}
               {s.photos && s.photos.length > 0 && (
@@ -319,11 +319,11 @@ export default function MachineDetail() {
                   ))}
                 </div>
               )}
-              {s.next_service_date && (
+              {s.next_service_due && (
                 <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-border">
                   <Clock className="w-3.5 h-3.5 text-primary" />
                   <p className="text-xs text-primary font-medium">
-                    Next service: {moment(s.next_service_date).format("MMM D, YYYY")}
+                    Next service: {moment(s.next_service_due).format("MMM D, YYYY")}
                   </p>
                 </div>
               )}

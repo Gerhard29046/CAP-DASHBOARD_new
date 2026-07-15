@@ -55,14 +55,28 @@ async function request(path, options = {}) {
     return null;
   }
 
-  return response.json();
+  const body = await response.json();
+  return Array.isArray(body?.data) ? body.data : body;
 }
 
 function makeEntity(entityName) {
   const endpoint = endpointMap[entityName];
 
+  const applyListOptions = (items, sort, limit) => {
+    const result = [...items];
+    if (sort) {
+      const descending = sort.startsWith("-");
+      const field = descending ? sort.slice(1) : sort;
+      result.sort((a, b) => String(a[field] ?? "").localeCompare(String(b[field] ?? "")) * (descending ? -1 : 1));
+    }
+    return limit ? result.slice(0, limit) : result;
+  };
+
   return {
-    list: async () => request(`/${endpoint}`),
+    list: async (sort, limit) => {
+      const items = await request(`/${endpoint}`);
+      return applyListOptions(items, sort, limit);
+    },
 
     get: async (id) => request(`/${endpoint}/${id}`),
 
@@ -84,15 +98,12 @@ function makeEntity(entityName) {
         method: "DELETE",
       }),
 
-    filter: async (conditions = {}) => {
-  const allItems = await request(`/${endpoint}`);
-
-  return allItems.filter((item) =>
-    Object.entries(conditions).every(([key, value]) => {
-      return String(item[key]) === String(value);
-    })
-  );
-},
+    filter: async (conditions = {}, sort, limit) => {
+      const params = new URLSearchParams();
+      Object.entries(conditions).forEach(([key, value]) => params.set(key, String(value)));
+      const items = await request(`/${endpoint}?${params.toString()}`);
+      return applyListOptions(items, sort, limit);
+    },
   };
 }
 

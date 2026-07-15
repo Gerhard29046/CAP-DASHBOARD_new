@@ -1,6 +1,10 @@
 <?php
 
 use App\Http\Controllers\ClientController;
+use App\Http\Controllers\JobCardController;
+use App\Http\Controllers\JobCardLineController;
+use App\Http\Controllers\MachineController;
+use App\Http\Controllers\ServiceRecordController;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 
@@ -24,10 +28,9 @@ Route::get('/health', function () {
 });
 
 Route::apiResource('clients', ClientController::class);
-
-Route::get('/machines', function () {
-    return DB::table('machines')
-        ->orderBy('brand')
-        ->orderBy('model')
-        ->get();
-});
+Route::apiResources([
+    'machines' => MachineController::class,
+    'service-records' => ServiceRecordController::class,
+    'job-cards' => JobCardController::class,
+    'job-card-lines' => JobCardLineController::class,
+]);

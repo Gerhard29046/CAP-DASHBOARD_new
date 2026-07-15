@@ -52,7 +52,7 @@ export default function BookIn() {
           const c = await apiClient.entities.Client.get(m.client_id);
           setClient(c);
         }
-        const jobs = await apiClient.entities.JobCard.filter({ machine_id: m.id }, "-date_booked_in");
+        const jobs = await apiClient.entities.JobCard.filter({ machine_id: m.id }, "-date_received");
         setPreviousJobs(jobs);
       });
     } else {
@@ -70,7 +70,7 @@ export default function BookIn() {
   const handleSelectMachine = async (m) => {
     setMachine(m);
     setSelectedMachineId(m.id);
-    const jobs = await apiClient.entities.JobCard.filter({ machine_id: m.id }, "-date_booked_in");
+    const jobs = await apiClient.entities.JobCard.filter({ machine_id: m.id }, "-date_received");
     setPreviousJobs(jobs);
   };
 
@@ -299,9 +299,9 @@ export default function BookIn() {
                   </div>
                   <p className="text-xs text-muted-foreground truncate">
                     <Clock className="w-3 h-3 inline mr-1" />
-                    {moment(job.date_booked_in).format("DD MMM YYYY")}
-                    {job.technician ? ` · ${job.technician}` : ""}
-                    {job.problem_description ? ` · ${job.problem_description.slice(0, 50)}${job.problem_description.length > 50 ? "…" : ""}` : ""}
+                    {moment(job.date_received).format("DD MMM YYYY")}
+                    {job.technician_name ? ` · ${job.technician_name}` : ""}
+                    {job.fault_description ? ` · ${job.fault_description.slice(0, 50)}${job.fault_description.length > 50 ? "…" : ""}` : ""}
                   </p>
                 </div>
                 <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-foreground shrink-0 ml-2" />

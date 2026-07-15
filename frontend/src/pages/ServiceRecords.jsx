@@ -71,7 +71,7 @@ export default function ServiceRecords() {
         return date.getMonth() === thisMonth && date.getFullYear() === thisYear;
       }).length,
       withPhotos: records.filter((record) => getPhotos(record).length > 0).length,
-      nextDue: records.filter((record) => record.next_service_date).length,
+      nextDue: records.filter((record) => record.next_service_due).length,
     };
   }, [records]);
 
@@ -90,7 +90,7 @@ export default function ServiceRecords() {
         record.technician_name,
         record.work_performed,
         record.findings,
-        record.recommendations,
+        record.notes,
       ]
         .filter(Boolean)
         .join(" ")
@@ -320,11 +320,11 @@ function ServiceDetailPanel({ record, onPhotoClick }) {
         <DetailSection icon={ClipboardCheck} title="Service Details">
           <InfoRow label="Technician" value={record.technician_name} />
           <InfoRow label="Service Date" value={formatDate(record.service_date)} />
-          <InfoRow label="Next Service Due" value={formatDate(record.next_service_date)} />
+          <InfoRow label="Next Service Due" value={formatDate(record.next_service_due)} />
 
           <TextBlock title="Work Performed" value={record.work_performed} />
           <TextBlock title="Findings" value={record.findings} />
-          <TextBlock title="Recommendations" value={record.recommendations} />
+          <TextBlock title="Recommendations" value={record.notes} />
         </DetailSection>
 
         <DetailSection icon={Camera} title="Photos">

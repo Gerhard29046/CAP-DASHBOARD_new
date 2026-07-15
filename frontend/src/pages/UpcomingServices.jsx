@@ -12,7 +12,7 @@ export default function UpcomingServices() {
   useEffect(() => {
     async function load() {
       const [services, machines, clients] = await Promise.all([
-        apiClient.entities.ServiceRecord.list("-next_service_date", 200),
+        apiClient.entities.ServiceRecord.list("next_service_due", 200),
         apiClient.entities.Machine.list(),
         apiClient.entities.Client.list(),
       ]);
@@ -25,8 +25,8 @@ export default function UpcomingServices() {
       const today = moment().format("YYYY-MM-DD");
 
       const upcoming = services
-        .filter(s => s.next_service_date && s.next_service_date >= today)
-        .sort((a, b) => a.next_service_date.localeCompare(b.next_service_date))
+        .filter(s => s.next_service_due && s.next_service_due >= today)
+        .sort((a, b) => a.next_service_due.localeCompare(b.next_service_due))
         .map(s => {
           const machine = machineMap[s.machine_id];
           const client = machine ? clientMap[machine.client_id] : null;
@@ -34,8 +34,8 @@ export default function UpcomingServices() {
         });
 
       const overdue = services
-        .filter(s => s.next_service_date && s.next_service_date < today)
-        .sort((a, b) => a.next_service_date.localeCompare(b.next_service_date))
+        .filter(s => s.next_service_due && s.next_service_due < today)
+        .sort((a, b) => a.next_service_due.localeCompare(b.next_service_due))
         .map(s => {
           const machine = machineMap[s.machine_id];
           const client = machine ? clientMap[machine.client_id] : null;
@@ -63,7 +63,7 @@ ${item.machine?.brand || ""} ${item.machine?.model || ""}
 Serial Number: ${item.machine?.serial_number || "N/A"}
 
 Scheduled Service Date:
-${moment(item.next_service_date).format("MMMM D, YYYY")}
+${moment(item.next_service_due).format("MMMM D, YYYY")}
 
 Regular servicing helps ensure your equipment continues to operate accurately, reliably and efficiently while reducing the risk of unexpected breakdowns.
 
@@ -103,7 +103,7 @@ Automotive Air Conditioning Equipment Specialists`
       ) : (
         <div className="space-y-3 pb-6">
           {items.map(s => {
-            const daysUntil = moment(s.next_service_date).diff(moment(), "days");
+            const daysUntil = moment(s.next_service_due).diff(moment(), "days");
             const isOverdue = s.overdue;
             const isSoon = !isOverdue && daysUntil <= 7;
 
@@ -131,7 +131,7 @@ Automotive Air Conditioning Equipment Specialists`
                         {s.client?.company_name || "—"}
                       </p>
                       <p className="text-xs text-primary mt-1">
-                        {moment(s.next_service_date).format("MMM D, YYYY")}
+                        {moment(s.next_service_due).format("MMM D, YYYY")}
                         {!isOverdue && ` · in ${daysUntil} day${daysUntil !== 1 ? "s" : ""}`}
                         {isOverdue && ` · ${Math.abs(daysUntil)} day${Math.abs(daysUntil) !== 1 ? "s" : ""} overdue`}
                       </p>
