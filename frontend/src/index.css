@@ -89,3 +89,13 @@
     @apply bg-background text-foreground font-body;
   }
 }
+
+.fc { --fc-border-color: hsl(var(--border)); --fc-page-bg-color: transparent; --fc-neutral-bg-color: hsl(var(--muted)); --fc-button-bg-color: hsl(var(--primary)); --fc-button-border-color: hsl(var(--primary)); --fc-button-hover-bg-color: hsl(var(--primary) / .85); color: hsl(var(--foreground)); }
+.fc .fc-toolbar { flex-wrap: wrap; gap: .75rem; }
+.fc .fc-col-header-cell-cushion, .fc .fc-daygrid-day-number { color: hsl(var(--foreground)); }
+.fc .fc-day-today { background: hsl(var(--primary) / .08) !important; }
+.fc-event.calendar-service { background: hsl(var(--primary)); border-color: hsl(var(--primary)); }
+.fc-event.calendar-google { background: hsl(var(--accent)); border-color: hsl(var(--accent)); color: hsl(var(--accent-foreground)); }
+.fc-event.calendar-overdue { background: hsl(var(--destructive)); border-color: hsl(var(--destructive)); }
+.fc-event.calendar-completed { background: hsl(var(--muted)); border-color: hsl(var(--border)); color: hsl(var(--muted-foreground)); }
+@media (max-width: 640px) { .fc .fc-toolbar { align-items: flex-start; flex-direction: column; } .fc .fc-toolbar-chunk { display: flex; flex-wrap: wrap; } }

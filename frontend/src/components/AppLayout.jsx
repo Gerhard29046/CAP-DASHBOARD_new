@@ -14,6 +14,8 @@ import {
   ShieldCheck,
   Receipt,
   Library,
+  CalendarDays,
+  Settings,
 } from "lucide-react";
 import { useAuth } from "@/lib/AuthContext";
 
@@ -21,12 +23,14 @@ const ALL_NAV_ITEMS = [
   { label: "Dashboard", path: "/", icon: LayoutDashboard, permission: "dashboard.view" },
   { label: "Clients", path: "/clients", icon: Users, permission: "clients.view" },
   { label: "Upcoming Services", path: "/upcoming-services", icon: CalendarClock, permission: "upcoming_services.view" },
+  { label: "Calendar", path: "/calendar", icon: CalendarDays, permission: "calendar.view" },
   { label: "Service Records", path: "/service-records", icon: ClipboardCheck, permission: "services.view" },
   { label: "Book In", path: "/book-in", icon: ClipboardList, permission: "job_cards.create" },
   { label: "Jobs", path: "/jobs", icon: ClipboardList, permission: "job_cards.view" },
   { label: "Machine Knowledge Base", path: "/knowledge-base", icon: Library, permission: "knowledge_base.view" },
   { label: "Invoice Queue", path: "/invoice-queue", icon: Receipt, permission: "invoices.queue.view" },
   { label: "User Management", path: "/admin/users", icon: ShieldCheck, permission: "users.view" },
+  { label: "System Settings", path: "/settings", icon: Settings, permission: "calendar.google.connect" },
 ];
 
 export default function AppLayout() {

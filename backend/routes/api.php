@@ -12,6 +12,8 @@ use App\Http\Controllers\KnowledgeMachineController;
 use App\Http\Controllers\KnowledgeNoteController;
 use App\Http\Controllers\KnowledgeServiceCodeController;
 use App\Http\Controllers\PermissionController;
+use App\Http\Controllers\CalendarController;
+use App\Http\Controllers\GoogleCalendarController;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 
@@ -35,10 +37,17 @@ Route::get('/health', function () {
 });
 
 Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:10,1');
+Route::get('/google-calendar/callback',[GoogleCalendarController::class,'callback']);
 
 Route::middleware('auth:sanctum')->group(function () {
 Route::post('/logout', [AuthController::class, 'logout']);
 Route::get('/me', [AuthController::class, 'me']);
+Route::get('calendar/events',[CalendarController::class,'events'])->middleware('permission:calendar.view');
+Route::get('google-calendar/status',[GoogleCalendarController::class,'status'])->middleware('permission:calendar.google.view');
+Route::get('google-calendar/connect',[GoogleCalendarController::class,'connect'])->middleware('permission:calendar.google.connect');
+Route::get('google-calendar/calendars',[GoogleCalendarController::class,'calendars'])->middleware('permission:calendar.google.view');
+Route::put('google-calendar/calendars',[GoogleCalendarController::class,'select'])->middleware('permission:calendar.google.calendars.select');
+Route::delete('google-calendar/disconnect',[GoogleCalendarController::class,'disconnect'])->middleware('permission:calendar.google.disconnect');
 Route::apiResource('clients',ClientController::class)->middlewareFor(['index','show'],'permission:clients.view')->middlewareFor('store','permission:clients.create')->middlewareFor('update','permission:clients.edit')->middlewareFor('destroy','permission:clients.delete');
 Route::apiResource('machines',MachineController::class)->middlewareFor(['index','show'],'permission:machines.view')->middlewareFor('store','permission:machines.create')->middlewareFor('update','permission:machines.edit')->middlewareFor('destroy','permission:machines.delete');
 Route::apiResource('service-records',ServiceRecordController::class)->middlewareFor(['index','show'],'permission:services.view')->middlewareFor('store','permission:services.create')->middlewareFor('update','permission:services.edit')->middlewareFor('destroy','permission:services.delete');

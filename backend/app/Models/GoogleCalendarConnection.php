@@ -1,0 +1,3 @@
+<?php
+namespace App\Models;use Illuminate\Database\Eloquent\Model;use Illuminate\Database\Eloquent\Relations\BelongsTo;
+class GoogleCalendarConnection extends Model{protected $guarded=[];protected $hidden=['access_token','refresh_token'];protected function casts():array{return['access_token'=>'encrypted:array','refresh_token'=>'encrypted','token_expires_at'=>'datetime','scopes'=>'array','selected_calendar_ids'=>'array','is_active'=>'boolean','connected_at'=>'datetime','last_refreshed_at'=>'datetime'];}public function connectedBy():BelongsTo{return $this->belongsTo(User::class,'connected_by_user_id');}}
