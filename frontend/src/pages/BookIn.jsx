@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { base44 } from "@/api/base44Client";
+import { apiClient } from "@/api/apiClient";
 import { useNavigate, useSearchParams, Link } from "react-router-dom";
 import { ArrowLeft, Camera, X, Search, ChevronRight, History, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -45,32 +45,32 @@ export default function BookIn() {
 
   useEffect(() => {
     if (presetMachineId) {
-      base44.entities.Machine.get(presetMachineId).then(async (m) => {
+      apiClient.entities.Machine.get(presetMachineId).then(async (m) => {
         setMachine(m);
         setSelectedMachineId(m.id);
         if (m.client_id) {
-          const c = await base44.entities.Client.get(m.client_id);
+          const c = await apiClient.entities.Client.get(m.client_id);
           setClient(c);
         }
-        const jobs = await base44.entities.JobCard.filter({ machine_id: m.id }, "-date_booked_in");
+        const jobs = await apiClient.entities.JobCard.filter({ machine_id: m.id }, "-date_booked_in");
         setPreviousJobs(jobs);
       });
     } else {
-      base44.entities.Client.list().then(setClients);
+      apiClient.entities.Client.list().then(setClients);
     }
   }, [presetMachineId]);
 
   const handleSelectClient = async (c) => {
     setSelectedClient(c);
     setClient(c);
-    const machines = await base44.entities.Machine.filter({ client_id: c.id });
+    const machines = await apiClient.entities.Machine.filter({ client_id: c.id });
     setClientMachines(machines);
   };
 
   const handleSelectMachine = async (m) => {
     setMachine(m);
     setSelectedMachineId(m.id);
-    const jobs = await base44.entities.JobCard.filter({ machine_id: m.id }, "-date_booked_in");
+    const jobs = await apiClient.entities.JobCard.filter({ machine_id: m.id }, "-date_booked_in");
     setPreviousJobs(jobs);
   };
 
@@ -82,7 +82,7 @@ export default function BookIn() {
     const file = e.target.files?.[0];
     if (!file) return;
     setUploading(true);
-    const { file_url } = await base44.integrations.Core.UploadFile({ file });
+    const { file_url } = await apiClient.integrations.Core.UploadFile({ file });
     setPhotos(prev => [...prev, file_url]);
     setUploading(false);
     e.target.value = "";
@@ -99,7 +99,7 @@ export default function BookIn() {
   setSaving(true);
 
   try {
-   const card = await base44.entities.JobCard.create({
+   const card = await apiClient.entities.JobCard.create({
   client_id: Number(client.id),
   machine_id: Number(selectedMachineId),
   job_number: form.job_number,

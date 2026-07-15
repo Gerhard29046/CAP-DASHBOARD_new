@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { base44 } from "@/api/base44Client";
+import { apiClient } from "@/api/apiClient";
 import { Search, ChevronRight, ChevronLeft, ArrowLeft, Camera, X, Image, Check } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -27,12 +27,12 @@ export default function LogServiceModal({ onClose, onDone }) {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    base44.entities.Client.list().then(setClients);
+    apiClient.entities.Client.list().then(setClients);
   }, []);
 
   useEffect(() => {
     if (selectedClient) {
-      base44.entities.Machine.filter({ client_id: selectedClient.id }).then(setMachines);
+      apiClient.entities.Machine.filter({ client_id: selectedClient.id }).then(setMachines);
     }
   }, [selectedClient]);
 
@@ -47,7 +47,7 @@ export default function LogServiceModal({ onClose, onDone }) {
     if (!file) return;
     setUploading(true);
     try {
-      const { file_url } = await base44.integrations.Core.UploadFile({ file });
+      const { file_url } = await apiClient.integrations.Core.UploadFile({ file });
       setPhotos(prev => [...prev, file_url]);
     } catch (err) { /* silently fail */ }
     setUploading(false);
@@ -61,7 +61,7 @@ export default function LogServiceModal({ onClose, onDone }) {
   const handleSubmit = async () => {
     if (!selectedMachine || !form.service_date) return;
     setSaving(true);
-    await base44.entities.ServiceRecord.create({
+    await apiClient.entities.ServiceRecord.create({
       machine_id: selectedMachine.id,
       ...form,
       photos,

@@ -17,7 +17,7 @@ import {
   X,
   Edit3,
 } from "lucide-react";
-import { base44 } from "@/api/base44Client";
+import { apiClient } from "@/api/apiClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -105,7 +105,7 @@ export default function Jobs() {
     setLoading(true);
 
     try {
-      const data = await base44.entities.JobCard.list();
+      const data = await apiClient.entities.JobCard.list();
       setJobs(data || []);
 
       if (data?.length > 0) {
@@ -163,7 +163,7 @@ export default function Jobs() {
     setUpdating(true);
 
     try {
-      const updated = await base44.entities.JobCard.update(selectedJob.id, {
+      const updated = await apiClient.entities.JobCard.update(selectedJob.id, {
         status: "Completed",
         date_completed: new Date().toISOString().slice(0, 10),
       });

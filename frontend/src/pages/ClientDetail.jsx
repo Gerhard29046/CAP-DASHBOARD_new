@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { base44 } from "@/api/base44Client";
+import { apiClient } from "@/api/apiClient";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import {
   ArrowLeft, Plus, Pencil, Trash2, Phone, Mail, MapPin,
@@ -98,7 +98,7 @@ export default function ClientDetail() {
   const [saving, setSaving] = useState(false);
 
   const load = async () => {
-  const c = await base44.entities.Client.get(id);
+  const c = await apiClient.entities.Client.get(id);
 
   setClient(c);
   setMachines(c.machines || []);
@@ -109,20 +109,20 @@ export default function ClientDetail() {
 
   const handleEdit = async (form) => {
     setSaving(true);
-    await base44.entities.Client.update(id, form);
+    await apiClient.entities.Client.update(id, form);
     setSaving(false);
     setShowEdit(false);
     load();
   };
 
   const handleDelete = async () => {
-    await base44.entities.Client.delete(id);
+    await apiClient.entities.Client.delete(id);
     navigate("/clients");
   };
 
   const handleAddMachine = async (form) => {
     setSaving(true);
-    await base44.entities.Machine.create({ ...form, client_id: id });
+    await apiClient.entities.Machine.create({ ...form, client_id: id });
     setSaving(false);
     setShowAddMachine(false);
     load();

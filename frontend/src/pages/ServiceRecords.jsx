@@ -13,7 +13,7 @@ import {
   AlertCircle,
   CheckCircle2,
 } from "lucide-react";
-import { base44 } from "@/api/base44Client";
+import { apiClient } from "@/api/apiClient";
 import { Input } from "@/components/ui/input";
 
 function formatDate(date) {
@@ -48,7 +48,7 @@ export default function ServiceRecords() {
     setLoading(true);
 
     try {
-      const data = await base44.entities.ServiceRecord.list();
+      const data = await apiClient.entities.ServiceRecord.list();
       setRecords(data || []);
       if (data?.length > 0) setSelectedRecord(data[0]);
     } catch (error) {

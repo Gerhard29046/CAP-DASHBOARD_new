@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { base44 } from "@/api/base44Client";
+import { apiClient } from "@/api/apiClient";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import {
   ArrowLeft,
@@ -153,9 +153,9 @@ export default function JobCardDetail() {
     setLoading(true);
 
     const [job, clientList, machineList] = await Promise.all([
-      base44.entities.JobCard.get(id),
-      base44.entities.Client.list(),
-      base44.entities.Machine.list(),
+      apiClient.entities.JobCard.get(id),
+      apiClient.entities.Client.list(),
+      apiClient.entities.Machine.list(),
     ]);
 
     setJobCard(job);
@@ -209,7 +209,7 @@ export default function JobCardDetail() {
         date_completed: editForm.date_completed || null,
       };
 
-      const updated = await base44.entities.JobCard.update(id, payload);
+      const updated = await apiClient.entities.JobCard.update(id, payload);
 
       setJobCard(updated);
       setEditing(false);
@@ -228,7 +228,7 @@ export default function JobCardDetail() {
     const quantity = Number(form.quantity) || 1;
     const unitPrice = Number(form.unit_price) || 0;
 
-    await base44.entities.JobCardLine.create({
+    await apiClient.entities.JobCardLine.create({
       job_card_id: Number(id),
       line_type: form.line_type,
       description: form.description,
@@ -243,14 +243,14 @@ export default function JobCardDetail() {
   };
 
   const handleDeleteLine = async (lineId) => {
-    await base44.entities.JobCardLine.delete(lineId);
+    await apiClient.entities.JobCardLine.delete(lineId);
     load();
   };
 
   const handleStatusChange = async (status) => {
     setUpdatingStatus(true);
 
-    await base44.entities.JobCard.update(id, {
+    await apiClient.entities.JobCard.update(id, {
       status,
       ...(status === "Completed"
         ? { date_completed: new Date().toISOString().slice(0, 10) }

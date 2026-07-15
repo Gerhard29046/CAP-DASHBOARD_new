@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { base44 } from "@/api/base44Client";
+import { apiClient } from "@/api/apiClient";
 import { Link } from "react-router-dom";
 import { FileText, CheckCircle2, Clock, ChevronRight, Receipt, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -20,10 +20,10 @@ export default function InvoiceQueue() {
   const load = async () => {
     setLoading(true);
     const [jobCards, machines, clients, lines] = await Promise.all([
-      base44.entities.JobCard.list(),
-      base44.entities.Machine.list(),
-      base44.entities.Client.list(),
-      base44.entities.JobCardLine.list(),
+      apiClient.entities.JobCard.list(),
+      apiClient.entities.Machine.list(),
+      apiClient.entities.Client.list(),
+      apiClient.entities.JobCardLine.list(),
     ]);
 
     const machineMap = Object.fromEntries(machines.map(m => [m.id, m]));
@@ -101,7 +101,7 @@ export default function InvoiceQueue() {
 
   const markInvoiced = async (id) => {
     setMarkingId(id);
-    await base44.entities.JobCard.update(id, { status: "Collected" });
+    await apiClient.entities.JobCard.update(id, { status: "Collected" });
     load();
     setMarkingId(null);
   };

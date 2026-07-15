@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { base44 } from "@/api/base44Client";
+import { apiClient } from "@/api/apiClient";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import {
   ArrowLeft, Plus, Pencil, Trash2, Cpu, Calendar, Shield,
@@ -46,12 +46,12 @@ export default function MachineDetail() {
   const [saving, setSaving] = useState(false);
 
   const load = async () => {
-    const m = await base44.entities.Machine.get(id);
+    const m = await apiClient.entities.Machine.get(id);
     setMachine(m);
     const [c, svc, jcs] = await Promise.all([
-      base44.entities.Client.get(m.client_id),
-      base44.entities.ServiceRecord.filter({ machine_id: id }),
-      base44.entities.JobCard.filter({ machine_id: id }),
+      apiClient.entities.Client.get(m.client_id),
+      apiClient.entities.ServiceRecord.filter({ machine_id: id }),
+      apiClient.entities.JobCard.filter({ machine_id: id }),
     ]);
     setClient(c);
     svc.sort((a, b) => (b.service_date || "").localeCompare(a.service_date || ""));
@@ -65,20 +65,20 @@ export default function MachineDetail() {
 
   const handleEdit = async (form) => {
     setSaving(true);
-    await base44.entities.Machine.update(id, form);
+    await apiClient.entities.Machine.update(id, form);
     setSaving(false);
     setShowEdit(false);
     load();
   };
 
   const handleDelete = async () => {
-    await base44.entities.Machine.delete(id);
+    await apiClient.entities.Machine.delete(id);
     navigate(`/clients/${machine.client_id}`);
   };
 
   const handleAddService = async (form) => {
     setSaving(true);
-    await base44.entities.ServiceRecord.create({ ...form, machine_id: id });
+    await apiClient.entities.ServiceRecord.create({ ...form, machine_id: id });
     setSaving(false);
     setShowAddService(false);
     load();
@@ -87,7 +87,7 @@ export default function MachineDetail() {
   const handleEditService = async (form) => {
   setSaving(true);
 
-  await base44.entities.ServiceRecord.update(editService.id, {
+  await apiClient.entities.ServiceRecord.update(editService.id, {
     ...form,
     machine_id: Number(id),
   });
@@ -98,7 +98,7 @@ export default function MachineDetail() {
 };
 
   const handleDeleteService = async (svcId) => {
-    await base44.entities.ServiceRecord.delete(svcId);
+    await apiClient.entities.ServiceRecord.delete(svcId);
     load();
   };
 

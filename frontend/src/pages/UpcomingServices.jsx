@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { base44 } from "@/api/base44Client";
+import { apiClient } from "@/api/apiClient";
 import { Link } from "react-router-dom";
 import { CalendarClock, ChevronRight, AlertTriangle, MessageCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -12,9 +12,9 @@ export default function UpcomingServices() {
   useEffect(() => {
     async function load() {
       const [services, machines, clients] = await Promise.all([
-        base44.entities.ServiceRecord.list("-next_service_date", 200),
-        base44.entities.Machine.list(),
-        base44.entities.Client.list(),
+        apiClient.entities.ServiceRecord.list("-next_service_date", 200),
+        apiClient.entities.Machine.list(),
+        apiClient.entities.Client.list(),
       ]);
 
       const machineMap = {};

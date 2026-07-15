@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { base44 } from "@/api/base44Client";
+import { apiClient } from "@/api/apiClient";
 import { useNavigate, Link } from "react-router-dom";
 import { ArrowLeft, Building2, User2, Phone, Mail, MapPin, FileText, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -23,6 +23,7 @@ function FieldGroup({ icon: Icon, label, required, children }) {
 export default function AddClient() {
   const navigate = useNavigate();
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
   const [form, setForm] = useState({
     company_name: "",
     contact_person: "",
@@ -39,8 +40,20 @@ export default function AddClient() {
     e.preventDefault();
     if (!valid) return;
     setSaving(true);
-    const created = await base44.entities.Client.create(form);
-    navigate(`/clients/${created.id}`);
+    setError("");
+
+    try {
+      const created = await apiClient.entities.Client.create(form);
+      navigate(`/clients/${created.id}`);
+    } catch (submitError) {
+      const message = submitError instanceof Error
+        ? submitError.message
+        : "Unable to create the client.";
+      console.error("Client creation failed:", submitError);
+      setError(message);
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -138,6 +151,11 @@ export default function AddClient() {
         </div>
 
         {/* Actions */}
+        {error && (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+        )}
         <div className="flex gap-3 pt-1 pb-6">
           <Button
             type="button"

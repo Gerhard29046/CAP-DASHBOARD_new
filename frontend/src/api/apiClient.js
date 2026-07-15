@@ -36,8 +36,19 @@ async function request(path, options = {}) {
   }
 
   if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(errorText || `API error: ${response.status}`);
+    const contentType = response.headers.get("content-type") || "";
+    const errorBody = contentType.includes("application/json")
+      ? await response.json()
+      : await response.text();
+    const validationErrors = errorBody?.errors
+      ? Object.values(errorBody.errors).flat().join(" ")
+      : "";
+    const message = validationErrors || errorBody?.message || errorBody ||
+      `API error: ${response.status}`;
+    const error = new Error(message);
+    error.status = response.status;
+    error.errors = errorBody?.errors || null;
+    throw error;
   }
 
   if (response.status === 204) {
@@ -58,6 +69,7 @@ function makeEntity(entityName) {
     create: async (data) =>
       request(`/${endpoint}`, {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
       }),
 
@@ -84,7 +96,7 @@ function makeEntity(entityName) {
   };
 }
 
-export const base44 = {
+export const apiClient = {
   entities: {
     Client: makeEntity("Client"),
     Machine: makeEntity("Machine"),

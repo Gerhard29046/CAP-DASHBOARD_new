@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { base44 } from "@/api/base44Client";
+import { apiClient } from "@/api/apiClient";
 import { Link } from "react-router-dom";
 import { Users, Cpu, Wrench, CalendarClock, ChevronRight, Plus, ClipboardList } from "lucide-react";
 import StatCard from "@/components/StatCard";
@@ -17,10 +17,10 @@ export default function Dashboard() {
   const loadData = async () => {
     try {
       const [clients, machines, services, jobCards] = await Promise.all([
-        base44.entities.Client.list(),
-        base44.entities.Machine.list(),
-        base44.entities.ServiceRecord.list("-service_date", 100),
-        base44.entities.JobCard.list(),
+        apiClient.entities.Client.list(),
+        apiClient.entities.Machine.list(),
+        apiClient.entities.ServiceRecord.list("-service_date", 100),
+        apiClient.entities.JobCard.list(),
       ]);
       const activeJobs = jobCards.filter(j => j.status === "Open" || j.status === "In Progress").length;
       setStats({ clients: clients.length, machines: machines.length, services: services.length, activeJobs });
