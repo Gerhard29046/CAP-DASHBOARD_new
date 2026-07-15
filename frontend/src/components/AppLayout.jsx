@@ -13,33 +13,31 @@ import {
   ClipboardCheck,
   ShieldCheck,
   Receipt,
+  Library,
 } from "lucide-react";
-import { ROLE_NAV_ACCESS } from "@/lib/roles";
 import { useAuth } from "@/lib/AuthContext";
 
 const ALL_NAV_ITEMS = [
-  { label: "Dashboard", path: "/", icon: LayoutDashboard },
-  { label: "Clients", path: "/clients", icon: Users },
-  { label: "Upcoming Services", path: "/upcoming-services", icon: CalendarClock },
-  { label: "Service Records", path: "/service-records", icon: ClipboardCheck },
-  { label: "Book In", path: "/book-in", icon: ClipboardList },
-  { label: "Jobs", path: "/jobs", icon: ClipboardList },
-  { label: "Invoice Queue", path: "/invoice-queue", icon: Receipt },
-  { label: "User Management", path: "/admin/users", icon: ShieldCheck },
+  { label: "Dashboard", path: "/", icon: LayoutDashboard, permission: "dashboard.view" },
+  { label: "Clients", path: "/clients", icon: Users, permission: "clients.view" },
+  { label: "Upcoming Services", path: "/upcoming-services", icon: CalendarClock, permission: "upcoming_services.view" },
+  { label: "Service Records", path: "/service-records", icon: ClipboardCheck, permission: "services.view" },
+  { label: "Book In", path: "/book-in", icon: ClipboardList, permission: "job_cards.create" },
+  { label: "Jobs", path: "/jobs", icon: ClipboardList, permission: "job_cards.view" },
+  { label: "Machine Knowledge Base", path: "/knowledge-base", icon: Library, permission: "knowledge_base.view" },
+  { label: "Invoice Queue", path: "/invoice-queue", icon: Receipt, permission: "invoices.queue.view" },
+  { label: "User Management", path: "/admin/users", icon: ShieldCheck, permission: "users.view" },
 ];
 
 export default function AppLayout() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const location = useLocation();
-  const { user, logout } = useAuth();
+  const { user, logout, hasPermission } = useAuth();
 
-  const role = user?.role || "Technician";
+  const role = user?.role || "technician";
   const userName = user?.name || user?.full_name || user?.email || "User";
 
-  const allowedPaths = ROLE_NAV_ACCESS[role] || [];
-  const navItems = ALL_NAV_ITEMS.filter((item) =>
-    allowedPaths.includes(item.path)
-  );
+  const navItems = ALL_NAV_ITEMS.filter((item) => hasPermission(item.permission));
 
   const handleLogout = () => {
     logout();

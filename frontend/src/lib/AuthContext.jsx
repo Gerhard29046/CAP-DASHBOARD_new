@@ -122,6 +122,10 @@ export const AuthProvider = ({ children }) => {
     window.location.href = "/login";
   };
 
+  const hasPermission = (key) => user?.effective_permissions?.includes(key) ?? false;
+  const hasAnyPermission = (keys) => keys.some(hasPermission);
+  const hasAllPermissions = (keys) => keys.every(hasPermission);
+
   return (
     <AuthContext.Provider
       value={{
@@ -136,6 +140,10 @@ export const AuthProvider = ({ children }) => {
         logout,
         navigateToLogin,
         checkUserAuth,
+        refreshCurrentUser: checkUserAuth,
+        hasPermission,
+        hasAnyPermission,
+        hasAllPermissions,
         checkAppState: async () => {},
       }}
     >

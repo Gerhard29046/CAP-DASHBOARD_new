@@ -29,6 +29,9 @@ import UserAdmin from '@/pages/UserAdmin';
 import InvoiceQueue from '@/pages/InvoiceQueue';
 import RoleGuard from '@/components/RoleGuard';
 import Jobs from '@/pages/Jobs';
+import KnowledgeBase from '@/pages/KnowledgeBase';
+import KnowledgeMachineForm from '@/pages/KnowledgeMachineForm';
+import KnowledgeMachineDetail from '@/pages/KnowledgeMachineDetail';
 
 
 const AuthenticatedApp = () => {
@@ -60,18 +63,22 @@ const AuthenticatedApp = () => {
 
       <Route element={<ProtectedRoute unauthenticatedElement={<Navigate to="/login" replace />} />}>
         <Route element={<AppLayout />}>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/clients" element={<Clients />} />
+          <Route path="/" element={<RoleGuard requiredPermission="dashboard.view"><Dashboard /></RoleGuard>} />
+          <Route path="/clients" element={<RoleGuard requiredPermission="clients.view"><Clients /></RoleGuard>} />
           <Route path="/clients/new" element={<AddClient />} />
           <Route path="/clients/:id" element={<ClientDetail />} />
           <Route path="/machines/:id" element={<MachineDetail />} />
-          <Route path="/upcoming-services" element={<UpcomingServices />} />
-          <Route path="/service-records" element={<ServiceRecords />} />
-          <Route path="/book-in" element={<BookIn />} />
-          <Route path="/jobs" element={<Jobs />} />
+          <Route path="/upcoming-services" element={<RoleGuard requiredPermission="upcoming_services.view"><UpcomingServices /></RoleGuard>} />
+          <Route path="/service-records" element={<RoleGuard requiredPermission="services.view"><ServiceRecords /></RoleGuard>} />
+          <Route path="/book-in" element={<RoleGuard requiredPermission="job_cards.create"><BookIn /></RoleGuard>} />
+          <Route path="/jobs" element={<RoleGuard requiredPermission="job_cards.view"><Jobs /></RoleGuard>} />
           <Route path="/job-cards/:id" element={<JobCardDetail />} />
-          <Route path="/invoice-queue" element={<RoleGuard allowedRoles={["Admin", "Accountant"]}><InvoiceQueue /></RoleGuard>} />
-          <Route path="/admin/users" element={<RoleGuard allowedRoles={["Admin"]}><UserAdmin /></RoleGuard>} />
+          <Route path="/invoice-queue" element={<RoleGuard requiredPermission="invoices.queue.view"><InvoiceQueue /></RoleGuard>} />
+          <Route path="/admin/users" element={<RoleGuard requiredPermission="users.view"><UserAdmin /></RoleGuard>} />
+          <Route path="/knowledge-base" element={<RoleGuard requiredPermission="knowledge_base.view"><KnowledgeBase /></RoleGuard>} />
+          <Route path="/knowledge-base/new" element={<RoleGuard allowedRoles={["admin"]}><KnowledgeMachineForm /></RoleGuard>} />
+          <Route path="/knowledge-base/:id" element={<KnowledgeMachineDetail />} />
+          <Route path="/knowledge-base/:id/edit" element={<RoleGuard allowedRoles={["admin"]}><KnowledgeMachineForm /></RoleGuard>} />
         </Route>
       </Route>
 

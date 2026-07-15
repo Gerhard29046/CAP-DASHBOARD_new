@@ -108,6 +108,7 @@ function makeEntity(entityName) {
 }
 
 export const apiClient = {
+  request,
   entities: {
     Client: makeEntity("Client"),
     Machine: makeEntity("Machine"),

@@ -1,17 +1,13 @@
 export const ROLE_LABELS = {
-  Admin: "Administrator",
-  Technician: "Technician",
-  Accountant: "Accountant",
+  admin: "Administrator", technician: "Technician", accountant: "Accountant",
 };
 
 export const ROLE_COLORS = {
-  Admin: "bg-red-500/15 text-red-400",
-  Technician: "bg-blue-500/15 text-blue-400",
-  Accountant: "bg-emerald-500/15 text-emerald-400",
+  admin: "bg-red-500/15 text-red-400", technician: "bg-blue-500/15 text-blue-400", accountant: "bg-emerald-500/15 text-emerald-400",
 };
 
 export const ROLE_NAV_ACCESS = {
-  Admin: [
+  admin: [
     "/",
     "/clients",
     "/upcoming-services",
@@ -20,27 +16,30 @@ export const ROLE_NAV_ACCESS = {
     "/jobs",
     "/invoice-queue",
     "/admin/users",
+    "/knowledge-base",
   ],
 
-  Technician: [
+  technician: [
     "/",
     "/clients",
     "/upcoming-services",
     "/service-records",   // <-- ADD THIS
     "/book-in",
     "/jobs",
+    "/knowledge-base",
   ],
 
-  Accountant: [
+  accountant: [
     "/",
     "/clients",
     "/jobs",
     "/invoice-queue",
+    "/knowledge-base",
   ],
 };
 
 export const ROLE_CAPABILITIES = {
-  Admin: {
+  admin: {
     canCreate: true,
     canEdit: true,
     canDelete: true,
@@ -50,7 +49,7 @@ export const ROLE_CAPABILITIES = {
     canInvoice: true,
   },
 
-  Technician: {
+  technician: {
     canCreate: true,
     canEdit: true,
     canDelete: false,
@@ -60,7 +59,7 @@ export const ROLE_CAPABILITIES = {
     canInvoice: false,
   },
 
-  Accountant: {
+  accountant: {
     canCreate: false,
     canEdit: true,
     canDelete: false,
