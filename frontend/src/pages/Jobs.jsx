@@ -58,6 +58,12 @@ const STATUS_CONFIG = {
     badge: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
     icon: CheckCircle2,
   },
+  "Collected": {
+    label: "Collected",
+    color: "text-teal-400",
+    badge: "bg-teal-500/15 text-teal-400 border-teal-500/30",
+    icon: CheckCircle2,
+  },
 };
 
 const TABS = [
@@ -67,6 +73,7 @@ const TABS = [
   "Waiting for Parts",
   "Ready for Collection",
   "Completed",
+  "Collected",
 ];
 
 function getStatusConfig(status) {
