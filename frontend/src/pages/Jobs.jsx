@@ -9,7 +9,6 @@ import {
   CheckCircle2,
   Eye,
   ChevronRight,
-  User,
   Calendar,
   ClipboardList,
   Building2,

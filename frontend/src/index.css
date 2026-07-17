@@ -99,3 +99,44 @@
 .fc-event.calendar-overdue { background: hsl(var(--destructive)); border-color: hsl(var(--destructive)); }
 .fc-event.calendar-completed { background: hsl(var(--muted)); border-color: hsl(var(--border)); color: hsl(var(--muted-foreground)); }
 @media (max-width: 640px) { .fc .fc-toolbar { align-items: flex-start; flex-direction: column; } .fc .fc-toolbar-chunk { display: flex; flex-wrap: wrap; } }
+
+/* Sidebar navigation scrolls independently while its header and footer stay fixed. */
+.sidebar-navigation {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--sidebar-primary) / 0.38) hsl(var(--sidebar-background) / 0.45);
+  overscroll-behavior: contain;
+  padding-bottom: 0.5rem;
+}
+
+.sidebar-navigation:hover {
+  scrollbar-color: hsl(var(--sidebar-primary) / 0.68) hsl(var(--sidebar-background) / 0.65);
+}
+
+.sidebar-navigation::-webkit-scrollbar {
+  width: 6px;
+  height: 0;
+}
+
+.sidebar-navigation::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.sidebar-navigation::-webkit-scrollbar-corner {
+  background: hsl(var(--sidebar-background) / 0.65);
+}
+
+.sidebar-navigation::-webkit-scrollbar-track {
+  background: hsl(var(--sidebar-background) / 0.45);
+  border-radius: 999px;
+}
+
+.sidebar-navigation::-webkit-scrollbar-thumb {
+  background: hsl(var(--sidebar-primary) / 0.38);
+  border-radius: 999px;
+}
+
+.sidebar-navigation:hover::-webkit-scrollbar-thumb {
+  background: hsl(var(--sidebar-primary) / 0.68);
+}

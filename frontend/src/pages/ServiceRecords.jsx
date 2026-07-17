@@ -3,14 +3,11 @@ import {
   Search,
   ClipboardCheck,
   Calendar,
-  User,
   Building2,
   Wrench,
   Camera,
   ChevronRight,
   X,
-  FileText,
-  AlertCircle,
   CheckCircle2,
 } from "lucide-react";
 import { apiClient } from "@/api/apiClient";

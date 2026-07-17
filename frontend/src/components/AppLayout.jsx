@@ -73,11 +73,12 @@ export default function AppLayout() {
           <div className="absolute inset-0 bg-black/60" />
 
           <nav
-            className="absolute left-0 top-0 bottom-0 w-64 bg-card border-r border-border p-4 pt-16 flex flex-col gap-1"
+            className="absolute left-0 top-0 bottom-0 w-64 bg-card border-r border-border p-4 pt-16 flex flex-col gap-1 overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
             <UserCard userName={userName} role={role} />
 
+            <div className="sidebar-navigation flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto overflow-x-hidden">
             {navItems.map((item) => {
               const Icon = item.icon;
               const active = location.pathname === item.path;
@@ -98,6 +99,7 @@ export default function AppLayout() {
                 </Link>
               );
             })}
+            </div>
 
             <div className="mt-auto pt-4 border-t border-border">
               <button
@@ -123,7 +125,7 @@ export default function AppLayout() {
 
           <UserCard userName={userName} role={role} />
 
-          <nav className="flex flex-col gap-1 flex-1">
+          <nav className="sidebar-navigation flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto overflow-x-hidden">
             {navItems.map((item) => {
               const Icon = item.icon;
               const active = location.pathname === item.path;

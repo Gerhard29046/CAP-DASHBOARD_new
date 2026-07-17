@@ -37,7 +37,6 @@ Route::get('/health', function () {
 });
 
 Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:10,1');
-Route::get('/google-calendar/callback',[GoogleCalendarController::class,'callback']);
 
 Route::middleware('auth:sanctum')->group(function () {
 Route::post('/logout', [AuthController::class, 'logout']);

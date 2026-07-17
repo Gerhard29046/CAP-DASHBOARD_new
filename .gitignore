@@ -13,6 +13,14 @@ node_modules
 frontend/dist/
 dist
 dist-ssr
+mobile-android/.gradle/
+mobile-android/build/
+mobile-android/app/build/
+
+# Android local machine configuration and signing material
+mobile-android/local.properties
+*.jks
+*.keystore
 
 # Logs
 *.log

@@ -1,0 +1,10 @@
+- [x] Update `Core.kt` with health and sync models
+- [x] Add `GET health` and resource list endpoints to `CapApi`
+- [x] Implement `ConnectivityObserver` for network monitoring
+- [x] Implement `StatusRepository` for health and sync state
+- [x] Update `NetworkModule` for dependency injection
+- [x] Update `MainViewModel` to expose connection and sync state
+- [x] Add `ServerStatusIndicator` to the UI
+- [x] Add `StatusScreen` for detailed diagnostics
+- [x] Integrate "Status" into app navigation
+- [x] Verify build and connectivity

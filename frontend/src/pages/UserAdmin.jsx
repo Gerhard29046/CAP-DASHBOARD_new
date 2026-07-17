@@ -15,6 +15,8 @@ export default function UserAdmin() {
   const [users, setUsers] = useState([]), [roles, setRoles] = useState({}), [selected, setSelected] = useState(null);
   const [form, setForm] = useState(blank), [matrix, setMatrix] = useState([]), [search, setSearch] = useState("");
   const [message, setMessage] = useState("");
+  const [fieldErrors, setFieldErrors] = useState({});
+  const [saving, setSaving] = useState(false);
   const load = () => Promise.all([apiClient.request("/admin/users"), apiClient.request("/roles/permissions")]).then(([u, r]) => { setUsers(u); setRoles(r); });
   useEffect(() => { load().catch((e) => setMessage(e.message)); }, []);
 
@@ -32,19 +34,18 @@ export default function UserAdmin() {
   const enabled = matrix.filter((p) => p.effective).length;
   const overrides = matrix.filter((p) => p.effective !== p.role_default).length;
   const save = async (event) => {
-    event.preventDefault(); setMessage("");
+    event.preventDefault();
+    if (saving) return;
+    setMessage(""); setFieldErrors({}); setSaving(true);
     try {
-      let user = selected;
-      if (!user) { user = await apiClient.request("/users", { method: "POST", body: JSON.stringify(form) }); setSelected(user); }
-      else {
-        const body = { ...form };
-        if (!body.password) { delete body.password; delete body.password_confirmation; }
-        user = await apiClient.request(`/users/${user.id}`, { method: "PUT", body: JSON.stringify(body) });
-        if (user.role !== selected.role) await apiClient.request(`/users/${user.id}/role`, { method: "PUT", body: JSON.stringify({ role: user.role }) });
-      }
-      await apiClient.request(`/users/${user.id}/permissions`, { method: "PUT", body: JSON.stringify({ permissions: matrix.map((p) => ({ key: p.key, allowed: p.effective })) }) });
-      setMessage("User and permissions saved."); await load();
-    } catch (error) { setMessage(error.message); }
+      const permissions = Object.fromEntries(matrix.map((permission) => [permission.key, permission.effective]));
+      const body = { ...form, permissions };
+      if (selected && !body.password) { delete body.password; delete body.password_confirmation; }
+      await apiClient.request(selected ? `/users/${selected.id}` : "/users", { method: selected ? "PUT" : "POST", body: JSON.stringify(body) });
+      await load(); setSelected(null); setMatrix([]); setForm(blank); setMessage("User and permissions saved.");
+    } catch (error) {
+      setFieldErrors(error.errors || {}); setMessage(error.message || "Unable to save the user.");
+    } finally { setSaving(false); }
   };
   const startNew = () => {
     setSelected(null); setForm(blank);
@@ -59,14 +60,15 @@ export default function UserAdmin() {
       <div className="bg-card border rounded-2xl p-4 space-y-2">{users.map((user) => <button key={user.id} onClick={() => edit(user)} className="w-full text-left bg-secondary/40 rounded-xl p-3"><b>{user.name}</b><p className="text-xs text-muted-foreground">{user.email}</p><p className="text-xs">{ROLE_LABELS[user.role] || user.role} · {user.is_active ? "Active" : "Disabled"} · {user.effective_permission_count} permissions</p></button>)}</div>
       {(selected || matrix.length > 0) && <form onSubmit={save} className="space-y-4">
         <div className="bg-card border rounded-2xl p-5 grid md:grid-cols-2 gap-3">
-          {Object.keys(FIELD_LABELS).map((key) => <div key={key}><Label>{FIELD_LABELS[key]}</Label><Input type={key.includes("password") ? "password" : "text"} value={form[key] || ""} onChange={(e) => setForm({ ...form, [key]: e.target.value })} required={!selected && Object.keys(FIELD_LABELS).includes(key)} /></div>)}
+          {Object.keys(FIELD_LABELS).map((key) => <div key={key}><Label>{FIELD_LABELS[key]}</Label><Input type={key.includes("password") ? "password" : "text"} value={form[key] || ""} onChange={(e) => setForm({ ...form, [key]: e.target.value })} required={!selected && Object.keys(FIELD_LABELS).includes(key)} />{fieldErrors[key]?.map((error) => <p key={error} className="mt-1 text-xs text-destructive">{error}</p>)}</div>)}
           <div><Label>Primary Role</Label><Select value={form.role} onValueChange={roleChanged}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{Object.keys(ROLE_LABELS).map((role) => <SelectItem key={role} value={role}>{ROLE_LABELS[role]}</SelectItem>)}</SelectContent></Select></div>
           <label className="flex items-center gap-2"><input type="checkbox" checked={form.is_active} onChange={(e) => setForm({ ...form, is_active: e.target.checked })} />Active Account</label>
         </div>
         <Input placeholder="Search permissions" value={search} onChange={(e) => setSearch(e.target.value)} />
         <div className="flex gap-2"><Button type="button" variant="outline" onClick={() => setMatrix(matrix.map((p) => ({ ...p, effective: true })))}>Select all</Button><Button type="button" variant="outline" onClick={() => setMatrix(matrix.map((p) => ({ ...p, effective: false })))}>Clear all</Button><Button type="button" variant="outline" onClick={() => setMatrix(matrix.map((p) => ({ ...p, effective: p.role_default })))}>Reset to role defaults</Button></div>
         {Object.entries(grouped).map(([group, items]) => <section key={group} className="bg-card border rounded-2xl p-4"><div className="flex justify-between"><h2 className="font-bold">{group}</h2><button type="button" className="text-xs text-primary" onClick={() => { const keys = new Set(items.map((p) => p.key)); const all = items.every((p) => p.effective); setMatrix(matrix.map((p) => keys.has(p.key) ? { ...p, effective: !all } : p)); }}>Select group</button></div><div className="grid md:grid-cols-2 gap-2 mt-3">{items.map((p) => <label key={p.key} className="flex gap-2 border rounded-lg p-2"><input type="checkbox" checked={p.effective} onChange={(e) => setMatrix(matrix.map((item) => item.key === p.key ? { ...item, effective: e.target.checked } : item))} /><span><b className="text-sm">{p.name}</b><small className="block text-muted-foreground">{p.effective === p.role_default ? (p.role_default ? "Granted by role" : "Denied by role") : (p.effective ? "Explicitly granted" : "Explicitly denied")}</small></span></label>)}</div></section>)}
-        <div className="sticky bottom-2 bg-card border rounded-xl p-3 flex justify-between items-center"><p className="text-sm">{enabled} enabled · {enabled - overrides} inherited · {overrides} customised</p><div className="flex gap-2"><Button type="button" variant="outline" onClick={() => { setSelected(null); setMatrix([]); }}>Cancel</Button><Button>Save user</Button></div></div>
+        {fieldErrors.permissions?.map((error) => <p key={error} className="text-sm text-destructive">{error}</p>)}
+        <div className="sticky bottom-2 bg-card border rounded-xl p-3 flex justify-between items-center"><p className="text-sm">{enabled} enabled · {enabled - overrides} inherited · {overrides} customised</p><div className="flex gap-2"><Button type="button" variant="outline" disabled={saving} onClick={() => { setSelected(null); setMatrix([]); }}>Cancel</Button><Button disabled={saving}>{saving ? "Saving…" : "Save User"}</Button></div></div>
       </form>}
     </div>
   </div>;

@@ -3,7 +3,7 @@ import { apiClient } from "@/api/apiClient";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import {
   ArrowLeft, Plus, Pencil, Trash2, Phone, Mail, MapPin,
-  Building2, User2, FileText, Cpu, Wind, Hash, ChevronRight
+  Building2, FileText, Cpu, Wind, Hash, ChevronRight
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
