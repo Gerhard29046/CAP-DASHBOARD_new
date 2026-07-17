@@ -66,17 +66,55 @@ export const AuthProvider = ({ children }) => {
         body: JSON.stringify({ email, password }),
       });
 
-      const data = await response.json();
+      const contentType = response.headers.get("content-type") || "";
+      const data = contentType.includes("application/json")
+        ? await response.json()
+        : {};
 
       if (!response.ok) {
+        const validationMessage = data?.errors
+          ? Object.values(data.errors).flat().join(" ")
+          : null;
+        const messages = {
+          401: "Incorrect email address or password.",
+          403: "This account does not have permission to sign in.",
+          404: "Login endpoint not found.",
+          419: "Authentication session or CSRF configuration error.",
+          429: "Too many login attempts. Please wait a minute and try again.",
+        };
+        const message = response.status === 422
+          ? validationMessage || data?.message || "Please check the login details."
+          : response.status >= 500
+            ? "The server encountered an error. Please try again."
+            : messages[response.status] || data?.message || `Login failed (${response.status}).`;
+
+        if (import.meta.env.DEV) {
+          console.error("Login request failed", {
+            status: response.status,
+            url: response.url,
+            errors: data?.errors || null,
+          });
+        }
+
         setAuthError({
-          type: "invalid_credentials",
-          message:
-            data?.message ||
-            data?.errors?.email?.[0] ||
-            "Invalid email or password",
+          type: `http_${response.status}`,
+          message,
         });
 
+        return false;
+      }
+
+      if (!data?.token || !data?.user) {
+        if (import.meta.env.DEV) {
+          console.error("Login response was missing the token or user", {
+            status: response.status,
+            url: response.url,
+          });
+        }
+        setAuthError({
+          type: "invalid_server_response",
+          message: "The login server returned an invalid response.",
+        });
         return false;
       }
 
@@ -86,8 +124,15 @@ export const AuthProvider = ({ children }) => {
 
       return true;
     } catch (error) {
+      if (import.meta.env.DEV) {
+        console.error("Login network request failed", {
+          url: `${API_URL}/login`,
+          name: error?.name,
+          message: error?.message,
+        });
+      }
       setAuthError({
-        type: "server_error",
+        type: "network_error",
         message: "Could not connect to the login server.",
       });
 
