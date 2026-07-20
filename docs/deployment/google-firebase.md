@@ -35,12 +35,11 @@ Configure the Cloudflare build with:
 - root directory: `frontend`
 - build command: `npm ci && npm run build`
 - deploy command: `npx wrangler deploy`
-- production API variable: `VITE_API_BASE_URL=https://API_HOST/api`
+- production API configuration is versioned in `frontend/.env.production`
 
 To verify or deploy manually:
 
 ```powershell
-$env:VITE_API_BASE_URL = "https://API_HOST/api"
 npm --prefix frontend ci
 npm --prefix frontend run build
 Push-Location frontend

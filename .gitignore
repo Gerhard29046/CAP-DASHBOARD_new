@@ -3,6 +3,7 @@
 .env.*
 !.env.example
 !**/.env.example
+!frontend/.env.production
 
 # Dependencies
 backend/vendor/
