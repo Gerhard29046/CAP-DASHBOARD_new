@@ -1,38 +1,38 @@
-# Server Connection and Synchronisation Status Feature Walkthrough
+# Connectivity and Navigation Fix Walkthrough
 
-I have implemented a real-time connection and synchronisation status monitoring system. This allows you to verify that the mobile app is correctly talking to the Laravel API and MySQL database.
+I have updated the CAP Mobile app to allow it to connect to your Laravel server from a physical device and verified the core navigation structure.
 
 ## Changes Made
 
-### Core Logic
-#### [Core.kt](file:///C:/Users/Gerhard/Documents/CAP-DASHBOARD_new/mobile-android/app/src/main/java/za/co/connoisseurauto/capmobile/Core.kt)
-- **Health API**: Added `/api/health` support to `CapApi` to check server and database status.
-- **Connectivity Monitoring**: Implemented `ConnectivityObserver` using Android's `ConnectivityManager` to detect network changes (Wi-Fi/Mobile Data) instantly.
-- **Status Repository**: Added `StatusRepository` which manages the global connection state, measures latency, and handles resource synchronisation checks for Clients, Machines, etc.
-- **Sync Endpoints**: Added endpoints to fetch and count records from the live database.
+### Connectivity Fix
+#### [app/build.gradle.kts](file:///C:/Users/Gerhard/Documents/CAP-DASHBOARD_new/mobile-android/app/build.gradle.kts)
+- Updated the default `debug` API URL to `http://10.174.206.104:8000/api/` (your computer's local IP).
 
-### UI Components
+#### [Core.kt](file:///C:/Users/Gerhard/Documents/CAP-DASHBOARD_new/mobile-android/app/src/main/java/za/co/connoisseurauto/capmobile/Core.kt)
+- **Dynamic Base URL**: Added a `BaseUrlInterceptor` that allows overriding the API address at runtime without re-building the app.
+- **Secure Persistence**: Any custom IP you enter is saved securely in `EncryptedSharedPreferences`.
+
+### UI Improvements
 #### [MainActivity.kt](file:///C:/Users/Gerhard/Documents/CAP-DASHBOARD_new/mobile-android/app/src/main/java/za/co/connoisseurauto/capmobile/MainActivity.kt)
-- **ServerStatusIndicator**: A real-time status dot in the TopAppBar (Green: Connected, Amber: Checking/Warning, Red: Offline/Error).
-- **Status Screen**: A new diagnostic screen accessible from the navigation menu that displays:
-    - Detailed API/DB health.
-    - Connection latency.
-    - Environment info (Debug/Production) and Base URL.
-    - Live record counts for key data (Clients, Machines, etc.).
-    - Manual "Test" and "Sync" buttons.
+- **API URL Editor**: Added an input field in the "Development Settings" section (bottom of Login screen) where you can update the API IP address.
+- **Improved Navigation**: Verified that all destination labels (Dashboard, Clients, Machines, Services, Jobs, Calendar, Knowledge Base, Invoices, Users, Status) are correctly mapped to their respective components.
 
 ## Verification Results
 
-### Build & Environment
-- **Build Status**: `Build finished successfully.`
-- **Configured API URL**: `http://10.0.2.2:8000/api/` (Optimized for Android Emulator).
-- **Health Endpoint**: `/api/health` was used to confirm backend connectivity.
+### Build Status
+- **Result**: `Build finished successfully.`
 
-### Connectivity Behavior
-- **Offline Mode**: If you disable Wi-Fi/Data, the status indicator immediately turns Red and shows "Offline".
-- **Connected Mode**: When the server is reachable, the indicator turns Green and shows "Connected".
-- **Sync Validation**: The "Status" screen confirms live data is flowing by showing the actual record counts from the database.
+### Connectivity Check (Xiaomi Device)
+1.  **Server Requirement**: Ensure Laravel is running with `php artisan serve --host=0.0.0.0`.
+2.  **App Launch**: Launch the app on your phone.
+3.  **URL Verification**: If it still shows "Offline", check the "API Base URL" at the bottom of the login screen. Ensure it matches your computer's current IP.
+4.  **Status Confirmation**: Once connected, the top-right indicator will turn **Green**.
+
+### Navigation Verification
+- All links in the navigation drawer/bar have been confirmed to point to the `AdaptiveShell` content switcher.
+- Authenticated users will see their specific permissions-based modules.
+- The "Status" screen provides a full sync diagnostic for all live modules.
 
 > [!TIP]
-> **For Physical Device Testing**:
-> The current URL (`10.0.2.2`) will only work in the emulator. To test on a physical phone, you must update `BuildConfig.API_BASE_URL` (usually in `local.properties` or `build.gradle.kts`) to use your computer's local IP address (e.g., `http://192.168.1.x:8000/api/`).
+> **Testing Navigation**:
+> After logging in, try clicking "Clients" or "Machines" in the navigation. The screen title should update, and the "Status" screen should show a non-zero record count for those modules if the database is seeded.

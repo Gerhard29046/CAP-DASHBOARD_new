@@ -1,58 +1,43 @@
-# Server Connection and Synchronisation Status Feature
+# Fix Physical Device Connectivity
 
-This plan outlines the implementation of a real-time server and synchronisation status monitoring feature for the CAP Mobile app.
+The Android app cannot connect to the server because it is configured to use `10.0.2.2`, which only works for emulators. For a physical device (like the Xiaomi phone detected), we must use the computer's local IP address, and the Laravel server must be configured to accept external connections.
+
+## User Review Required
+
+> [!IMPORTANT]
+> You **MUST** restart your Laravel server using the following command for this to work:
+> `php artisan serve --host=0.0.0.0 --port=8000`
+
+## Full App Verification Plan
+
+I will perform a systematic check of all app destinations to ensure navigation and links are working as intended.
+
+### Navigation Links
+For each item in the navigation menu (Rail/Bottom Bar), I will:
+- Verify that clicking the item updates the screen title.
+- Verify that the correct content (or placeholder) is displayed.
+
+### Authenticated Flow
+- Verify that permissions correctly filter the visible destinations (e.g., Administrator sees more than Accountant).
+- Verify that "Logout" returns the user to the Login screen and clears the session.
 
 ## Proposed Changes
 
 ### [mobile-android](file:///C:/Users/Gerhard/Documents/CAP-DASHBOARD_new/mobile-android)
 
-#### [MODIFY] [Core.kt](file:///C:/Users/Gerhard/Documents/CAP-DASHBOARD_new/mobile-android/app/src/main/java/za/co/connoisseurauto/capmobile/Core.kt)
-- Add `HealthResponse` data class to map `/api/health`.
-- Add generic `PaginatedResponse` or simple `List` response models for sync checks.
-- Update `CapApi` interface:
-    - Add `GET health` endpoint.
-    - Add `GET clients`, `machines`, `service-records`, `job-cards` endpoints for sync validation.
-- Create `ConnectivityObserver` to monitor network state using `ConnectivityManager`.
-- Create `StatusRepository` to manage:
-    - Real-time connectivity status.
-    - API/Database health status.
-    - Resource synchronisation status.
-- Add `StatusRepository` to Hilt's `NetworkModule` or as a standalone singleton.
+#### [MODIFY] [app/build.gradle.kts](file:///C:/Users/Gerhard/Documents/CAP-DASHBOARD_new/mobile-android/app/build.gradle.kts)
+- Update `API_BASE_URL` in the `debug` build type to use the computer's local IP: `http://10.174.206.104:8000/api/`.
 
 #### [MODIFY] [MainActivity.kt](file:///C:/Users/Gerhard/Documents/CAP-DASHBOARD_new/mobile-android/app/src/main/java/za/co/connoisseurauto/capmobile/MainActivity.kt)
-- Update `MainViewModel`:
-    - Inject `StatusRepository`.
-    - Expose `connectionStatus` and `syncStatus` as `StateFlow`.
-    - Add methods to trigger manual connection tests and synchronisation.
-- Add `ServerStatusIndicator` component:
-    - Displays a small status dot and label (Connected, Offline, etc.).
-- Add `StatusScreen` composable:
-    - Detailed breakdown of API, Database, and Auth status.
-    - Environment info (Debug/Production, Base URL).
-    - Resource sync summary (count of records for Clients, Machines, etc.).
-    - "Test Connection" and "Synchronise Now" buttons.
-- Update `AdaptiveShell`:
-    - Integrate `ServerStatusIndicator` into the `TopAppBar`.
-- Update `destinations`:
-    - Add a "Status" destination to the navigation menu.
+- Add a "Custom API URL" override field in the `DevelopmentAccounts` section. This will allow you to quickly change the IP if you switch networks without having to re-build the app.
 
 ## Verification Plan
 
 ### Automated Tests
-- Run `gradlew clean :app:assembleDebug` to ensure compilation.
-- I will add `println` logging to verify:
-    - Connectivity state changes (Wi-Fi on/off).
-    - API response codes and latency.
-    - Sync counts.
+- Run `gradlew clean :app:assembleDebug`
 
 ### Manual Verification
-- **Emulator Test**: Verify `http://10.0.2.2:8000/api/` reaches the backend.
-- **Physical Device Check**: Report the current `BuildConfig.API_BASE_URL` and explain how to update it for LAN testing.
-- **Status States**:
-    - Trigger "Offline" by disabling network.
-    - Trigger "Authentication Required" by logging out.
-    - Verify "Connected" when everything is working.
-- **Sync Summary**: Confirm record counts match expected values from the backend (if known, or at least that they are non-zero).
-
-## Open Questions
-- Should the sync check perform a full sync or just a "dry run" count? (Requirement says: "show whether each resource loaded successfully and show the number of records received", so I will implement it as a fetch-and-count).
+1.  Restart Laravel with `--host=0.0.0.0`.
+2.  Deploy the app to the Xiaomi phone.
+3.  Check the "Status" screen in the app to confirm "Connected".
+4.  If it still shows "Offline", verify that both the phone and the computer are on the same Wi-Fi network.

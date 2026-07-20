@@ -1,10 +1,7 @@
-- [x] Update `Core.kt` with health and sync models
-- [x] Add `GET health` and resource list endpoints to `CapApi`
-- [x] Implement `ConnectivityObserver` for network monitoring
-- [x] Implement `StatusRepository` for health and sync state
-- [x] Update `NetworkModule` for dependency injection
-- [x] Update `MainViewModel` to expose connection and sync state
-- [x] Add `ServerStatusIndicator` to the UI
-- [x] Add `StatusScreen` for detailed diagnostics
-- [x] Integrate "Status" into app navigation
-- [x] Verify build and connectivity
+- [x] Update `API_BASE_URL` in `app/build.gradle.kts` to `http://10.174.206.104:8000/api/`
+- [x] Add URL override logic to `MainActivity.kt`
+- [x] Sync Gradle
+- [x] Run clean build and `:app:assembleDebug`
+- [/] Verify connectivity on physical device
+- [ ] Verify all navigation links (Dashboard, Clients, Machines, etc.)
+- [ ] Verify Logout flow
