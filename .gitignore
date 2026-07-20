@@ -41,3 +41,8 @@ lerna-debug.log*
 
 # Private source documents
 reference-docs/
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
