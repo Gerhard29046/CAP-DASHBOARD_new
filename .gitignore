@@ -21,6 +21,8 @@ mobile-android/app/build/
 mobile-android/local.properties
 *.jks
 *.keystore
+**/service-account*.json
+**/*firebase-admin*.json
 
 # Logs
 *.log

@@ -32,7 +32,6 @@ Route::get('/health', function () {
     return response()->json([
         'status' => 'ok',
         'message' => 'Laravel API and database connection are working.',
-        'database' => DB::connection()->getDatabaseName(),
     ]);
 });
 
