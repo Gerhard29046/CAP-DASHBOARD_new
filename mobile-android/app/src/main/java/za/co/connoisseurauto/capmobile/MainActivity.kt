@@ -43,7 +43,7 @@ class MainViewModel @Inject constructor(
 ) : ViewModel() {
     var state by mutableStateOf(AuthState())
         private set
-    
+
     val status = statusRepo.status
 
     init {
@@ -54,10 +54,13 @@ class MainViewModel @Inject constructor(
 
     fun login(email: String, password: String) = viewModelScope.launch {
         state = state.copy(loading = true, error = null)
-        state = try {
-            AuthState(false, auth.login(email, password))
+        try {
+            val user = auth.login(email, password)
+            state = AuthState(false, user)
+        } catch (e: ApiException) {
+            state = state.copy(loading = false, error = e.message)
         } catch (e: Exception) {
-            AuthState(false, error = "Unable to sign in. Check your email address and password.")
+            state = state.copy(loading = false, error = "An unexpected error occurred.")
         }
     }
 
@@ -109,40 +112,92 @@ fun CapApp(vm: MainViewModel = hiltViewModel()) {
 fun LoginScreen(error: String?, login: (String, String) -> Unit) {
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
-    Box(Modifier.fillMaxSize().imePadding().padding(24.dp), Alignment.Center) {
-        Card(Modifier.fillMaxWidth().widthIn(max = 460.dp)) {
-            Column(Modifier.padding(28.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Icon(
-                    Icons.Outlined.Engineering,
-                    null,
-                    Modifier.size(48.dp),
-                    tint = MaterialTheme.colorScheme.primary
-                )
-                Text("CAP Mobile", style = MaterialTheme.typography.headlineMedium)
-                Text("Connoisseur Automotive Products")
-                OutlinedTextField(
-                    email,
-                    { email = it },
-                    Modifier.fillMaxWidth(),
-                    label = { Text("Email Address") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email)
-                )
-                OutlinedTextField(
-                    password,
-                    { password = it },
-                    Modifier.fillMaxWidth(),
-                    label = { Text("Password") },
-                    visualTransformation = PasswordVisualTransformation()
-                )
-                error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                Button(
-                    { login(email.trim(), password) },
-                    Modifier.fillMaxWidth(),
-                    enabled = email.isNotBlank() && password.isNotBlank()
-                ) {
-                    Text("Sign In")
+    val vm: MainViewModel = hiltViewModel()
+
+    LazyColumn(
+        Modifier.fillMaxSize().imePadding().padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        item {
+            Card(Modifier.fillMaxWidth().widthIn(max = 460.dp)) {
+                Column(Modifier.padding(28.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Icon(
+                        Icons.Outlined.Engineering,
+                        null,
+                        Modifier.size(48.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Text("CAP Mobile", style = MaterialTheme.typography.headlineMedium)
+                    Text("Connoisseur Automotive Products")
+                    OutlinedTextField(
+                        email,
+                        { email = it },
+                        Modifier.fillMaxWidth(),
+                        label = { Text("Email Address") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email)
+                    )
+                    OutlinedTextField(
+                        password,
+                        { password = it },
+                        Modifier.fillMaxWidth(),
+                        label = { Text("Password") },
+                        visualTransformation = PasswordVisualTransformation()
+                    )
+                    error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                    Button(
+                        { login(email.trim(), password) },
+                        Modifier.fillMaxWidth(),
+                        enabled = email.isNotBlank() && password.isNotBlank()
+                    ) {
+                        Text("Sign In")
+                    }
+                    Text("Version ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.labelSmall)
                 }
-                Text("Version ${BuildConfig.VERSION_NAME}")
+            }
+        }
+
+        if (BuildConfig.DEBUG) {
+            item {
+                Spacer(Modifier.height(24.dp))
+                DevelopmentAccounts(
+                    onSelect = { e, p -> email = e; password = p }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun DevelopmentAccounts(onSelect: (String, String) -> Unit) {
+    Card(
+        Modifier.fillMaxWidth().widthIn(max = 460.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Development Accounts", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text("Click to use", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+
+            val accounts = listOf(
+                Triple("Administrator", "admin@connoisseurauto.co.za", "admin123"),
+                Triple("Technician", "technician@connoisseurauto.co.za", "tech123"),
+                Triple("Accountant", "accounts@connoisseurauto.co.za", "acc123")
+            )
+
+            accounts.forEach { (role, email, pass) ->
+                Row(
+                    Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(role, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                        Text(email, style = MaterialTheme.typography.labelSmall)
+                    }
+                    Button({ onSelect(email, pass) }, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
+                        Text("Use", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
             }
         }
     }
@@ -262,6 +317,9 @@ fun AdaptiveShell(user: CapUser, logout: () -> Unit) {
                     title = { Text(selected) },
                     actions = {
                         ServerStatusIndicator(status.connection)
+                        IconButton(onClick = { selected = "Status" }) {
+                            Icon(Icons.Outlined.CloudSync, "System diagnostics")
+                        }
                         IconButton(onClick = logout) {
                             Icon(Icons.Outlined.Logout, "Logout")
                         }

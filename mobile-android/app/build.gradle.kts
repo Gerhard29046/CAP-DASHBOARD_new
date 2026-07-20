@@ -1,7 +1,16 @@
+import java.util.Properties
+
 plugins { alias(libs.plugins.android.application); alias(libs.plugins.kotlin.android); alias(libs.plugins.kotlin.compose); alias(libs.plugins.kotlin.serialization); alias(libs.plugins.ksp); alias(libs.plugins.hilt) }
+val localProperties = Properties().apply {
+    val file = rootProject.file("local.properties")
+    if (file.exists()) file.inputStream().use(::load)
+}
+val debugApiBaseUrl = localProperties
+    .getProperty("CAP_API_BASE_URL", "http://127.0.0.1:8000/api/")
+    .let { if (it.endsWith("/")) it else "$it/" }
 android { namespace="za.co.connoisseurauto.capmobile"; compileSdk=36
  defaultConfig { applicationId="za.co.connoisseurauto.capmobile"; minSdk=26; targetSdk=36; versionCode=1; versionName="1.0.0"; testInstrumentationRunner="androidx.test.runner.AndroidJUnitRunner"; vectorDrawables.useSupportLibrary=true }
- buildTypes { debug { buildConfigField("String","API_BASE_URL","\"http://10.0.2.2:8000/api/\"") }; release { isMinifyEnabled=true; buildConfigField("String","API_BASE_URL","\"https://dashboard.connoisseurauto.co.za/api/\""); proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"),"proguard-rules.pro") } }
+ buildTypes { debug { buildConfigField("String","API_BASE_URL","\"$debugApiBaseUrl\"") }; release { isMinifyEnabled=true; buildConfigField("String","API_BASE_URL","\"https://dashboard.connoisseurauto.co.za/api/\""); proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"),"proguard-rules.pro") } }
  buildFeatures { compose=true; buildConfig=true }; packaging.resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" 
 
  compileOptions {

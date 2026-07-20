@@ -5,6 +5,7 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFactory
@@ -60,6 +61,7 @@ interface CapApi {
     private val prefs=EncryptedSharedPreferences.create(context,"cap_secure_session",MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build(),EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM)
     var token:String? get()=prefs.getString("token",null)
     set(value){prefs.edit().apply{if(value==null)remove("token")else putString("token",value)}.apply()}
+
 }
 
 enum class ConnectionStatus { Connected, Checking, Offline, AuthRequired, ServerError, DbUnavailable, SyncError }
@@ -150,13 +152,21 @@ class ConnectivityObserver(context: Context) {
     @Provides @Singleton fun json() = Json { ignoreUnknownKeys = true }
     @Provides @Singleton fun api(session: SecureSession, json: Json): CapApi {
         val client = OkHttpClient.Builder()
-            .connectTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(10, TimeUnit.SECONDS)
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(15, TimeUnit.SECONDS)
             .addInterceptor(Interceptor { chain ->
-                chain.proceed(chain.request().newBuilder()
+                val request = chain.request().newBuilder()
                     .header("Accept", "application/json")
                     .apply { session.token?.let { header("Authorization", "Bearer $it") } }
-                    .build())
+                    .build()
+                if (BuildConfig.DEBUG) {
+                    Log.d("CAP_NETWORK", "${request.method} ${request.url}")
+                }
+                val response = chain.proceed(request)
+                if (BuildConfig.DEBUG) {
+                    Log.d("CAP_NETWORK", "${response.code} ${request.method} ${request.url}")
+                }
+                response
             }).build()
         return Retrofit.Builder()
             .baseUrl(BuildConfig.API_BASE_URL)
@@ -167,12 +177,30 @@ class ConnectivityObserver(context: Context) {
     }
 }
 
+class ApiException(message: String) : Exception(message)
+
 @Singleton class AuthRepository @Inject constructor(private val api: CapApi, private val session: SecureSession) {
     suspend fun restore(): CapUser? = if (session.token == null) null else runCatching { api.me().user }.getOrElse { session.token = null; null }
     suspend fun login(email: String, password: String): CapUser {
-        val r = api.login(LoginRequest(email, password))
-        session.token = r.token
-        return r.user
+        return try {
+            val r = api.login(LoginRequest(email, password))
+            session.token = r.token
+            r.user
+        } catch (e: retrofit2.HttpException) {
+            val msg = when (e.code()) {
+                401 -> "Incorrect email address or password."
+                403 -> "Account does not have permission."
+                404 -> "Login endpoint not found."
+                422 -> "Please provide a valid email address and password."
+                in 500..599 -> "The CAP server encountered an error."
+                else -> "Login failed (${e.code()})."
+            }
+            throw ApiException(msg)
+        } catch (e: java.io.IOException) {
+            throw ApiException("Unable to reach the CAP server. Please check your connection.")
+        } catch (e: Exception) {
+            throw ApiException("An unexpected error occurred: ${e.message}")
+        }
     }
     suspend fun logout() { runCatching { api.logout() }; session.token = null }
 }
