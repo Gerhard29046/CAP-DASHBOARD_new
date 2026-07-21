@@ -1,6 +1,7 @@
 package com.CAPDATABASE.capdatabase
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SyncResourcesTest {
@@ -26,5 +27,17 @@ class SyncResourcesTest {
         val user = CapUser("uid-1", "User", "user@example.test", "user", true)
 
         assertEquals(emptyList<SyncResource>(), allowedSyncResources(user))
+    }
+
+    @Test
+    fun `client machine relationship accepts string and legacy numeric ids`() {
+        val machines = listOf(
+            CapRecord("one", mapOf("client_id" to "client-a")),
+            CapRecord("two", mapOf("client_id" to 42)),
+            CapRecord("three", mapOf("client_id" to "other"))
+        )
+
+        assertEquals(listOf("two"), relatedRecords(machines, "client_id", "42").map { it.id })
+        assertTrue(sameRecordId("42", 42))
     }
 }

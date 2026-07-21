@@ -63,6 +63,10 @@ export default function MachineDetail() {
 
   useEffect(() => { load(); }, [id]);
 
+  useEffect(() => apiClient.entities.Machine.watch(id, (record) => {
+    if (record) setMachine(record);
+  }), [id]);
+
   const handleEdit = async (form) => {
     setSaving(true);
     await apiClient.entities.Machine.update(id, form);
@@ -89,7 +93,7 @@ export default function MachineDetail() {
 
   await apiClient.entities.ServiceRecord.update(editService.id, {
     ...form,
-    machine_id: Number(id),
+    machine_id: String(id),
   });
 
   setSaving(false);

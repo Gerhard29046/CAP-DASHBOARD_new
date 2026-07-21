@@ -204,8 +204,8 @@ export default function JobCardDetail() {
     try {
       const payload = {
         ...editForm,
-        client_id: editForm.client_id ? Number(editForm.client_id) : null,
-        machine_id: editForm.machine_id ? Number(editForm.machine_id) : null,
+        client_id: editForm.client_id ? String(editForm.client_id) : null,
+        machine_id: editForm.machine_id ? String(editForm.machine_id) : null,
         date_completed: editForm.date_completed || null,
       };
 
@@ -229,7 +229,7 @@ export default function JobCardDetail() {
     const unitPrice = Number(form.unit_price) || 0;
 
     await apiClient.entities.JobCardLine.create({
-      job_card_id: Number(id),
+      job_card_id: String(id),
       line_type: form.line_type,
       description: form.description,
       quantity,

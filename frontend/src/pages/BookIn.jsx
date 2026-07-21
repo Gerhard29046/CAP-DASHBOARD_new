@@ -100,8 +100,8 @@ export default function BookIn() {
 
   try {
    const card = await apiClient.entities.JobCard.create({
-  client_id: Number(client.id),
-  machine_id: Number(selectedMachineId),
+  client_id: String(client.id),
+  machine_id: String(selectedMachineId),
   job_number: form.job_number,
   status: "Booked In",
   date_received: form.date_booked_in,

@@ -5,6 +5,7 @@ import {
   doc,
   getDoc,
   getDocs,
+  onSnapshot,
   query,
   serverTimestamp,
   setDoc,
@@ -18,6 +19,7 @@ import {
 } from "firebase/auth";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import { auth, db, storage } from "@/lib/firebase";
+import { relatedRecords } from "@/lib/records";
 
 const endpointMap = {
   Client: "clients",
@@ -155,8 +157,29 @@ function makeEntity(entityName) {
     delete: async (id) => deleteRecord(collectionName, id),
     filter: async (conditions = {}, sort, limit) =>
       applyListOptions(await listCollection(collectionName, conditions), sort, limit),
+    subscribe: (conditions = {}, onData, onError, sort, limit) => {
+      const filters = Object.entries(conditions).map(([field, value]) => where(field, "==", value));
+      const source = filters.length ? query(collection(db, collectionName), ...filters) : collection(db, collectionName);
+      return onSnapshot(source, (snapshot) => {
+        onData(applyListOptions(snapshot.docs.map(fromSnapshot), sort, limit));
+      }, onError);
+    },
+    watch: (id, onData, onError) => onSnapshot(doc(db, collectionName, String(id)), (snapshot) => {
+      onData(snapshot.exists() ? fromSnapshot(snapshot) : null);
+    }, onError),
   };
 }
+
+const clientEntity = makeEntity("Client");
+const machineEntity = makeEntity("Machine");
+
+clientEntity.get = async (id) => {
+  const [client, machines] = await Promise.all([
+    getRecord("clients", id),
+    listCollection("machines"),
+  ]);
+  return { ...client, machines: relatedRecords(machines, "client_id", id) };
+};
 
 function parseBody(options) {
   if (!options.body) return {};
@@ -297,8 +320,8 @@ async function request(path, options = {}) {
 export const apiClient = {
   request,
   entities: {
-    Client: makeEntity("Client"),
-    Machine: makeEntity("Machine"),
+    Client: clientEntity,
+    Machine: machineEntity,
     ServiceRecord: makeEntity("ServiceRecord"),
     JobCard: makeEntity("JobCard"),
     JobCardLine: makeEntity("JobCardLine"),

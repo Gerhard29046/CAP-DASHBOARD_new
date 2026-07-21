@@ -31,7 +31,7 @@ export default function InvoiceQueue() {
 
     // Only show completed or ready-to-invoice job cards
     const billable = jobCards.filter(jc =>
-      jc.status === "Completed" || jc.status === "Ready to Invoice" || jc.status === "Invoiced"
+      jc.status === "Completed" || jc.status === "Ready to Invoice" || jc.status === "Ready for Invoice" || jc.status === "Invoiced"
     );
 
     const enriched = billable.map(jc => {
@@ -106,7 +106,7 @@ export default function InvoiceQueue() {
     setMarkingId(null);
   };
 
-  const pending  = items.filter(i => i.status === "Completed" || i.status === "Ready to Invoice");
+  const pending  = items.filter(i => i.status === "Completed" || i.status === "Ready to Invoice" || i.status === "Ready for Invoice");
   const invoiced = items.filter(i => i.status === "Invoiced" || i.status === "Collected");
 
   if (loading) {

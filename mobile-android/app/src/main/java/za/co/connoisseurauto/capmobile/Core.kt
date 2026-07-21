@@ -10,6 +10,7 @@ import com.google.firebase.FirebaseNetworkException
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseAuthException
 import com.google.firebase.firestore.DocumentSnapshot
+import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreException
 import dagger.Module
@@ -28,7 +29,10 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
@@ -59,6 +63,28 @@ val syncResources = listOf(
     SyncResource("Service Records", "services.view", "service_records"),
     SyncResource("Job Cards", "job_cards.view", "job_cards")
 )
+
+data class CapRecord(
+    val id: String,
+    val fields: Map<String, Any?>
+) {
+    fun text(key: String): String = fields[key]?.toString().orEmpty()
+}
+
+fun sameRecordId(left: Any?, right: Any?): Boolean =
+    left != null && right != null && left.toString() == right.toString()
+
+fun relatedRecords(records: List<CapRecord>, foreignKey: String, parentId: String): List<CapRecord> =
+    records.filter { sameRecordId(it.fields[foreignKey], parentId) }
+
+data class RecordsState(
+    val loading: Boolean = true,
+    val records: Map<String, List<CapRecord>> = emptyMap(),
+    val error: String? = null,
+    val lastUpdated: Long = 0
+) {
+    fun collection(name: String): List<CapRecord> = records[name].orEmpty()
+}
 
 fun allowedSyncResources(user: CapUser): List<SyncResource> =
     syncResources.filter { user.hasPermission(it.permission) }
@@ -150,6 +176,56 @@ class StatusRepository @Inject constructor(
             lastSync = System.currentTimeMillis(),
             lastError = results.firstOrNull { result -> result.error != null }?.error
         ) }
+    }
+}
+
+@Singleton
+class RecordsRepository @Inject constructor(
+    private val firestore: FirebaseFirestore
+) {
+    fun observeCollection(name: String): Flow<List<CapRecord>> = callbackFlow {
+        val registration = firestore.collection(name).addSnapshotListener { snapshot, error ->
+            when {
+                error != null -> close(error)
+                snapshot != null -> trySend(snapshot.documents.map { document ->
+                    CapRecord(document.id, document.data.orEmpty())
+                })
+            }
+        }
+        awaitClose { registration.remove() }
+    }
+
+    fun observeCollections(names: List<String>): Flow<RecordsState> {
+        if (names.isEmpty()) return flowOf(RecordsState(loading = false))
+        val sources = names.map(::observeCollection)
+        return combine(sources) { snapshots ->
+            RecordsState(
+                loading = false,
+                records = names.zip(snapshots.toList()).toMap(),
+                lastUpdated = System.currentTimeMillis()
+            )
+        }.catch { error ->
+            emit(RecordsState(loading = false, error = error.userMessage()))
+        }
+    }
+
+    suspend fun create(collection: String, fields: Map<String, Any?>): String {
+        val payload = fields.filterValues { it != null }.toMutableMap().apply {
+            put("created_at", FieldValue.serverTimestamp())
+            put("updated_at", FieldValue.serverTimestamp())
+        }
+        return firestore.collection(collection).add(payload).await().id
+    }
+
+    suspend fun update(collection: String, id: String, fields: Map<String, Any?>) {
+        val payload = fields.filterValues { it != null }.toMutableMap().apply {
+            put("updated_at", FieldValue.serverTimestamp())
+        }
+        firestore.collection(collection).document(id).update(payload).await()
+    }
+
+    suspend fun delete(collection: String, id: String) {
+        firestore.collection(collection).document(id).delete().await()
     }
 }
 

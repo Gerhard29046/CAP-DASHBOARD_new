@@ -65,3 +65,14 @@ The original Laravel administrator credentials did not authenticate against the
 legacy Cloud Run API during the Firebase cutover, so no legacy MySQL business rows
 were copied automatically. Empty Firestore collections therefore represent zero
 live Firebase records, not a local-server failure.
+
+## Record identifiers and live relationships
+
+Firestore-generated document IDs are strings. Keep `client_id`, `machine_id`, and
+`job_card_id` as strings in both clients; converting them to numbers breaks linked
+record queries. The web client detail watches the `machines` collection and resolves
+machines by `client_id`. Android uses the same collection names and snapshot listeners,
+so client, machine, service, and job changes are delivered without a local server.
+
+The canonical invoice-ready job status is `Ready to Invoice`. The web invoice queue
+also accepts the older `Ready for Invoice` spelling so existing records are not hidden.

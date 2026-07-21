@@ -98,14 +98,25 @@ export default function ClientDetail() {
   const [saving, setSaving] = useState(false);
 
   const load = async () => {
-  const c = await apiClient.entities.Client.get(id);
+    const c = await apiClient.entities.Client.get(id);
+    setClient(c);
+    setMachines(c.machines || []);
+    setLoading(false);
+  };
 
-  setClient(c);
-  setMachines(c.machines || []);
-  setLoading(false);
-};
-
-  useEffect(() => { load(); }, [id]);
+  useEffect(() => {
+    load();
+    const unsubscribeClient = apiClient.entities.Client.watch(id, (record) => {
+      if (record) setClient(record);
+    });
+    const unsubscribeMachines = apiClient.entities.Machine.subscribe({}, (records) => {
+      setMachines(records.filter((machine) => String(machine.client_id) === String(id)));
+    });
+    return () => {
+      unsubscribeClient();
+      unsubscribeMachines();
+    };
+  }, [id]);
 
   const handleEdit = async (form) => {
     setSaving(true);
