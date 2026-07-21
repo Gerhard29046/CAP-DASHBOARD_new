@@ -13,7 +13,7 @@ class CreateAdministratorCommandTest extends TestCase
 
     public function test_administrator_can_be_created_from_a_password_environment_variable(): void
     {
-        putenv('TEST_ADMIN_PASSWORD=temporary-password-123');
+        putenv('TEST_ADMIN_PASSWORD=TempPass1!');
 
         try {
             $this->artisan('admin:create', [
@@ -27,7 +27,7 @@ class CreateAdministratorCommandTest extends TestCase
             $this->assertSame('admin', $administrator->role);
             $this->assertTrue($administrator->is_active);
             $this->assertTrue($administrator->must_change_password);
-            $this->assertTrue(Hash::check('temporary-password-123', $administrator->password));
+            $this->assertTrue(Hash::check('TempPass1!', $administrator->password));
         } finally {
             putenv('TEST_ADMIN_PASSWORD');
         }

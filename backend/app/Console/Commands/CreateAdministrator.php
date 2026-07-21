@@ -21,10 +21,10 @@ class CreateAdministrator extends Command
         $passwordVariable = $this->option('password-env');
         $password = $passwordVariable
             ? getenv($passwordVariable)
-            : $this->secret('Password (minimum 12 characters)');
+            : $this->secret('Password (8+ characters with uppercase, lowercase, number, and symbol)');
 
-        if (! is_string($password) || strlen($password) < 12) {
-            $this->error('Password must contain at least 12 characters.');
+        if (! is_string($password) || ! preg_match('/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/', $password)) {
+            $this->error('Password must contain at least 8 characters, including uppercase, lowercase, a number, and a symbol.');
 
             return self::FAILURE;
         }
