@@ -10,8 +10,6 @@ import {
   FileText,
   CalendarCheck,
   HelpCircle,
-  Copy,
-  Check,
 } from "lucide-react";
 import { useAuth } from "@/lib/AuthContext";
 
@@ -21,8 +19,6 @@ export default function Login() {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const showDemoCredentials =
-    import.meta.env.DEV && import.meta.env.VITE_SHOW_DEMO_CREDENTIALS === "true";
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -146,7 +142,6 @@ export default function Login() {
                 Sign in
               </button>
 
-              {showDemoCredentials && <DemoLoginDetails />}
             </form>
 
           </section>
@@ -194,71 +189,4 @@ function InputField({ label, icon, value, onChange, type }) {
       </div>
     </div>
   );
-}
-
-const DEMO_ACCOUNTS = [
-  { role: "Admin", email: "admin@connoisseurauto.co.za", password: "admin123" },
-  { role: "Technician", email: "technician@connoisseurauto.co.za", password: "tech123" },
-  { role: "Accountant", email: "accounts@connoisseurauto.co.za", password: "acc123" },
-];
-
-function DemoLoginDetails() {
-  const [copied, setCopied] = useState("");
-
-  const copy = async (key, value) => {
-    await navigator.clipboard.writeText(value);
-    setCopied(key);
-    window.setTimeout(() => setCopied(""), 1200);
-  };
-
-  return (
-    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 shadow-sm">
-      <p className="font-extrabold text-[#004225] mb-3">Demo Login Details</p>
-      <div className="grid gap-3 sm:grid-cols-3">
-        {DEMO_ACCOUNTS.map((account) => (
-          <div key={account.role} className="rounded-lg border border-slate-200 bg-white p-3 min-w-0">
-            <p className="text-sm font-bold text-[#004225] mb-2">{account.role}</p>
-            <CredentialRow
-              label="Email"
-              value={account.email}
-              copyKey={`${account.role}-email`}
-              copied={copied}
-              onCopy={copy}
-            />
-            <CredentialRow
-              label="Password"
-              value={account.password}
-              copyKey={`${account.role}-password`}
-              copied={copied}
-              onCopy={copy}
-            />
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function CredentialRow({ label, value, copyKey, copied, onCopy }) {
-  const CopiedIcon = copied === copyKey ? Check : Copy;
-  return (
-    <div className="mb-2 last:mb-0">
-      <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{label}</p>
-      <div className="flex items-center gap-1">
-        <code className="min-w-0 flex-1 break-all text-xs text-slate-800">{value}</code>
-        <button
-          type="button"
-          onClick={() => onCopy(copyKey, value)}
-          className="shrink-0 rounded-md p-1.5 text-slate-500 hover:bg-slate-100 hover:text-[#004225]"
-          aria-label={`Copy ${accountLabel(label)}`}
-        >
-          <CopiedIcon size={14} />
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function accountLabel(label) {
-  return label.toLowerCase();
 }
