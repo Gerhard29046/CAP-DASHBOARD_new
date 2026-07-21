@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "100946498038",
+    "project_id": "capdatabasefb2",
+    "storage_bucket": "capdatabasefb2.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:100946498038:android:d71d04a6e1f5b02bc677d7",
+        "android_client_info": {
+          "package_name": "com.CAPDATABASE.capdatabase"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA0SDAUhZxb9jJykAfr4n_x73rIMQXrV6E"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

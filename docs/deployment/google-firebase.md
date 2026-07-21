@@ -1,43 +1,37 @@
-# Cloudflare and Google/Firebase deployment
+# Cloudflare and Firebase deployment
 
-## Target architecture
+## Live architecture
 
-- Cloudflare Workers Static Assets serves the built React SPA from `frontend/dist`
-  at `https://capdashboard.gerhardvanwijk.workers.dev`.
-- Cloud Run serves the Laravel API.
-- Cloud SQL for MySQL remains the relational system of record.
-- Cloud Storage stores uploaded knowledge-base media and documents.
-- Secret Manager stores `APP_KEY`, database credentials, and Google OAuth secrets.
-- Android continues to use Laravel bearer authentication. Firebase services can add
-  Crashlytics, App Distribution, and FCM without moving authorization or business
-  records out of Laravel.
+- Cloudflare Workers Static Assets serves `frontend/dist` at
+  `https://capdashboard.gerhardvanwijk.workers.dev`.
+- Firebase project `capdatabasefb2` provides Email/Password Authentication.
+- The named Cloud Firestore database `capdashboard` is the shared web/Android data
+  store.
+- Firebase Storage bucket `capdatabasefb2.firebasestorage.app` stores optimized
+  uploads.
+- Android app `1:100946498038:android:d71d04a6e1f5b02bc677d7` uses package
+  `com.CAPDATABASE.capdatabase` and the checked-in Firebase client configuration at
+  `mobile-android/app/google-services.json`.
 
-Firebase Auth, Firestore, and direct client access to Cloud SQL or Cloud Storage are
-not part of this architecture.
+Laravel/Cloud Run remains in the repository for legacy and future integrations, but
+it is not an active dependency for normal web or Android authentication and
+Firestore synchronisation. Firebase client configuration is public application
+metadata; Firebase Admin credentials, passwords, tokens, and service-account keys
+must never be committed.
 
-## Required project inputs
+## Frontend build and deployment
 
-- Google Cloud/Firebase project: `capdatabasefb2` (Blaze/pay-as-you-go)
-- deployment region: `africa-south1`
-- production frontend domain and optional custom domain
-- production API domain or the generated Cloud Run URL
-- existing MySQL migration/import plan
-- Google OAuth client details for the production callback
-
-## Frontend build and deploy
-
-The `capdashboard` Cloudflare Worker is connected to the GitHub repository and
-deploys changes from the production branch. Its configuration is in
+The existing Cloudflare Worker is named `capdashboard` and is connected to
+`Gerhard29046/CAP-DASHBOARD_new`. Its configuration is
 `frontend/wrangler.jsonc`.
-
-Configure the Cloudflare build with:
 
 - root directory: `frontend`
 - build command: `npm ci && npm run build`
 - deploy command: `npx wrangler deploy`
-- production API configuration is versioned in `frontend/.env.production`
+- output directory: `frontend/dist`
+- Firebase Vite variables: `frontend/.env.production`
 
-To verify or deploy manually:
+Manual verification and deployment:
 
 ```powershell
 npm --prefix frontend ci
@@ -47,50 +41,27 @@ npx wrangler deploy
 Pop-Location
 ```
 
-The Worker configuration supplies SPA fallback behavior. Set Laravel
-`CORS_ALLOWED_ORIGINS` to the exact Cloudflare frontend origin.
+The Worker configuration provides SPA fallback. The production domain must remain
+in Firebase Authentication → Settings → Authorized domains.
 
-## Laravel production configuration
+## Firebase security and data
 
-Use Cloud Run environment variables for non-secret values and Secret Manager
-references for secrets. At minimum:
+- `firestore.rules` requires an authenticated, active `users/{uid}` profile and
+  enforces the existing CAP permission keys.
+- Only administrators can manage user profiles, roles, and permissions.
+- `storage.rules` restricts uploads to the authenticated user's path and requires
+  an existing upload permission. Images are limited to 8 MB after client-side
+  resizing/WebP compression; other approved documents are limited to 20 MB.
+- `firebase.json` targets the named `capdashboard` Firestore database.
 
-```dotenv
-APP_ENV=production
-APP_DEBUG=false
-APP_URL=https://API_HOST
-LOG_CHANNEL=stderr
-LOG_LEVEL=info
-DB_CONNECTION=mysql
-DB_HOST=...
-DB_PORT=3306
-DB_DATABASE=...
-DB_USERNAME=...
-SESSION_DRIVER=database
-CACHE_STORE=database
-QUEUE_CONNECTION=database
-FRONTEND_URL=https://capdashboard.gerhardvanwijk.workers.dev
-CORS_ALLOWED_ORIGINS=https://capdashboard.gerhardvanwijk.workers.dev
-GOOGLE_CALENDAR_REDIRECT_URI=https://API_HOST/google-calendar/callback
+Deploy rules from the repository root:
+
+```powershell
+npx firebase-tools deploy --only firestore:rules --project capdatabasefb2
+npx firebase-tools deploy --only storage --project capdatabasefb2
 ```
 
-Keep one stable production `APP_KEY`; changing it makes encrypted Google Calendar
-tokens unreadable. Run `php artisan migrate --force` as a controlled deployment job,
-not during every container boot. Use `/up` for process liveness and `/api/health` for
-database-aware readiness.
-
-## Remaining production blockers
-
-Before the first backend deployment:
-
-1. Replace local knowledge-file storage with a configurable Cloud Storage disk.
-2. Replace Laravel's development server in the container with a production server.
-3. Provision a new Cloud SQL instance in `africa-south1`, Secret Manager entries,
-   and least-privilege service accounts. No existing production MySQL data needs
-   migration.
-4. Run backend tests against the intended database configuration.
-5. Register the Google OAuth production redirect URI.
-
-For Android Firebase services, register package
-`za.co.connoisseurauto.capmobile`. Never place a Firebase Admin service-account key
-inside the Android app or repository.
+The original Laravel administrator credentials did not authenticate against the
+legacy Cloud Run API during the Firebase cutover, so no legacy MySQL business rows
+were copied automatically. Empty Firestore collections therefore represent zero
+live Firebase records, not a local-server failure.

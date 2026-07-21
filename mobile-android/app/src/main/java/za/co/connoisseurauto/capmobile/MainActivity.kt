@@ -1,4 +1,4 @@
-package za.co.connoisseurauto.capmobile
+package com.CAPDATABASE.capdatabase
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -16,6 +16,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -48,7 +49,12 @@ class MainViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            state = AuthState(false, auth.restore())
+            val restoredUser = auth.restore()
+            state = AuthState(false, restoredUser)
+            if (restoredUser != null) {
+                statusRepo.checkHealth()
+                statusRepo.sync(restoredUser)
+            }
         }
     }
 
@@ -57,6 +63,8 @@ class MainViewModel @Inject constructor(
         try {
             val user = auth.login(email, password)
             state = AuthState(false, user)
+            statusRepo.checkHealth()
+            statusRepo.sync(user)
         } catch (e: ApiException) {
             state = state.copy(loading = false, error = e.message)
         } catch (e: Exception) {
@@ -70,7 +78,7 @@ class MainViewModel @Inject constructor(
     }
 
     fun checkHealth() = viewModelScope.launch { statusRepo.checkHealth() }
-    fun sync() = viewModelScope.launch { statusRepo.sync() }
+    fun sync() = state.user?.let { user -> viewModelScope.launch { statusRepo.sync(user) } }
 }
 
 @AndroidEntryPoint
@@ -110,7 +118,7 @@ fun CapApp(vm: MainViewModel = hiltViewModel()) {
 
 @Composable
 fun LoginScreen(error: String?, login: (String, String) -> Unit) {
-    var email by remember { mutableStateOf("") }
+    var email by remember { mutableStateOf(BuildConfig.DEFAULT_LOGIN_EMAIL) }
     var password by remember { mutableStateOf("") }
     val vm: MainViewModel = hiltViewModel()
 
@@ -157,49 +165,6 @@ fun LoginScreen(error: String?, login: (String, String) -> Unit) {
             }
         }
 
-        if (BuildConfig.DEBUG) {
-            item {
-                Spacer(Modifier.height(24.dp))
-                DevelopmentAccounts(
-                    onSelect = { e, p -> email = e; password = p }
-                )
-            }
-        }
-    }
-}
-
-@Composable
-fun DevelopmentAccounts(onSelect: (String, String) -> Unit) {
-    Card(
-        Modifier.fillMaxWidth().widthIn(max = 460.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-    ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Development Accounts", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Text("Click to use", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-
-            val accounts = listOf(
-                Triple("Administrator", "admin@connoisseurauto.co.za", "admin123"),
-                Triple("Technician", "technician@connoisseurauto.co.za", "tech123"),
-                Triple("Accountant", "accounts@connoisseurauto.co.za", "acc123")
-            )
-
-            accounts.forEach { (role, email, pass) ->
-                Row(
-                    Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(role, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-                        Text(email, style = MaterialTheme.typography.labelSmall)
-                    }
-                    Button({ onSelect(email, pass) }, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
-                        Text("Use", style = MaterialTheme.typography.labelSmall)
-                    }
-                }
-            }
-        }
     }
 }
 
@@ -243,6 +208,7 @@ fun ServerStatusIndicator(status: ConnectionStatus) {
 fun StatusScreen(vm: MainViewModel) {
     val status by vm.status.collectAsState()
     val fmt = remember { SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()) }
+    val uriHandler = LocalUriHandler.current
 
     LazyColumn(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item {
@@ -255,11 +221,13 @@ fun StatusScreen(vm: MainViewModel) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Connection Details", fontWeight = FontWeight.Bold)
                     StatusRow("Status", status.connection.name)
-                    StatusRow("API Healthy", if (status.apiHealthy) "Yes" else "No")
-                    StatusRow("DB Healthy", if (status.dbHealthy) "Yes" else "No")
+                    StatusRow("Firebase Auth", if (status.apiHealthy) "Connected" else "Not connected")
+                    StatusRow("Cloud Firestore", if (status.dbHealthy) "Connected" else "Not connected")
                     StatusRow("Latency", "${status.latency} ms")
                     StatusRow("Environment", if (BuildConfig.DEBUG) "Debug" else "Production")
-                    StatusRow("Base URL", BuildConfig.API_BASE_URL)
+                    StatusRow("Firebase Project", "capdatabasefb2")
+                    StatusRow("Firestore Database", "capdashboard")
+                    StatusRow("Cloudflare App", BuildConfig.WEB_APP_URL)
                     StatusRow("Last Sync", if (status.lastSync > 0) fmt.format(Date(status.lastSync)) else "Never")
                     
                     if (status.lastError != null) {
@@ -270,6 +238,10 @@ fun StatusScreen(vm: MainViewModel) {
                         Button({ vm.checkHealth() }, Modifier.weight(1f)) { Text("Test") }
                         Button({ vm.sync() }, Modifier.weight(1f)) { Text("Sync") }
                     }
+                    OutlinedButton(
+                        { uriHandler.openUri(BuildConfig.WEB_APP_URL) },
+                        Modifier.fillMaxWidth()
+                    ) { Text("Open Cloudflare Dashboard") }
                 }
             }
         }

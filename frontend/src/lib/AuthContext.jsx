@@ -1,197 +1,156 @@
-import React, { createContext, useState, useContext, useEffect } from "react";
+import React, { createContext, useContext, useEffect, useState } from "react";
+import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from "firebase/auth";
+import { doc, getDoc, getDocs, limit, query, where, collection } from "firebase/firestore";
+import { auth, authPersistenceReady, db } from "@/lib/firebase";
 
 const AuthContext = createContext();
 
-const API_URL = import.meta.env.VITE_API_BASE_URL;
+function normalizeProfile(snapshot, firebaseUser) {
+  const data = snapshot.data();
+  const rawPermissions = data.effective_permissions ?? data.permissions ?? [];
+  const permissions = Array.isArray(rawPermissions)
+    ? rawPermissions
+    : Object.entries(rawPermissions).filter(([, allowed]) => allowed).map(([key]) => key);
+
+  return {
+    ...data,
+    id: firebaseUser.uid,
+    uid: firebaseUser.uid,
+    email: data.email || firebaseUser.email,
+    is_active: data.is_active ?? data.active ?? false,
+    effective_permissions: permissions,
+  };
+}
+
+async function loadUserProfile(firebaseUser) {
+  const direct = await getDoc(doc(db, "users", firebaseUser.uid));
+  if (direct.exists()) return normalizeProfile(direct, firebaseUser);
+
+  const matches = await getDocs(query(
+    collection(db, "users"),
+    where("email", "==", firebaseUser.email.toLowerCase()),
+    limit(1),
+  ));
+  if (matches.empty) throw Object.assign(new Error("User profile not found."), { code: "profile/not-found" });
+  return normalizeProfile(matches.docs[0], firebaseUser);
+}
+
+function firebaseMessage(error) {
+  switch (error?.code) {
+    case "auth/invalid-credential":
+    case "auth/invalid-email":
+    case "auth/user-not-found":
+    case "auth/wrong-password":
+      return "Incorrect email address or password.";
+    case "auth/user-disabled":
+      return "This account is disabled.";
+    case "auth/network-request-failed":
+      return "Network unavailable. Please check your connection.";
+    case "permission-denied":
+    case "firestore/permission-denied":
+      return "Permission denied by Firestore.";
+    case "profile/not-found":
+      return "User profile not found.";
+    default:
+      return "Unable to connect to Firebase.";
+  }
+}
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoadingAuth, setIsLoadingAuth] = useState(true);
   const [authError, setAuthError] = useState(null);
-  const [authChecked, setAuthChecked] = useState(false);
 
   useEffect(() => {
-    checkUserAuth();
-  }, []);
-
-  const checkUserAuth = async () => {
-    const token = localStorage.getItem("auth_token");
-
-    if (!token) {
-      setUser(null);
-      setIsAuthenticated(false);
-      setIsLoadingAuth(false);
-      setAuthChecked(true);
-      return;
-    }
-
-    try {
-      const response = await fetch(`${API_URL}/me`, {
-        method: "GET",
-        headers: {
-          Accept: "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error("Session expired");
+    let active = true;
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (!active) return;
+      if (!firebaseUser) {
+        setUser(null);
+        setIsLoadingAuth(false);
+        return;
       }
-
-      const data = await response.json();
-
-      setUser(data.user);
-      setIsAuthenticated(true);
-    } catch (error) {
-      localStorage.removeItem("auth_token");
-      setUser(null);
-      setIsAuthenticated(false);
-    } finally {
-      setIsLoadingAuth(false);
-      setAuthChecked(true);
-    }
-  };
+      try {
+        const profile = await loadUserProfile(firebaseUser);
+        if (!profile.is_active) {
+          await signOut(auth);
+          throw Object.assign(new Error("This account is disabled."), { code: "auth/user-disabled" });
+        }
+        if (active) {
+          setUser(profile);
+          setAuthError(null);
+        }
+      } catch (error) {
+        if (active) {
+          setUser(null);
+          setAuthError({ type: error.code === "profile/not-found" ? "user_not_registered" : "firebase_error", message: firebaseMessage(error) });
+        }
+      } finally {
+        if (active) setIsLoadingAuth(false);
+      }
+    });
+    return () => { active = false; unsubscribe(); };
+  }, []);
 
   const login = async (email, password) => {
     setAuthError(null);
-
+    setIsLoadingAuth(true);
     try {
-      const response = await fetch(`${API_URL}/login`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-        body: JSON.stringify({ email, password }),
-      });
-
-      const contentType = response.headers.get("content-type") || "";
-      const data = contentType.includes("application/json")
-        ? await response.json()
-        : {};
-
-      if (!response.ok) {
-        const validationMessage = data?.errors
-          ? Object.values(data.errors).flat().join(" ")
-          : null;
-        const messages = {
-          401: "Incorrect email address or password.",
-          403: "This account does not have permission to sign in.",
-          404: "Login endpoint not found.",
-          419: "Authentication session or CSRF configuration error.",
-          429: "Too many login attempts. Please wait a minute and try again.",
-        };
-        const message = response.status === 422
-          ? validationMessage || data?.message || "Please check the login details."
-          : response.status >= 500
-            ? "The server encountered an error. Please try again."
-            : messages[response.status] || data?.message || `Login failed (${response.status}).`;
-
-        if (import.meta.env.DEV) {
-          console.error("Login request failed", {
-            status: response.status,
-            url: response.url,
-            errors: data?.errors || null,
-          });
-        }
-
-        setAuthError({
-          type: `http_${response.status}`,
-          message,
-        });
-
-        return false;
+      await authPersistenceReady;
+      const credential = await signInWithEmailAndPassword(auth, email.trim(), password);
+      const profile = await loadUserProfile(credential.user);
+      if (!profile.is_active) {
+        await signOut(auth);
+        throw Object.assign(new Error("This account is disabled."), { code: "auth/user-disabled" });
       }
-
-      if (!data?.token || !data?.user) {
-        if (import.meta.env.DEV) {
-          console.error("Login response was missing the token or user", {
-            status: response.status,
-            url: response.url,
-          });
-        }
-        setAuthError({
-          type: "invalid_server_response",
-          message: "The login server returned an invalid response.",
-        });
-        return false;
-      }
-
-      localStorage.setItem("auth_token", data.token);
-      setUser(data.user);
-      setIsAuthenticated(true);
-
+      setUser(profile);
       return true;
     } catch (error) {
-      if (import.meta.env.DEV) {
-        console.error("Login network request failed", {
-          url: `${API_URL}/login`,
-          name: error?.name,
-          message: error?.message,
-        });
-      }
-      setAuthError({
-        type: "network_error",
-        message: "Could not connect to the login server.",
-      });
-
+      setUser(null);
+      setAuthError({ type: "firebase_error", message: firebaseMessage(error) });
       return false;
+    } finally {
+      setIsLoadingAuth(false);
     }
   };
 
   const logout = async () => {
-    const token = localStorage.getItem("auth_token");
-
-    try {
-      if (token) {
-        await fetch(`${API_URL}/logout`, {
-          method: "POST",
-          headers: {
-            Accept: "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-        });
-      }
-    } catch (error) {
-      console.error("Logout failed:", error);
-    }
-
-    localStorage.removeItem("auth_token");
+    await signOut(auth);
     setUser(null);
-    setIsAuthenticated(false);
     window.location.href = "/login";
   };
 
-  const navigateToLogin = () => {
-    window.location.href = "/login";
+  const checkUserAuth = async () => {
+    const firebaseUser = auth.currentUser;
+    if (!firebaseUser) return null;
+    const profile = await loadUserProfile(firebaseUser);
+    setUser(profile);
+    return profile;
   };
 
-  const hasPermission = (key) => user?.effective_permissions?.includes(key) ?? false;
+  const hasPermission = (key) => user?.role === "admin" || user?.effective_permissions?.includes(key) || false;
   const hasAnyPermission = (keys) => keys.some(hasPermission);
   const hasAllPermissions = (keys) => keys.every(hasPermission);
 
   return (
-    <AuthContext.Provider
-      value={{
-        user,
-        isAuthenticated,
-        isLoadingAuth,
-        isLoadingPublicSettings: false,
-        authError,
-        appPublicSettings: null,
-        authChecked,
-        login,
-        logout,
-        navigateToLogin,
-        checkUserAuth,
-        refreshCurrentUser: checkUserAuth,
-        hasPermission,
-        hasAnyPermission,
-        hasAllPermissions,
-        checkAppState: async () => {},
-      }}
-    >
+    <AuthContext.Provider value={{
+      user,
+      isAuthenticated: Boolean(user),
+      isLoadingAuth,
+      isLoadingPublicSettings: false,
+      authError,
+      appPublicSettings: null,
+      authChecked: !isLoadingAuth,
+      login,
+      logout,
+      navigateToLogin: () => { window.location.href = "/login"; },
+      checkUserAuth,
+      refreshCurrentUser: checkUserAuth,
+      hasPermission,
+      hasAnyPermission,
+      hasAllPermissions,
+      checkAppState: async () => {},
+    }}>
       {children}
     </AuthContext.Provider>
   );
@@ -199,10 +158,6 @@ export const AuthProvider = ({ children }) => {
 
 export const useAuth = () => {
   const context = useContext(AuthContext);
-
-  if (!context) {
-    throw new Error("useAuth must be used within an AuthProvider");
-  }
-
+  if (!context) throw new Error("useAuth must be used within an AuthProvider");
   return context;
 };

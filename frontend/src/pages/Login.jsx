@@ -17,7 +17,7 @@ export default function Login() {
   const navigate = useNavigate();
   const { login, authError } = useAuth();
 
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(import.meta.env.VITE_DEFAULT_LOGIN_EMAIL || "admin@connoisseurauto.co.za");
   const [password, setPassword] = useState("");
 
   const handleSubmit = async (e) => {

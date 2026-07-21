@@ -3,19 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { Plus, Search, Users, ChevronRight, Phone, User2, Building2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-
-const API_URL = import.meta.env.VITE_API_BASE_URL;
-
-
-function authHeaders() {
-  const token = localStorage.getItem("auth_token");
-
-  return {
-    Accept: "application/json",
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${token}`,
-  };
-}
+import { apiClient } from "@/api/apiClient";
 
 export default function Clients() {
   const [clients, setClients] = useState([]);
@@ -31,16 +19,7 @@ export default function Clients() {
     setLoading(true);
 
     try {
-      const response = await fetch(`${API_URL}/clients`, {
-        method: "GET",
-        headers: authHeaders(),
-      });
-
-      if (!response.ok) {
-        throw new Error("Failed to load clients");
-      }
-
-      const data = await response.json();
+      const data = await apiClient.entities.Client.list();
       setClients(data);
     } catch (error) {
       console.error("Clients load failed:", error);

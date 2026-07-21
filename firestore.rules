@@ -1,0 +1,131 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function profilePath() {
+      return /databases/$(database)/documents/users/$(request.auth.uid);
+    }
+
+    function hasActiveProfile() {
+      return signedIn()
+        && exists(profilePath())
+        && get(profilePath()).data.is_active == true;
+    }
+
+    function isAdmin() {
+      return hasActiveProfile() && get(profilePath()).data.role == 'admin';
+    }
+
+    function hasPermission(permission) {
+      return isAdmin()
+        || (hasActiveProfile()
+          && permission in get(profilePath()).data.effective_permissions);
+    }
+
+    match /users/{userId} {
+      allow get: if signedIn() && (request.auth.uid == userId || isAdmin());
+      allow list: if isAdmin();
+
+      // One-time bootstrap for the confirmed CAP administrator account.
+      allow create: if signedIn()
+        && request.auth.uid == userId
+        && request.auth.token.email == 'admin@connoisseurauto.co.za'
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.role == 'admin'
+        && request.resource.data.is_active == true;
+
+      allow update, delete: if isAdmin();
+    }
+
+    match /permissions/{document=**} {
+      allow read: if hasActiveProfile();
+      allow write: if isAdmin();
+    }
+
+    match /role_permissions/{document=**} {
+      allow read: if hasActiveProfile();
+      allow write: if isAdmin();
+    }
+
+    match /clients/{document=**} {
+      allow read: if hasPermission('clients.view');
+      allow create: if hasPermission('clients.create');
+      allow update: if hasPermission('clients.edit');
+      allow delete: if hasPermission('clients.delete');
+    }
+
+    match /machines/{document=**} {
+      allow read: if hasPermission('machines.view');
+      allow create: if hasPermission('machines.create');
+      allow update: if hasPermission('machines.edit');
+      allow delete: if hasPermission('machines.delete');
+    }
+
+    match /service_records/{document=**} {
+      allow read: if hasPermission('services.view');
+      allow create: if hasPermission('services.create');
+      allow update: if hasPermission('services.edit');
+      allow delete: if hasPermission('services.delete');
+    }
+
+    match /job_cards/{document=**} {
+      allow read: if hasPermission('job_cards.view');
+      allow create: if hasPermission('job_cards.create');
+      allow update: if hasPermission('job_cards.edit');
+      allow delete: if hasPermission('job_cards.delete');
+    }
+
+    match /job_card_lines/{document=**} {
+      allow read, create, update, delete: if hasPermission('job_cards.lines.manage');
+    }
+
+    match /{collection}/{document=**} {
+      allow read: if collection in [
+        'knowledge_machines',
+        'knowledge_notes',
+        'knowledge_media',
+        'knowledge_documents',
+        'knowledge_service_codes'
+      ] && hasPermission('knowledge_base.view');
+      allow create: if collection in [
+        'knowledge_machines',
+        'knowledge_notes',
+        'knowledge_media',
+        'knowledge_documents',
+        'knowledge_service_codes'
+      ] && hasPermission('knowledge_base.create');
+      allow update: if collection in [
+        'knowledge_machines',
+        'knowledge_notes',
+        'knowledge_media',
+        'knowledge_documents',
+        'knowledge_service_codes'
+      ] && hasPermission('knowledge_base.edit');
+      allow delete: if collection in [
+        'knowledge_machines',
+        'knowledge_notes',
+        'knowledge_media',
+        'knowledge_documents',
+        'knowledge_service_codes'
+      ] && hasPermission('knowledge_base.delete');
+    }
+
+    match /calendar_records/{document=**} {
+      allow read: if hasPermission('calendar.view');
+      allow write: if hasPermission('upcoming_services.update');
+    }
+
+    match /invoice_queue/{document=**} {
+      allow read: if hasPermission('invoices.queue.view');
+      allow write: if hasPermission('invoices.edit');
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

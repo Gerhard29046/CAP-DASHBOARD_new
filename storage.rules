@@ -1,0 +1,35 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    function profile() {
+      return firestore.get(/databases/capdashboard/documents/users/$(request.auth.uid)).data;
+    }
+
+    function activeUser() {
+      return request.auth != null && profile().is_active == true;
+    }
+
+    function canUpload() {
+      return activeUser() && (
+        profile().role == 'admin'
+        || 'machines.photos.upload' in profile().effective_permissions
+        || 'job_cards.photos.upload' in profile().effective_permissions
+        || 'knowledge_base.files.upload' in profile().effective_permissions
+      );
+    }
+
+    match /uploads/{userId}/{allPaths=**} {
+      allow read: if activeUser();
+      allow create, update: if request.auth.uid == userId
+        && canUpload()
+        && (
+          (request.resource.contentType.matches('image/.*')
+            && request.resource.size < 8 * 1024 * 1024)
+          || (!request.resource.contentType.matches('image/.*')
+            && request.resource.size < 20 * 1024 * 1024)
+        );
+      allow delete: if request.auth.uid == userId && canUpload();
+    }
+  }
+}

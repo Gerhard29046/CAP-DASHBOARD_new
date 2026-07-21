@@ -6,8 +6,17 @@ import { fileURLToPath, URL } from 'node:url'
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
 
-  if (mode === 'production' && !env.VITE_API_BASE_URL) {
-    throw new Error('VITE_API_BASE_URL must be set for a production build.');
+  const requiredFirebaseKeys = [
+    'VITE_FIREBASE_API_KEY',
+    'VITE_FIREBASE_AUTH_DOMAIN',
+    'VITE_FIREBASE_PROJECT_ID',
+    'VITE_FIREBASE_STORAGE_BUCKET',
+    'VITE_FIREBASE_MESSAGING_SENDER_ID',
+    'VITE_FIREBASE_APP_ID',
+  ];
+  const missingFirebaseKeys = requiredFirebaseKeys.filter((key) => !env[key]);
+  if (mode === 'production' && missingFirebaseKeys.length) {
+    throw new Error(`Missing Firebase production configuration: ${missingFirebaseKeys.join(', ')}`);
   }
 
   return {
