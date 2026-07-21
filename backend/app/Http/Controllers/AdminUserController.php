@@ -4,6 +4,7 @@ use App\Models\{Permission,PermissionAuditLog,RolePermission,User,UserPermission
 use Illuminate\Http\{JsonResponse,Request,Response};
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\{Rule,ValidationException};
+use Illuminate\Validation\Rules\Password;
 class AdminUserController extends Controller
 {
     public function index():JsonResponse{return response()->json(User::orderBy('name')->get()->map(fn($u)=>$this->safe($u)));}
@@ -23,7 +24,7 @@ class AdminUserController extends Controller
     public function destroy(Request $r,User $user):Response{$this->need($r,'users.delete');$this->guard($user,['is_active'=>false]);$user->update(['is_active'=>false]);$user->tokens()->delete();return response()->noContent();}
     private function validated(Request $r,?User $user=null):array
     {
-        $data=$r->validate(['name'=>[$user?'sometimes':'required','string','max:255'],'email'=>[$user?'sometimes':'required','email',Rule::unique('users')->ignore($user)],'password'=>[$user?'sometimes':'required','string','min:12','confirmed'],'role'=>[$user?'sometimes':'required',Rule::in(['admin','technician','accountant','custom'])],'is_active'=>['sometimes','boolean'],'permissions'=>['sometimes','array'],'permissions.*'=>['boolean']],['email.unique'=>'This email address is already in use.','password.min'=>'Passwords must contain at least 12 characters.','password.confirmed'=>'Password confirmation does not match.','role.in'=>'The selected primary role is invalid.','permissions.*.boolean'=>'One or more selected permissions are invalid.']);
+        $data=$r->validate(['name'=>[$user?'sometimes':'required','string','max:255'],'email'=>[$user?'sometimes':'required','email',Rule::unique('users')->ignore($user)],'password'=>[$user?'sometimes':'required','string',Password::min(8)->mixedCase()->letters()->numbers()->symbols(),'confirmed'],'role'=>[$user?'sometimes':'required',Rule::in(['admin','technician','accountant','custom'])],'is_active'=>['sometimes','boolean'],'permissions'=>['sometimes','array'],'permissions.*'=>['boolean']],['email.unique'=>'This email address is already in use.','password.confirmed'=>'Password confirmation does not match.','role.in'=>'The selected primary role is invalid.','permissions.*.boolean'=>'One or more selected permissions are invalid.']);
         if(isset($data['permissions'])){$known=Permission::whereIn('key',array_keys($data['permissions']))->pluck('key')->all();if(count($known)!==count($data['permissions']))throw ValidationException::withMessages(['permissions'=>['One or more selected permissions are invalid.']]);}
         return$data;
     }
