@@ -32,7 +32,6 @@ Route::get('/health', function () {
     return response()->json([
         'status' => 'ok',
         'message' => 'Laravel API and database connection are working.',
-        'database' => DB::connection()->getDatabaseName(),
     ]);
 });
 
@@ -52,7 +51,9 @@ Route::apiResource('machines',MachineController::class)->middlewareFor(['index',
 Route::apiResource('service-records',ServiceRecordController::class)->middlewareFor(['index','show'],'permission:services.view')->middlewareFor('store','permission:services.create')->middlewareFor('update','permission:services.edit')->middlewareFor('destroy','permission:services.delete');
 Route::apiResource('job-cards',JobCardController::class)->middlewareFor(['index','show'],'permission:job_cards.view')->middlewareFor('store','permission:job_cards.create')->middlewareFor('update','permission:job_cards.edit')->middlewareFor('destroy','permission:job_cards.delete');
 Route::apiResource('job-card-lines',JobCardLineController::class)->middleware('permission:job_cards.lines.manage');
-Route::apiResource('admin/users',AdminUserController::class)->middleware('permission:users.view');
+Route::apiResource('admin/users',AdminUserController::class)
+    ->names('admin.users')
+    ->middleware('permission:users.view');
 Route::apiResource('users',AdminUserController::class)->middleware('permission:users.view');
 Route::get('permissions',[PermissionController::class,'index'])->middleware('permission:users.permissions.manage');
 Route::get('roles/permissions',[PermissionController::class,'roles'])->middleware('permission:users.permissions.manage');

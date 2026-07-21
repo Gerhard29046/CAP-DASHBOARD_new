@@ -3,6 +3,7 @@
 .env.*
 !.env.example
 !**/.env.example
+!frontend/.env.production
 
 # Dependencies
 backend/vendor/
@@ -21,6 +22,8 @@ mobile-android/app/build/
 mobile-android/local.properties
 *.jks
 *.keystore
+**/service-account*.json
+**/*firebase-admin*.json
 
 # Logs
 *.log
