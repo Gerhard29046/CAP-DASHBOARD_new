@@ -37,7 +37,9 @@ import com.CAPDATABASE.capdatabase.ui.components.CapCard
 import com.CAPDATABASE.capdatabase.ui.components.CapDateField
 import com.CAPDATABASE.capdatabase.ui.components.CapDropdownField
 import com.CAPDATABASE.capdatabase.ui.components.CapEmptyState
+import com.CAPDATABASE.capdatabase.ui.components.CapErrorState
 import com.CAPDATABASE.capdatabase.ui.components.CapListItem
+import com.CAPDATABASE.capdatabase.ui.components.CapLoadingState
 import com.CAPDATABASE.capdatabase.ui.components.CapPrimaryButton
 import com.CAPDATABASE.capdatabase.ui.components.CapScreenHeader
 import com.CAPDATABASE.capdatabase.ui.components.CapSearchField
@@ -74,7 +76,8 @@ data class AuthState(
 class MainViewModel @Inject constructor(
     private val auth: AuthRepository,
     private val statusRepo: StatusRepository,
-    private val recordsRepository: RecordsRepository
+    private val recordsRepository: RecordsRepository,
+    private val googleCalendarRepository: GoogleCalendarRepository
 ) : ViewModel() {
     var state by mutableStateOf(AuthState())
         private set
@@ -87,6 +90,10 @@ class MainViewModel @Inject constructor(
     var testingConnection by mutableStateOf(false)
         private set
     var sessionRestored by mutableStateOf(false)
+        private set
+    var googleEventsResult by mutableStateOf<GoogleCalendarEventsResult?>(null)
+        private set
+    var loadingGoogleEvents by mutableStateOf(false)
         private set
 
     val status = statusRepo.status
@@ -168,6 +175,20 @@ class MainViewModel @Inject constructor(
         testingConnection = true
         connectionTestResult = statusRepo.testConnection()
         testingConnection = false
+    }
+
+    /**
+     * Read-only fetch of the selected Google Calendar events (today through +90 days) for the
+     * Upcoming Services screen. Android is a viewer only - connect/disconnect/select-calendars
+     * stays entirely on the web System Settings page.
+     */
+    fun loadGoogleEvents() = viewModelScope.launch {
+        loadingGoogleEvents = true
+        val zone = java.time.ZoneId.systemDefault()
+        val startIso = java.time.LocalDate.now(zone).atStartOfDay(zone).toInstant().toString()
+        val endIso = java.time.LocalDate.now(zone).plusDays(90).atStartOfDay(zone).toInstant().toString()
+        googleEventsResult = googleCalendarRepository.fetchEvents(startIso, endIso)
+        loadingGoogleEvents = false
     }
 }
 
@@ -365,7 +386,7 @@ private fun ScreenContent(selected: String, vm: MainViewModel, user: CapUser, on
         "Machines" -> MachinesScreen(data, user, vm::save)
         "Services" -> ServicesScreen(data, user, vm::save)
         "Jobs" -> JobsScreen(data, user, vm::save)
-        "Calendar" -> CalendarScreen(data, user, vm::save)
+        "Calendar" -> CalendarScreen(data, user, vm)
         "Knowledge Base" -> KnowledgeBaseScreen(data, user, vm::save)
         "Invoices" -> InvoiceScreen(data)
         "Users" -> SimpleRecordsScreen("users", data, "name", "email", "No users found.")
@@ -1534,7 +1555,14 @@ private fun JobDetailScreen(
 }
 
 @Composable
-private fun CalendarScreen(data: RecordsState, user: CapUser, save: (String, String?, Map<String, Any?>, String) -> Unit) {
+private fun CalendarScreen(data: RecordsState, user: CapUser, vm: MainViewModel) {
+    val save: (String, String?, Map<String, Any?>, String) -> Unit = { collection, id, fields, label -> vm.save(collection, id, fields, label) }
+    val uriHandler = LocalUriHandler.current
+    val canViewGoogle = user.hasPermission("calendar.google.view")
+    var showGoogle by remember { mutableStateOf(canViewGoogle) }
+    LaunchedEffect(canViewGoogle, showGoogle) {
+        if (canViewGoogle && showGoogle) vm.loadGoogleEvents()
+    }
     val machines = data.collection("machines")
     val machinesById = machines.associateBy { it.id }
     val clientsById = data.collection("clients").associateBy { it.id }
@@ -1591,6 +1619,18 @@ private fun CalendarScreen(data: RecordsState, user: CapUser, save: (String, Str
                 modifier = Modifier.fillMaxWidth().padding(bottom = Spacing.xs)
             )
         }
+        if (canViewGoogle) {
+            item {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Show Google Calendar", style = MaterialTheme.typography.bodyMedium)
+                    Switch(checked = showGoogle, onCheckedChange = { showGoogle = it })
+                }
+            }
+        }
         if (due.isEmpty()) {
             item {
                 CapEmptyState(
@@ -1624,6 +1664,76 @@ private fun CalendarScreen(data: RecordsState, user: CapUser, save: (String, Str
                 }
             }
         }
+        if (canViewGoogle && showGoogle) {
+            item { CapSectionHeader(title = "Google Calendar") }
+            val result = vm.googleEventsResult
+            val disconnected = result?.warnings.orEmpty().any {
+                it.contains("not connected", ignoreCase = true) || it.contains("reconnect", ignoreCase = true)
+            }
+            when {
+                result == null && vm.loadingGoogleEvents -> item {
+                    CapLoadingState(modifier = Modifier.fillMaxWidth().height(120.dp))
+                }
+                result?.error != null -> item {
+                    CapErrorState(
+                        message = result.error,
+                        modifier = Modifier.fillMaxWidth().wrapContentHeight(),
+                        onRetry = { vm.loadGoogleEvents() }
+                    )
+                }
+                disconnected -> item {
+                    CapEmptyState(
+                        "Google Calendar is not connected. An administrator can connect it from System Settings.",
+                        modifier = Modifier.fillMaxWidth().wrapContentHeight(),
+                        icon = null
+                    )
+                }
+                result != null && result.events.isEmpty() -> item {
+                    CapEmptyState(
+                        "No Google Calendar events in this range.",
+                        modifier = Modifier.fillMaxWidth().wrapContentHeight()
+                    )
+                }
+                result != null -> items(result.events, key = { "google-${it.id}" }) { event ->
+                    val htmlLink = event.htmlLink
+                    CapCard {
+                        CapListItem(
+                            title = event.title,
+                            subtitle = listOfNotNull(
+                                formatGoogleEventTiming(event),
+                                event.calendarName?.ifBlank { null }
+                            ).joinToString(" · "),
+                            trailing = if (!htmlLink.isNullOrBlank()) {
+                                { CapSecondaryButton(text = "Open", onClick = { uriHandler.openUri(htmlLink) }) }
+                            } else null
+                        )
+                    }
+                }
+                else -> item { CapLoadingState(modifier = Modifier.fillMaxWidth().height(120.dp)) }
+            }
+        }
+    }
+}
+
+/** Read-only formatting of a Google Calendar event's start/end for display; falls back to the raw ISO string on parse failure. */
+private fun formatGoogleEventTiming(event: GoogleCalendarEvent): String {
+    if (event.allDay) return "All day"
+    return try {
+        val displayFormat = java.time.format.DateTimeFormatter.ofPattern("d MMM, HH:mm", Locale.US)
+            .withZone(java.time.ZoneId.systemDefault())
+        val startText = displayFormat.format(java.time.Instant.parse(event.start))
+        val endText = event.end?.let {
+            try {
+                java.time.format.DateTimeFormatter.ofPattern("HH:mm", Locale.US)
+                    .withZone(java.time.ZoneId.systemDefault())
+                    .format(java.time.Instant.parse(it))
+            } catch (_: Exception) {
+                null
+            }
+        }
+        if (endText != null) "$startText - $endText" else startText
+    } catch (_: Exception) {
+        event.start
     }
 }
 

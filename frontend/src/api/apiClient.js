@@ -20,6 +20,7 @@ import {
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import { auth, db, storage } from "@/lib/firebase";
 import { relatedRecords } from "@/lib/records";
+import { callFunction } from "@/api/functionsClient";
 
 const endpointMap = {
   Client: "clients",
@@ -187,43 +188,85 @@ function parseBody(options) {
 }
 
 async function calendarEvents(searchParams) {
-  const [services, machines, clients] = await Promise.all([
-    listCollection("service_records"),
-    listCollection("machines"),
-    listCollection("clients"),
-  ]);
-  const machineById = Object.fromEntries(machines.map((item) => [String(item.id), item]));
-  const clientById = Object.fromEntries(clients.map((item) => [String(item.id), item]));
   const start = searchParams.get("start");
   const end = searchParams.get("end");
-  const events = services.filter((service) => service.next_service_due)
-    .filter((service) => !start || service.next_service_due >= start.slice(0, 10))
-    .filter((service) => !end || service.next_service_due < end.slice(0, 10))
-    .map((service) => {
-      const machine = machineById[String(service.machine_id)] || {};
-      const client = clientById[String(machine.client_id)] || {};
-      return {
-        id: `service-${service.id}`,
-        title: `${client.company_name || "Client"} – ${machine.brand || ""} ${machine.model || ""}`.trim(),
-        start: service.next_service_due,
-        allDay: true,
-        extendedProps: {
-          sourceType: "service_record",
-          serviceRecordId: service.id,
-          machineId: machine.id,
-          clientId: client.id,
-          clientName: client.company_name,
-          machineBrand: machine.brand,
-          machineModel: machine.model,
-          serialNumber: machine.serial_number,
-          refrigerantType: machine.refrigerant_type,
-          technician: service.technician_name,
-          status: service.status,
-          notes: service.notes,
-        },
-      };
-    });
-  return { events, warnings: [] };
+  const includeServices = searchParams.get("include_services") !== "0";
+  const includeGoogle = searchParams.get("include_google") === "1";
+
+  let events = [];
+  const warnings = [];
+
+  if (includeServices) {
+    const [services, machines, clients] = await Promise.all([
+      listCollection("service_records"),
+      listCollection("machines"),
+      listCollection("clients"),
+    ]);
+    const machineById = Object.fromEntries(machines.map((item) => [String(item.id), item]));
+    const clientById = Object.fromEntries(clients.map((item) => [String(item.id), item]));
+    events = services.filter((service) => service.next_service_due)
+      .filter((service) => !start || service.next_service_due >= start.slice(0, 10))
+      .filter((service) => !end || service.next_service_due < end.slice(0, 10))
+      .map((service) => {
+        const machine = machineById[String(service.machine_id)] || {};
+        const client = clientById[String(machine.client_id)] || {};
+        return {
+          id: `service-${service.id}`,
+          title: `${client.company_name || "Client"} – ${machine.brand || ""} ${machine.model || ""}`.trim(),
+          start: service.next_service_due,
+          allDay: true,
+          extendedProps: {
+            sourceType: "service_record",
+            serviceRecordId: service.id,
+            machineId: machine.id,
+            clientId: client.id,
+            clientName: client.company_name,
+            machineBrand: machine.brand,
+            machineModel: machine.model,
+            serialNumber: machine.serial_number,
+            refrigerantType: machine.refrigerant_type,
+            technician: service.technician_name,
+            status: service.status,
+            notes: service.notes,
+          },
+        };
+      });
+  }
+
+  if (includeGoogle) {
+    try {
+      const googleParams = new URLSearchParams();
+      if (start) googleParams.set("start", start);
+      if (end) googleParams.set("end", end);
+      const googleResult = await callFunction("googleCalendarEvents", { searchParams: googleParams });
+      events = events.concat(googleResult?.events || []);
+      if (Array.isArray(googleResult?.warnings)) warnings.push(...googleResult.warnings);
+    } catch (error) {
+      console.error("Failed to load Google Calendar events", error);
+      warnings.push("Google Calendar is unavailable. Upcoming Services are still shown.");
+    }
+  }
+
+  return { events, warnings };
+}
+
+const googleCalendarFunctionMap = {
+  status: { GET: "googleCalendarStatus" },
+  connect: { GET: "googleCalendarConnect" },
+  calendars: { GET: "googleCalendarListCalendars", PUT: "googleCalendarSelectCalendars", POST: "googleCalendarSelectCalendars" },
+  disconnect: { DELETE: "googleCalendarDisconnect", POST: "googleCalendarDisconnect" },
+};
+
+async function googleCalendarRoute(action, method, options) {
+  const methodMap = googleCalendarFunctionMap[action];
+  const functionName = methodMap && methodMap[method];
+  if (!functionName) {
+    throw Object.assign(new Error(`Unsupported Google Calendar operation: ${method} ${action}`), { status: 405 });
+  }
+  if (functionName === "googleCalendarSelectCalendars") {
+    return callFunction(functionName, { method: "PUT", body: parseBody(options) });
+  }
+  return callFunction(functionName, { method: functionName === "googleCalendarDisconnect" ? "DELETE" : "GET" });
 }
 
 async function request(path, options = {}) {
@@ -234,6 +277,7 @@ async function request(path, options = {}) {
 
   if (segments[0] === "me") return apiClient.auth.me();
   if (segments[0] === "calendar" && segments[1] === "events") return calendarEvents(url.searchParams);
+  if (segments[0] === "google-calendar" && segments[1]) return googleCalendarRoute(segments[1], method, options);
   if (segments[0] === "knowledge-machines" && segments[1] && segments[2]) {
     const childCollections = {
       notes: "knowledge_notes",

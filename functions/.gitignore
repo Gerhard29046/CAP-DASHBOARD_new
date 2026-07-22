@@ -1,0 +1,18 @@
+# Dependencies
+node_modules/
+
+# Firebase Functions local runtime config / emulator exports
+.runtimeconfig.json
+.firebase/
+firebase-debug.log
+firebase-export-*/
+
+# Local environment / secret files
+.env
+.env.*
+!.env.example
+
+# Any locally downloaded credential material
+*service-account*.json
+*firebase-admin*.json
+client_secret*.json

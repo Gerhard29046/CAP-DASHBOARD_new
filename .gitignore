@@ -8,7 +8,16 @@
 # Dependencies
 backend/vendor/
 frontend/node_modules/
+functions/node_modules/
 node_modules
+
+# Firebase Functions local runtime config / emulator artifacts
+functions/.runtimeconfig.json
+functions/.env
+functions/.env.*
+functions/*.env
+.firebase/
+firebase-export-*/
 
 # Build output
 frontend/dist/
@@ -24,6 +33,7 @@ mobile-android/local.properties
 *.keystore
 **/service-account*.json
 **/*firebase-admin*.json
+**/client_secret*.json
 
 # Logs
 *.log

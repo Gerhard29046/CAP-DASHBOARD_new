@@ -6,16 +6,19 @@ val localProperties = Properties().apply {
     if (file.exists()) file.inputStream().use(::load)
 }
 val productionWebAppUrl = "https://capdashboard.gerhardvanwijk.workers.dev/"
+val productionFunctionsBaseUrl = "https://africa-south1-capdatabasefb2.cloudfunctions.net"
 val defaultLoginEmail = localProperties.getProperty("CAP_LOGIN_EMAIL", "admin@connoisseurauto.co.za")
 android { namespace="com.CAPDATABASE.capdatabase"; compileSdk=36
  defaultConfig { applicationId="com.CAPDATABASE.capdatabase"; minSdk=26; targetSdk=36; versionCode=1; versionName="1.0.0"; testInstrumentationRunner="androidx.test.runner.AndroidJUnitRunner"; vectorDrawables.useSupportLibrary=true; buildConfigField("String", "DEFAULT_LOGIN_EMAIL", "\"$defaultLoginEmail\"") }
  buildTypes {
     debug {
         buildConfigField("String", "WEB_APP_URL", "\"$productionWebAppUrl\"")
+        buildConfigField("String", "FUNCTIONS_BASE_URL", "\"$productionFunctionsBaseUrl\"")
     }
     release {
         isMinifyEnabled=true
         buildConfigField("String", "WEB_APP_URL", "\"$productionWebAppUrl\"")
+        buildConfigField("String", "FUNCTIONS_BASE_URL", "\"$productionFunctionsBaseUrl\"")
         proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"),"proguard-rules.pro")
     }
  }
