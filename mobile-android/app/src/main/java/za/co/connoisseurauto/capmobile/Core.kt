@@ -55,6 +55,7 @@ data class CapUser(
 
 enum class ConnectionStatus { Connected, Checking, Offline, AuthRequired, ServerError, DbUnavailable, SyncError }
 data class SyncResult(val resource: String, val count: Int?, val error: String? = null)
+data class ConnectionTestResult(val success: Boolean, val latencyMs: Long? = null, val message: String)
 data class SyncResource(val label: String, val permission: String, val collection: String)
 
 val syncResources = listOf(
@@ -96,7 +97,9 @@ data class GlobalStatus(
     val lastSync: Long = 0,
     val lastError: String? = null,
     val syncResults: List<SyncResult> = emptyList(),
-    val latency: Long = 0
+    val latency: Long = 0,
+    val pendingOperations: Int = 0,
+    val failedOperations: Int = 0
 )
 
 class ConnectivityObserver(context: Context) {
@@ -155,8 +158,20 @@ class StatusRepository @Inject constructor(
                 connection = error.connectionStatus(),
                 apiHealthy = auth.currentUser != null,
                 dbHealthy = false,
-                lastError = error.userMessage()
+                lastError = error.connectionUserMessage()
             ) }
+        }
+    }
+
+    suspend fun testConnection(): ConnectionTestResult {
+        val currentUser = auth.currentUser
+            ?: return ConnectionTestResult(success = false, message = "Please sign in to test the connection.")
+        val start = System.currentTimeMillis()
+        return try {
+            firestore.collection("users").document(currentUser.uid).get().await()
+            ConnectionTestResult(success = true, latencyMs = System.currentTimeMillis() - start, message = "Connected")
+        } catch (error: Exception) {
+            ConnectionTestResult(success = false, message = error.connectionUserMessage())
         }
     }
 
@@ -165,16 +180,20 @@ class StatusRepository @Inject constructor(
         val results = allowedSyncResources(user).map { resource ->
             async {
                 val result = runCatching { firestore.collection(resource.collection).get().await().size() }
-                SyncResult(resource.label, result.getOrNull(), result.exceptionOrNull()?.userMessage())
+                SyncResult(resource.label, result.getOrNull(), result.exceptionOrNull()?.connectionUserMessage())
             }
         }.awaitAll()
+        val failedCount = results.count { result -> result.error != null }
         _status.update { it.copy(
-            connection = if (results.any { result -> result.error != null }) ConnectionStatus.SyncError else ConnectionStatus.Connected,
+            connection = if (failedCount > 0) ConnectionStatus.SyncError else ConnectionStatus.Connected,
             apiHealthy = auth.currentUser != null,
-            dbHealthy = results.none { result -> result.error != null },
+            dbHealthy = failedCount == 0,
             syncResults = results,
             lastSync = System.currentTimeMillis(),
-            lastError = results.firstOrNull { result -> result.error != null }?.error
+            lastError = if (failedCount > 0)
+                "The application could not complete the latest sync. Existing live information was not deleted or replaced."
+            else null,
+            failedOperations = failedCount
         ) }
     }
 }
@@ -334,4 +353,36 @@ private fun Throwable.userMessage(): String = when (this) {
         else -> "Unable to load Firebase data."
     }
     else -> message ?: "An unexpected Firebase error occurred."
+}
+
+// Error mapping for connection/sync-status contexts only (checkHealth/testConnection/sync).
+// Never surfaces a raw exception message, stack trace, auth token, or Firebase secret -
+// every branch resolves to one of the fixed product-spec strings below.
+private fun Throwable.connectionUserMessage(): String = when {
+    this is FirebaseNetworkException ->
+        "Your phone is not connected to the internet. Check Wi-Fi or mobile data and try again."
+    this is FirebaseAuthException ->
+        "Your login session has expired. Sign in again to reconnect securely."
+    this is FirebaseFirestoreException -> when (code) {
+        FirebaseFirestoreException.Code.UNAUTHENTICATED ->
+            "Your login session has expired. Sign in again to reconnect securely."
+        FirebaseFirestoreException.Code.PERMISSION_DENIED ->
+            "Your account is connected, but it does not have permission to access this information."
+        FirebaseFirestoreException.Code.DEADLINE_EXCEEDED ->
+            "The connection took too long. Check your signal and try again."
+        FirebaseFirestoreException.Code.UNAVAILABLE ->
+            "The CAP Database service could not be reached. Your data has not been changed."
+        FirebaseFirestoreException.Code.INTERNAL,
+        FirebaseFirestoreException.Code.DATA_LOSS,
+        FirebaseFirestoreException.Code.UNKNOWN,
+        FirebaseFirestoreException.Code.RESOURCE_EXHAUSTED ->
+            "The application reached the live service, but the database did not respond."
+        else ->
+            "The service responded, but the returned information could not be processed."
+    }
+    this is IllegalStateException && (message?.contains("Firebase", ignoreCase = true) == true ||
+        message?.contains("google-services", ignoreCase = true) == true) ->
+        "A required Android connection setting is missing. Do not create a replacement database."
+    else ->
+        "The service responded, but the returned information could not be processed."
 }

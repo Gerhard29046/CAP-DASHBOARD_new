@@ -40,4 +40,15 @@ class SyncResourcesTest {
         assertEquals(listOf("two"), relatedRecords(machines, "client_id", "42").map { it.id })
         assertTrue(sameRecordId("42", 42))
     }
+
+    @Test
+    fun `connection test result defaults latency to null and preserves values`() {
+        val failure = ConnectionTestResult(success = false, message = "Please sign in to test the connection.")
+        assertEquals(null, failure.latencyMs)
+        assertEquals(false, failure.success)
+
+        val success = ConnectionTestResult(success = true, latencyMs = 123L, message = "Connected")
+        assertEquals(123L, success.latencyMs)
+        assertEquals(ConnectionTestResult(success = true, latencyMs = 123L, message = "Connected"), success)
+    }
 }
