@@ -57,6 +57,8 @@ import com.CAPDATABASE.capdatabase.ui.theme.CapTheme
 import com.CAPDATABASE.capdatabase.ui.theme.Spacing
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import java.text.DecimalFormat
+import java.text.DecimalFormatSymbols
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -109,6 +111,7 @@ class MainViewModel @Inject constructor(
             Triple("machines", "machines.view", true),
             Triple("service_records", "services.view", true),
             Triple("job_cards", "job_cards.view", true),
+            Triple("job_card_lines", "job_cards.lines.manage", true),
             Triple("knowledge_machines", "knowledge_base.view", true),
             Triple("knowledge_notes", "knowledge_base.view", true),
             Triple("knowledge_media", "knowledge_base.view", true),
@@ -1624,12 +1627,64 @@ private fun CalendarScreen(data: RecordsState, user: CapUser, save: (String, Str
     }
 }
 
+/** VAT rate mirrors the web app's InvoiceQueue.jsx (South Africa, 15%). */
+private const val VAT_RATE = 0.15
+
+private val randFormat = DecimalFormat("#,##0.00", DecimalFormatSymbols(Locale.US))
+
+/** South African Rand formatting, e.g. "R 1,250.00" per the design spec. */
+private fun formatRand(amount: Double): String = "R ${randFormat.format(amount)}"
+
+private fun CapRecord.number(key: String): Double? = (fields[key] as? Number)?.toDouble()
+
 @Composable
 private fun InvoiceScreen(data: RecordsState) {
-    val jobs = data.collection("job_cards").filter { it.text("status").contains("invoice", true) || it.text("status") == "Completed" }
-    LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        if (jobs.isEmpty()) item { EmptyCard("No jobs are ready for invoicing.") }
-        items(jobs, key = { it.id }) { RecordCard(it.text("job_number"), listOf(it.text("status"), it.text("fault_description")), Modifier) }
+    val jobs = data.collection("job_cards").filter {
+        it.text("status").contains("invoice", true) || it.text("status") == "Completed" || it.text("status") == "Collected"
+    }
+    val lines = data.collection("job_card_lines")
+    val machines = data.collection("machines")
+    val clients = data.collection("clients")
+    val machinesById = machines.associateBy { it.id }
+    val clientsById = clients.associateBy { it.id }
+
+    LazyColumn(
+        Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+        contentPadding = PaddingValues(bottom = 84.dp)
+    ) {
+        item { CapScreenHeader(title = "Invoice Queue", subtitle = "Completed jobs ready for billing") }
+        if (jobs.isEmpty()) {
+            item { CapEmptyState("No jobs are ready for invoicing.", modifier = Modifier.fillMaxWidth().wrapContentHeight()) }
+        }
+        items(jobs, key = { it.id }) { job ->
+            val machine = machinesById[job.text("machine_id")]
+            val client = clientsById[machine?.text("client_id")]
+            val jobLines = relatedRecords(lines, "job_card_id", job.id)
+            val subtotal = jobLines.sumOf { (it.number("quantity") ?: 1.0) * (it.number("unit_price") ?: 0.0) }
+
+            CapCard {
+                CapListItem(
+                    title = job.text("job_number").ifBlank { "Job card" },
+                    subtitle = listOfNotNull(
+                        client?.text("company_name")?.ifBlank { null },
+                        machineTitle(machine).ifBlank { null }
+                    ).joinToString(" · "),
+                    trailing = {
+                        Column(horizontalAlignment = Alignment.End) {
+                            if (jobLines.isNotEmpty()) {
+                                Text(
+                                    formatRand(subtotal * (1 + VAT_RATE)),
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                            CapStatusBadge(job.text("status").ifBlank { "Unknown" }, jobStatusTone(job.text("status")))
+                        }
+                    }
+                )
+            }
+        }
     }
 }
 

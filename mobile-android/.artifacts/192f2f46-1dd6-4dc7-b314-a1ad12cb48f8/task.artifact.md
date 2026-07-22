@@ -1,7 +1,26 @@
-- [x] Update `API_BASE_URL` in `app/build.gradle.kts` to `http://10.174.206.104:8000/api/`
-- [x] Add URL override logic to `MainActivity.kt`
-- [x] Sync Gradle
-- [x] Run clean build and `:app:assembleDebug`
-- [/] Verify connectivity on physical device
-- [ ] Verify all navigation links (Dashboard, Clients, Machines, etc.)
-- [ ] Verify Logout flow
+- [/] Apply Professional Theme to `MainActivity.kt`
+    - [ ] Remove local `CapTheme` and `Dark` color scheme
+    - [ ] Import and use `com.CAPDATABASE.capdatabase.ui.theme.CapTheme`
+    - [ ] Verify status bar and navigation bar colors
+- [ ] Standardise Components in `MainActivity.kt`
+    - [ ] Replace local `RecordCard` with `CapCard` / `CapListItem`
+    - [ ] Replace local `EmptyCard` with `CapEmptyState`
+    - [ ] Replace local `TextInput` / `SelectInput` with `CapTextField` / `CapDropdownField` if suitable
+    - [ ] Remove unused local UI helpers
+- [ ] Polish Invoice Screen
+    - [ ] Add `CapScreenHeader`
+    - [ ] Use `CapCard` and `CapListItem` for invoice entries
+    - [ ] Format currency as "R 1,250.00"
+    - [ ] Display status badges
+- [ ] Apply Consistent Spacing
+    - [ ] Use `Spacing.kt` tokens for all padding and arrangement
+    - [ ] Ensure bottom navigation clearance
+- [ ] Verify Navigation and Data
+    - [ ] Test all 4 bottom-nav routes
+    - [ ] Confirm Firestore data loads in all modules
+    - [ ] Verify "Status" screen shows live results
+- [ ] Final Build and Verification
+    - [ ] Run unit tests
+    - [ ] Assemble debug APK
+    - [ ] Install on Xiaomi phone
+    - [ ] Perform visual audit

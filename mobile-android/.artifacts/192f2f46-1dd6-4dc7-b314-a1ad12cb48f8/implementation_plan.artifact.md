@@ -1,43 +1,39 @@
-# Fix Physical Device Connectivity
+# Continue Building Jetpack Compose Frontend
 
-The Android app cannot connect to the server because it is configured to use `10.0.2.2`, which only works for emulators. For a physical device (like the Xiaomi phone detected), we must use the computer's local IP address, and the Laravel server must be configured to accept external connections.
+This plan outlines the steps to finish the mobile frontend, aligning it with the CAP Database website dashboard's "Dark Navy and Blue" professional design and ensuring all features are fully connected to live data.
 
-## User Review Required
+## Current Status
 
-> [!IMPORTANT]
-> You **MUST** restart your Laravel server using the following command for this to work:
-> `php artisan serve --host=0.0.0.0 --port=8000`
-
-## Full App Verification Plan
-
-I will perform a systematic check of all app destinations to ensure navigation and links are working as intended.
-
-### Navigation Links
-For each item in the navigation menu (Rail/Bottom Bar), I will:
-- Verify that clicking the item updates the screen title.
-- Verify that the correct content (or placeholder) is displayed.
-
-### Authenticated Flow
-- Verify that permissions correctly filter the visible destinations (e.g., Administrator sees more than Accountant).
-- Verify that "Logout" returns the user to the Login screen and clears the session.
+| Feature | Status | Notes |
+| :--- | :--- | :--- |
+| **Theme** | ⚠️ Needs Wiring | Professional blue theme exists in `ui.theme` but `MainActivity` is still using an ad-hoc green theme. |
+| **Dashboard** | ✅ Complete | Professional layout with stats and quick actions. |
+| **Bottom Navigation** | ✅ Complete | Home, Clients, Jobs, More. |
+| **Clients / Machines** | ✅ Complete | List and Detail views with full Firestore sync. |
+| **Services / Jobs** | ✅ Complete | List and Detail views with full Firestore sync. |
+| **Forms (Log/Book In)** | ✅ Complete | Full-screen forms with validation. |
+| **Knowledge Base** | ✅ Complete | Detailed technical data, notes, and media. |
+| **Invoices** | ⚠️ Unfinished | Currently a simple list; needs professional styling consistent with other screens. |
+| **Status / Account** | ✅ Complete | Diagnostic tools and user settings. |
 
 ## Proposed Changes
 
 ### [mobile-android](file:///C:/Users/Gerhard/Documents/CAP-DASHBOARD_new/mobile-android)
 
-#### [MODIFY] [app/build.gradle.kts](file:///C:/Users/Gerhard/Documents/CAP-DASHBOARD_new/mobile-android/app/build.gradle.kts)
-- Update `API_BASE_URL` in the `debug` build type to use the computer's local IP: `http://10.174.206.104:8000/api/`.
-
 #### [MODIFY] [MainActivity.kt](file:///C:/Users/Gerhard/Documents/CAP-DASHBOARD_new/mobile-android/app/src/main/java/za/co/connoisseurauto/capmobile/MainActivity.kt)
-- Add a "Custom API URL" override field in the `DevelopmentAccounts` section. This will allow you to quickly change the IP if you switch networks without having to re-build the app.
+- **Theme Integration**: Remove local `CapTheme` and `darkColorScheme` definitions. Import and use `com.CAPDATABASE.capdatabase.ui.theme.CapTheme`.
+- **Component Cleanup**: Replace local UI helpers (like `RecordCard`, `EmptyCard`, `TextInput`) with standardized components from the `ui.components` package.
+- **Invoice Screen Polish**: Update `InvoiceScreen` to use `CapScreenHeader` and `CapListItem` for a consistent, professional look.
+- **Navigation Consistency**: Ensure all screens use the same padding and spacing patterns defined in `Spacing.kt`.
 
 ## Verification Plan
 
 ### Automated Tests
-- Run `gradlew clean :app:assembleDebug`
+- Run `gradlew :app:testDebugUnitTest` to ensure no regressions in sync logic.
+- Run `gradlew :app:assembleDebug` to verify the build.
 
 ### Manual Verification
-1.  Restart Laravel with `--host=0.0.0.0`.
-2.  Deploy the app to the Xiaomi phone.
-3.  Check the "Status" screen in the app to confirm "Connected".
-4.  If it still shows "Offline", verify that both the phone and the computer are on the same Wi-Fi network.
+- **Visual Audit**: Confirm the app now appears in the correct **Dark Navy and Blue** theme.
+- **Navigation Test**: Click through all bottom-nav items (Home, Clients, Jobs, More) and verify secondary links (Knowledge Base, Invoices).
+- **Data Sync**: Verify that the "Status" screen shows live record counts from Firestore.
+- **Device Test**: Install and launch on the connected Xiaomi phone.
