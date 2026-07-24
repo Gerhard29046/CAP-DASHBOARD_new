@@ -39,6 +39,8 @@ export async function callFunction(name, { method = "GET", searchParams, body } 
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     });
   } catch (error) {
+    // Dev-only diagnostic: method/name/error-name only, never headers, body, or the token.
+    console.error(`Google Calendar function call failed: ${method} ${name}`, error?.name, error?.message);
     if (error?.name === "AbortError") {
       throw Object.assign(new Error("The server took too long to respond. Please try again."), { status: 504 });
     }

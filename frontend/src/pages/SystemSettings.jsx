@@ -22,6 +22,26 @@ const STATUS_LABELS = {
   connection_error: { label: "Connection error", tone: "text-destructive" },
 };
 
+// `apiClient.request` for /google-calendar/* goes through a Cloud Function
+// (HTTP), not the Firestore SDK, so the relevant error taxonomy is HTTP
+// status codes (attached to the error by functionsClient.js), not Firestore
+// error codes. Falls back to the server's own message when status isn't one
+// of these well-known cases.
+function getCalendarSettingsErrorMessage(error) {
+  switch (error?.status) {
+    case 401:
+      return "Please sign in again.";
+    case 403:
+      return "You do not have permission to change this setting.";
+    case 404:
+      return "Google Calendar integration settings could not be found.";
+    case 500:
+      return "A server-side failure occurred. Please try again shortly.";
+    default:
+      return error?.message || "The setting could not be saved. Please try again.";
+  }
+}
+
 export default function SystemSettings() {
   const { hasPermission } = useAuth();
   const [status, setStatus] = useState(null);
@@ -90,12 +110,16 @@ export default function SystemSettings() {
         method: "PATCH",
         body: JSON.stringify({ enabled }),
       });
+      // Controlled component: `status` (and therefore the Switch's `checked`
+      // prop) only changes here, on success - a thrown error below leaves it
+      // exactly as it was, which is the rollback (no optimistic flip to undo).
       setStatus(updated);
       setMessage(enabled
         ? "Google Calendar events are now visible across the CAP Dashboard."
         : "Google Calendar events are now hidden from the CAP Dashboard. The connection is unaffected.");
     } catch (error) {
-      setMessage(error.message);
+      console.error("Failed to update Google Calendar display setting", error.status, error.message);
+      setMessage(getCalendarSettingsErrorMessage(error));
     } finally {
       setTogglingDisplay(false);
     }
