@@ -61,6 +61,7 @@ async function clearConnection() {
       scopes: [],
       selectedCalendarIds: [],
       lastError: null,
+      lastErrorCode: null,
       displayEnabled: true,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     },
@@ -76,6 +77,37 @@ function isDisplayEnabled(connection) {
 async function setDisplayEnabled(enabled) {
   await updateConnection({ displayEnabled: Boolean(enabled) });
   return getConnectionRaw();
+}
+
+/**
+ * Records a Google API/token failure against the connection. `code` must be
+ * `"reauth_required"` (the refresh token is missing or Google rejected it -
+ * only Reconnect can fix this) or `"api_error"` (a transient/unrelated
+ * failure - e.g. a disabled API, quota, or network error - that must NOT be
+ * presented to the admin as "reconnect required").
+ */
+async function recordError(code, message) {
+  await updateConnection({ lastErrorCode: code, lastError: message });
+}
+
+async function clearError() {
+  await updateConnection({ lastErrorCode: null, lastError: null });
+}
+
+/**
+ * Single source of truth for the connection's user-facing status. Pure
+ * function of the stored connection doc - every caller (the status
+ * endpoint, the events endpoint, tests) derives its messaging from this one
+ * value instead of separately inspecting `isActive`/`lastError`/
+ * `selectedCalendarIds`, which is what previously let "Connected" and
+ * "must be reconnected" render at the same time.
+ */
+function computeStatusCode(connection) {
+  if (!connection || connection.isActive !== true) return "disconnected";
+  if (connection.lastErrorCode === "reauth_required") return "reauth_required";
+  if (connection.lastErrorCode === "api_error") return "connection_error";
+  if (!(connection.selectedCalendarIds || []).length) return "calendar_selection_required";
+  return "connected";
 }
 
 /** Creates a new OAuth state, storing only its sha256 hash - never the raw value. */
@@ -150,6 +182,9 @@ module.exports = {
   clearConnection,
   isDisplayEnabled,
   setDisplayEnabled,
+  recordError,
+  clearError,
+  computeStatusCode,
   createOAuthState,
   pruneExpiredOAuthStates,
   consumeOAuthState,

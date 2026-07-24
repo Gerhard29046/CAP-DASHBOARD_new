@@ -246,7 +246,6 @@ async function calendarEvents(searchParams) {
     } catch (error) {
       console.error("Failed to load Google Calendar events", error);
       googleReason = "function_unavailable";
-      warnings.push("Google Calendar is unavailable. Upcoming Services are still shown.");
     }
   }
 

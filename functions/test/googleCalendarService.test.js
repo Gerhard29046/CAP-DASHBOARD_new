@@ -86,3 +86,17 @@ test("mapGoogleEventToFullCalendar: id is stable for the same calendarId/eventId
   const second = mapGoogleEventToFullCalendar(rawEvent, "cal-1", "Cal 1");
   assert.equal(first.id, second.id);
 });
+
+test("mapGoogleEventToFullCalendar: id differs when googleAccountId differs (same calendar/event id)", () => {
+  const rawEvent = { id: "event-abc", start: { date: "2026-01-01" }, end: { date: "2026-01-02" } };
+  const accountA = mapGoogleEventToFullCalendar(rawEvent, "cal-1", "Cal 1", "account-a");
+  const accountB = mapGoogleEventToFullCalendar(rawEvent, "cal-1", "Cal 1", "account-b");
+  assert.notEqual(accountA.id, accountB.id);
+});
+
+test("mapGoogleEventToFullCalendar: id is stable for the same googleAccountId/calendarId/eventId", () => {
+  const rawEvent = { id: "event-abc", start: { date: "2026-01-01" }, end: { date: "2026-01-02" } };
+  const first = mapGoogleEventToFullCalendar(rawEvent, "cal-1", "Cal 1", "account-a");
+  const second = mapGoogleEventToFullCalendar(rawEvent, "cal-1", "Cal 1", "account-a");
+  assert.equal(first.id, second.id);
+});

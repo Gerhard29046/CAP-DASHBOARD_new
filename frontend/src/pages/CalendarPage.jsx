@@ -14,8 +14,9 @@ import { Input } from "@/components/ui/input";
 const GOOGLE_REASON_MESSAGES = {
   not_connected: "Google Calendar is not connected.",
   display_disabled: "Google Calendar events are currently hidden by an administrator.",
-  no_calendars_selected: "No Google calendars have been selected yet.",
+  no_calendars_selected: "No Google calendars have been selected yet. An administrator can select calendars in System Settings.",
   reauth_required: "Google Calendar must be reconnected by an administrator.",
+  connection_error: "Google Calendar is temporarily unavailable. Please try refreshing again shortly.",
   function_unavailable: "Google Calendar is unavailable. Upcoming Services are still shown.",
 };
 
@@ -49,7 +50,9 @@ export default function CalendarPage() {
       ? "The Google Calendar integration is not connected."
       : !googleStatus.display_enabled
         ? "An administrator has hidden Google Calendar events for all users."
-        : null;
+        : googleStatus.status === "reauth_required"
+          ? "Google Calendar must be reconnected by an administrator."
+          : null;
 
   const toggleGoogle = (value) => {
     setGoogle(value);

@@ -17,8 +17,24 @@ verified; not yet deployed — see SESSION_LOG.md)_
 - **Deployed** (2026-07-23): `firestore.rules`, all 8 functions (7 updated + new
   `googleCalendarSetDisplayEnabled`), and the Cloudflare frontend rebuild
   (https://capdashboard.gerhardvanwijk.workers.dev, version `b525df23-c936-4c6e-af94-ac0b26262f31`).
-- Live OAuth round trip (connect→consent→callback) still has never been exercised by a real
-  user — do not report the integration as fully live until that happens.
+- **Live-tested end to end 2026-07-24**: real connect flow completed with account
+  `gerhard.ark.of.war@gmail.com`. Root cause of the post-connect "must be reconnected" +
+  duplicate "no calendars selected" bug: the Google Calendar API was never actually enabled on
+  Cloud project `capdatabasefb2`/`100946498038` (confirmed via `gcloud services list` returning
+  zero calendar services, despite being reported enabled earlier) — every `listCalendars`/events
+  call 403'd with `accessNotConfigured`, and the code treated that identically to a genuinely
+  invalid refresh token. Fixed: enabled `calendar-json.googleapis.com`; added a
+  single-source-of-truth `status` field (`connected`/`calendar_selection_required`/
+  `reauth_required`/`connection_error`/`disconnected`) in `functions/lib/googleCalendarStore.js`
+  so `reauth_required` is only set on a genuinely invalid/missing refresh token, not any API
+  failure; auto-selects the primary calendar on a fresh connect; removed the duplicate
+  "no calendars selected" message (was pushed into both `warnings` and `reason`); added
+  `color` to listed calendars and `googleAccountId` into the event dedup id; added safe
+  diagnostic logging (verified live, no tokens logged). Redeployed all 8 functions + frontend
+  (version `f209f804-6a3d-446e-89d1-d31e701925a8`). Verified live: one accurate status, calendar
+  selection persisted, 2 real Google events synced onto the Calendar page, Refresh completes
+  cleanly. The already-connected account did **not** need to reconnect — only the disabled API
+  was breaking calls, not the tokens.
 
 ## Works (verified in code)
 - Web (`frontend/`) and Android (`mobile-android/`) both talk to Firebase directly:

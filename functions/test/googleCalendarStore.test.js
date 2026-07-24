@@ -1,6 +1,38 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { isOAuthStateValid, isDisplayEnabled } = require("../lib/googleCalendarStore");
+const { isOAuthStateValid, isDisplayEnabled, computeStatusCode } = require("../lib/googleCalendarStore");
+
+// --- computeStatusCode ------------------------------------------------------
+
+test("computeStatusCode: null connection is disconnected", () => {
+  assert.equal(computeStatusCode(null), "disconnected");
+});
+
+test("computeStatusCode: isActive false is disconnected even with other fields set", () => {
+  assert.equal(computeStatusCode({ isActive: false, selectedCalendarIds: ["cal-1"] }), "disconnected");
+});
+
+test("computeStatusCode: active with no calendars selected is calendar_selection_required", () => {
+  assert.equal(computeStatusCode({ isActive: true, selectedCalendarIds: [] }), "calendar_selection_required");
+});
+
+test("computeStatusCode: active with calendars selected and no error is connected", () => {
+  assert.equal(computeStatusCode({ isActive: true, selectedCalendarIds: ["cal-1"] }), "connected");
+});
+
+test("computeStatusCode: reauth_required lastErrorCode wins even with calendars selected", () => {
+  assert.equal(
+    computeStatusCode({ isActive: true, selectedCalendarIds: ["cal-1"], lastErrorCode: "reauth_required" }),
+    "reauth_required",
+  );
+});
+
+test("computeStatusCode: api_error lastErrorCode maps to connection_error, not reauth", () => {
+  assert.equal(
+    computeStatusCode({ isActive: true, selectedCalendarIds: ["cal-1"], lastErrorCode: "api_error" }),
+    "connection_error",
+  );
+});
 
 // --- isDisplayEnabled ------------------------------------------------------
 

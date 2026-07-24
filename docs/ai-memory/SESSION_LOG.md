@@ -1,5 +1,50 @@
 # Session Log
 
+## 2026-07-24 — Google Calendar connection/sync repair (root cause + fix + live verification)
+- Objective: fix the reported "Connected" + "Google Calendar must be reconnected" contradictory
+  state, "No Google calendars have been selected yet." showing twice, and events never syncing,
+  discovered while live-testing the newly-deployed integration from the prior session.
+- Root cause (found via `firebase functions:log` / Cloud Run request logs, then confirmed with
+  `gcloud services list --enabled`): the Google Calendar API was **never actually enabled** on
+  Google Cloud project `capdatabasefb2` / `100946498038`, despite being reported enabled in an
+  earlier session. Every `calendar.calendarList.list()`/events call failed with
+  `403 accessNotConfigured`, and `googleCalendarListCalendars`/`googleCalendarEvents` treated
+  *any* caught error identically to "refresh token invalid," writing `lastError` and showing
+  "must be reconnected" even though `isActive` stayed `true` the whole time. Fixed by running
+  `gcloud services enable calendar-json.googleapis.com --project capdatabasefb2`.
+- Files changed: `functions/lib/googleCalendarStore.js` (new `lastErrorCode`
+  `"reauth_required"`/`"api_error"` distinction, `recordError`/`clearError`, single
+  source-of-truth `computeStatusCode`), `functions/lib/googleCalendarService.js`
+  (`ensureFreshToken` now tags reauth failures with `.code`, `listCalendars` returns `color`,
+  event ids now include `googleAccountId`), `functions/index.js` (`safeStatus` exposes new
+  `status` field; `googleCalendarCallback` auto-selects the primary calendar on first connect;
+  `googleCalendarListCalendars`/`googleCalendarEvents` classify reauth vs. transient API errors
+  and stopped duplicating the reason message into `warnings`; added safe diagnostic `console.log`
+  calls throughout, no tokens logged), `functions/test/index.test.js` +
+  `functions/test/googleCalendarStore.test.js` + `functions/test/googleCalendarService.test.js`
+  (new coverage for all of the above), `frontend/src/api/apiClient.js` (removed the
+  frontend-side duplicate warning push), `frontend/src/pages/SystemSettings.jsx` (renders the
+  new single `status` value instead of two contradictory booleans; calendar selector now shows
+  calendar ID and colour swatch), `frontend/src/pages/CalendarPage.jsx` (reason messaging
+  updated for the new status codes).
+- Firestore: no schema/rules changes this round — same `system_integrations/google_calendar`
+  doc, now with a `lastErrorCode` field in addition to the existing `lastError`.
+- Verification: `functions` 63/63 tests pass, lint clean. `frontend` typecheck/lint/build clean.
+  Deployed all 8 functions + Cloudflare frontend (approved by user after the deploy command was
+  initially blocked by the auto-mode classifier and re-confirmed). Live-tested via
+  claude-in-chrome browser automation using the already-connected account
+  (`gerhard.ark.of.war@gmail.com`, admin `admin@connoisseurauto.co.za` session): status now
+  shows a single accurate "Connected — calendar selection required" then "Connected" after
+  selecting a calendar, selection persisted across reload, Calendar page rendered 2 real Google
+  events distinct from CAP service records, Refresh Calendar completed with no stuck loading
+  state, and `functions:log` diagnostics confirmed correct behaviour with zero secrets logged.
+  The already-connected account did not need to reconnect — its tokens were valid throughout;
+  only the disabled Calendar API was breaking calls.
+- Remaining work: none blocking. Optional: `firebase functions:artifacts:setpolicy` to silence
+  the cleanup-policy warning (pre-existing, unrelated). Event-detail modal click-through in the
+  Calendar page UI wasn't confirmed via browser click (pre-existing, untouched code) — worth a
+  manual click-test but not considered part of this fix's scope.
+
 ## 2026-07-23 — Google Calendar shared-integration feature + loading/error bugfixes (implemented, not deployed)
 - Objective: fix "Unable to reach the server" / infinite loading-state bugs reported on
   System Settings and the Calendar page, and implement the required shared-company-level

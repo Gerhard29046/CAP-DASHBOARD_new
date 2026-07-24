@@ -59,15 +59,20 @@ function guarded(handler) {
 }
 
 function safeStatus(connection) {
+  const status = store.computeStatusCode(connection);
   return {
     connected: Boolean(connection),
-    requires_reconnection: Boolean(connection?.lastError),
+    status,
+    // Kept for backward compatibility with existing callers - now derived
+    // from the single `status` calculation rather than a raw lastError check,
+    // so "connected" and "must be reconnected" can no longer both be true.
+    requires_reconnection: status === "reauth_required",
     account_name: connection?.googleAccountName ?? null,
     account_email: connection?.googleAccountEmail ?? null,
     connected_at: toIso(connection?.connectedAt),
     last_refreshed_at: toIso(connection?.lastRefreshedAt),
     selected_calendars: connection?.selectedCalendarIds ?? [],
-    last_error: connection?.lastError ?? null,
+    last_error: status === "connection_error" ? connection?.lastError ?? null : null,
     display_enabled: store.isDisplayEnabled(connection),
   };
 }
@@ -218,7 +223,7 @@ exports.googleCalendarCallback = onRequest(
         return;
       }
 
-      await store.upsertConnection({
+      const connectionFields = {
         connectedByUid: uid,
         googleAccountId: identity.id ?? null,
         googleAccountName: identity.name ?? null,
@@ -235,7 +240,36 @@ exports.googleCalendarCallback = onRequest(
         isActive: true,
         connectedAt: new Date(),
         lastError: null,
-      });
+        lastErrorCode: null,
+      };
+
+      // Best-effort: if no calendars are selected yet (a brand-new connection,
+      // or a reconnect that preserved an empty selection), auto-select the
+      // account's primary calendar so events start flowing without forcing
+      // the admin through a separate "Change Selected Calendars" step first.
+      // Never blocks the connection itself from succeeding.
+      if (!(existing?.selectedCalendarIds || []).length) {
+        try {
+          const freshClient = await googleCalendar.ensureFreshToken({
+            accessToken: connectionFields.accessToken,
+            refreshToken: connectionFields.refreshToken,
+            scopes: connectionFields.scopes,
+            tokenExpiresAtMillis: connectionFields.tokenExpiresAtMillis,
+          });
+          const calendars = await googleCalendar.listCalendars(freshClient, []);
+          const primary = calendars.find((cal) => cal.primary);
+          if (primary) {
+            connectionFields.selectedCalendarIds = [primary.id];
+            console.log("Google Calendar: auto-selected primary calendar on connect");
+          } else {
+            console.log("Google Calendar: no primary calendar found to auto-select on connect");
+          }
+        } catch (autoSelectError) {
+          console.error("Google Calendar: auto-select primary calendar failed (non-fatal)", autoSelectError.message || autoSelectError);
+        }
+      }
+
+      await store.upsertConnection(connectionFields);
 
       res.redirect(302, frontendSuccessUrl());
     } catch (unexpected) {
@@ -259,10 +293,15 @@ exports.googleCalendarListCalendars = onRequest(
     try {
       const client = await googleCalendar.ensureFreshToken(connection);
       const calendars = await googleCalendar.listCalendars(client, connection.selectedCalendarIds || []);
+      await store.clearError();
       res.json(calendars);
     } catch (error) {
-      console.error("Failed to list Google calendars", error);
-      await store.updateConnection({ lastError: "Google Calendar must be reconnected." });
+      console.error("Failed to list Google calendars", error.message || error);
+      if (error.code === "reauth_required") {
+        await store.recordError("reauth_required", "Google Calendar must be reconnected.");
+      } else {
+        await store.recordError("api_error", "Google Calendar request failed. Please try again.");
+      }
       res.json([]);
     }
   }),
@@ -296,6 +335,7 @@ exports.googleCalendarSelectCalendars = onRequest(
     }
 
     const deduped = Array.from(new Set(validation.calendarIds));
+    console.log(`Google Calendar: saving ${deduped.length} selected calendar id(s)`);
     await store.updateConnection({ selectedCalendarIds: deduped });
     const updated = await store.getConnection();
     res.json(safeStatus(updated));
@@ -357,34 +397,42 @@ exports.googleCalendarEvents = onRequest(
     }
     const { startDate, endDate } = rangeValidation;
 
+    // `warnings` here is reserved for real partial failures (e.g. one bad
+    // calendar out of several selected) - the top-level `reason` code below
+    // already carries the not-connected/disabled/no-selection/reauth message,
+    // so those early returns must NOT also push a warning, or the frontend
+    // ends up rendering the same message twice.
     const connection = await store.getConnection();
     if (!connection) {
-      res.json({ events: [], reason: "not_connected", warnings: ["Google Calendar is not connected."] });
+      res.json({ events: [], reason: "not_connected", warnings: [] });
       return;
     }
 
     if (!store.isDisplayEnabled(connection)) {
-      res.json({
-        events: [],
-        reason: "display_disabled",
-        warnings: ["Google Calendar display is currently disabled by an administrator."],
-      });
+      res.json({ events: [], reason: "display_disabled", warnings: [] });
       return;
     }
 
     const selectedIds = connection.selectedCalendarIds || [];
     if (selectedIds.length === 0) {
-      res.json({ events: [], reason: "no_calendars_selected", warnings: ["No Google calendars have been selected yet."] });
+      res.json({ events: [], reason: "no_calendars_selected", warnings: [] });
       return;
     }
+
+    console.log(`Google Calendar: event request for range ${startDate.toISOString()} to ${endDate.toISOString()}, ${selectedIds.length} calendar(s) selected`);
 
     let client;
     try {
       client = await googleCalendar.ensureFreshToken(connection);
     } catch (error) {
-      console.error("Google Calendar token refresh failed for events fetch", error);
-      await store.updateConnection({ lastError: "Google Calendar must be reconnected." });
-      res.json({ events: [], reason: "reauth_required", warnings: ["Google Calendar must be reconnected."] });
+      console.error("Google Calendar token refresh failed for events fetch", error.message || error);
+      if (error.code === "reauth_required") {
+        await store.recordError("reauth_required", "Google Calendar must be reconnected.");
+        res.json({ events: [], reason: "reauth_required", warnings: [] });
+      } else {
+        await store.recordError("api_error", "Google Calendar request failed. Please try again.");
+        res.json({ events: [], reason: "connection_error", warnings: [] });
+      }
       return;
     }
 
@@ -393,7 +441,7 @@ exports.googleCalendarEvents = onRequest(
       const calendars = await googleCalendar.listCalendars(client, selectedIds);
       calendarNameById = Object.fromEntries(calendars.map((cal) => [cal.id, cal.name]));
     } catch (error) {
-      console.error("Failed to load Google calendar names", error);
+      console.error("Failed to load Google calendar names", error.message || error);
     }
 
     const { events, warnings } = await collectCalendarEventsForCalendars(selectedIds, (calendarId) =>
@@ -403,10 +451,14 @@ exports.googleCalendarEvents = onRequest(
         calendarNameById[calendarId],
         startDate.toISOString(),
         endDate.toISOString(),
+        connection.googleAccountId,
       ),
     );
 
-    await store.updateConnection({ lastRefreshedAt: new Date(), lastError: null });
+    console.log(`Google Calendar: event request completed, ${events.length} event(s) returned, ${warnings.length} warning(s)`);
+
+    await store.updateConnection({ lastRefreshedAt: new Date() });
+    await store.clearError();
     res.json({ events, warnings });
   }),
 );

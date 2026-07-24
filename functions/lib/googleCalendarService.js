@@ -45,6 +45,10 @@ function authorizedClientFor(connection) {
  * connection cannot be refreshed (e.g. no refresh token, or Google rejects
  * it) - callers must treat this as "must be reconnected".
  */
+function reauthRequiredError() {
+  return Object.assign(new Error("Google Calendar must be reconnected."), { code: "reauth_required" });
+}
+
 async function ensureFreshToken(connection) {
   const client = authorizedClientFor(connection);
   const expiryMillis = connection.tokenExpiresAtMillis || 0;
@@ -53,17 +57,20 @@ async function ensureFreshToken(connection) {
   if (!isExpired) return client;
 
   if (!connection.refreshToken) {
-    throw new Error("Google Calendar must be reconnected.");
+    console.log("Google Calendar token refresh: no refresh token stored, reconnection required");
+    throw reauthRequiredError();
   }
 
+  console.log("Google Calendar token refresh: attempting");
   let refreshed;
   try {
     const response = await client.refreshAccessToken();
     refreshed = response.credentials;
   } catch (error) {
-    console.error("Google Calendar token refresh failed", error);
-    throw new Error("Google Calendar must be reconnected.");
+    console.error("Google Calendar token refresh failed", error.message || error);
+    throw reauthRequiredError();
   }
+  console.log("Google Calendar token refresh: succeeded");
 
   const newExpiryMillis = refreshed.expiry_date || Date.now() + 3600 * 1000;
   await updateConnection({
@@ -105,25 +112,28 @@ async function revokeConnection(connection) {
 
 /** Lists the connected account's calendars, flagging which are selected. */
 async function listCalendars(client, selectedCalendarIds = []) {
+  console.log("Google Calendar: calendar list request started");
   const calendar = google.calendar({ version: "v3", auth: client });
   const { data } = await calendar.calendarList.list();
   const items = data.items || [];
+  console.log(`Google Calendar: calendar list request completed, ${items.length} calendar(s) returned`);
   return items.map((item) => ({
     id: item.id,
     name: item.summary,
     primary: Boolean(item.primary),
     selected: selectedCalendarIds.includes(item.id),
+    color: item.backgroundColor || null,
   }));
 }
 
-function stableEventId(calendarId, eventId) {
-  return `google-${crypto.createHash("sha1").update(`${calendarId}-${eventId}`).digest("hex")}`;
+function stableEventId(googleAccountId, calendarId, eventId) {
+  return `google-${crypto.createHash("sha1").update(`${googleAccountId || ""}-${calendarId}-${eventId}`).digest("hex")}`;
 }
 
 /** Pure mapping of a raw Google Calendar API event to the FullCalendar shape. */
-function mapGoogleEventToFullCalendar(rawEvent, calendarId, calendarName) {
+function mapGoogleEventToFullCalendar(rawEvent, calendarId, calendarName, googleAccountId) {
   return {
-    id: stableEventId(calendarId, rawEvent.id),
+    id: stableEventId(googleAccountId, calendarId, rawEvent.id),
     title: rawEvent.summary || "(Untitled event)",
     start: rawEvent.start?.dateTime || rawEvent.start?.date,
     end: rawEvent.end?.dateTime || rawEvent.end?.date,
@@ -142,7 +152,7 @@ function mapGoogleEventToFullCalendar(rawEvent, calendarId, calendarName) {
 }
 
 /** Fetches events for a single calendar id within [start, end], mapped to FullCalendar shape. */
-async function listEventsForCalendar(client, calendarId, calendarName, start, end) {
+async function listEventsForCalendar(client, calendarId, calendarName, start, end, googleAccountId) {
   const calendar = google.calendar({ version: "v3", auth: client });
   const { data } = await calendar.events.list({
     calendarId,
@@ -152,7 +162,7 @@ async function listEventsForCalendar(client, calendarId, calendarName, start, en
     orderBy: "startTime",
   });
   const items = data.items || [];
-  return items.map((event) => mapGoogleEventToFullCalendar(event, calendarId, calendarName));
+  return items.map((event) => mapGoogleEventToFullCalendar(event, calendarId, calendarName, googleAccountId));
 }
 
 module.exports = {

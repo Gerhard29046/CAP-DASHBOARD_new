@@ -13,6 +13,7 @@ test("safeStatus: null connection returns disconnected defaults without throwing
   const result = safeStatus(null);
   assert.deepEqual(result, {
     connected: false,
+    status: "disconnected",
     requires_reconnection: false,
     account_name: null,
     account_email: null,
@@ -24,7 +25,7 @@ test("safeStatus: null connection returns disconnected defaults without throwing
   });
 });
 
-test("safeStatus: connected connection reflects its fields", () => {
+test("safeStatus: connected connection with calendars selected reflects its fields", () => {
   const result = safeStatus({
     isActive: true,
     googleAccountName: "Jane Doe",
@@ -33,25 +34,58 @@ test("safeStatus: connected connection reflects its fields", () => {
     lastError: null,
   });
   assert.equal(result.connected, true);
+  assert.equal(result.status, "connected");
   assert.equal(result.account_name, "Jane Doe");
   assert.equal(result.account_email, "jane@example.com");
   assert.deepEqual(result.selected_calendars, ["cal-1"]);
 });
 
 test("safeStatus: display_enabled defaults true when unset on an existing connection", () => {
-  const result = safeStatus({ isActive: true });
+  const result = safeStatus({ isActive: true, selectedCalendarIds: ["cal-1"] });
   assert.equal(result.display_enabled, true);
 });
 
 test("safeStatus: display_enabled reflects an explicit false", () => {
-  const result = safeStatus({ isActive: true, displayEnabled: false });
+  const result = safeStatus({ isActive: true, selectedCalendarIds: ["cal-1"], displayEnabled: false });
   assert.equal(result.display_enabled, false);
 });
 
-test("safeStatus: connection with lastError requires reconnection", () => {
-  const result = safeStatus({ lastError: "Google Calendar must be reconnected." });
+test("safeStatus: connected with no calendars selected is 'calendar_selection_required', not reauth", () => {
+  const result = safeStatus({ isActive: true, selectedCalendarIds: [] });
+  assert.equal(result.status, "calendar_selection_required");
+  assert.equal(result.connected, true);
+  assert.equal(result.requires_reconnection, false);
+});
+
+test("safeStatus: reauth_required lastErrorCode reports status reauth_required and requires_reconnection", () => {
+  const result = safeStatus({
+    isActive: true,
+    selectedCalendarIds: ["cal-1"],
+    lastErrorCode: "reauth_required",
+    lastError: "Google Calendar must be reconnected.",
+  });
+  assert.equal(result.status, "reauth_required");
+  assert.equal(result.connected, true);
   assert.equal(result.requires_reconnection, true);
-  assert.equal(result.last_error, "Google Calendar must be reconnected.");
+});
+
+test("safeStatus: api_error lastErrorCode reports status connection_error without requiring reconnection", () => {
+  const result = safeStatus({
+    isActive: true,
+    selectedCalendarIds: ["cal-1"],
+    lastErrorCode: "api_error",
+    lastError: "Google Calendar request failed. Please try again.",
+  });
+  assert.equal(result.status, "connection_error");
+  assert.equal(result.connected, true);
+  assert.equal(result.requires_reconnection, false);
+  assert.equal(result.last_error, "Google Calendar request failed. Please try again.");
+});
+
+test("safeStatus: a connected status never also reports requires_reconnection (the original bug)", () => {
+  const result = safeStatus({ isActive: true, selectedCalendarIds: ["cal-1"], lastErrorCode: null });
+  assert.equal(result.status, "connected");
+  assert.equal(result.requires_reconnection, false);
 });
 
 // --- validateDateRange --------------------------------------------------

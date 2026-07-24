@@ -15,6 +15,13 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 
+const STATUS_LABELS = {
+  connected: { label: "Connected", tone: "text-foreground" },
+  calendar_selection_required: { label: "Connected — calendar selection required", tone: "text-amber-500" },
+  reauth_required: { label: "Token expired — reconnect required", tone: "text-destructive" },
+  connection_error: { label: "Connection error", tone: "text-destructive" },
+};
+
 export default function SystemSettings() {
   const { hasPermission } = useAuth();
   const [status, setStatus] = useState(null);
@@ -150,7 +157,9 @@ export default function SystemSettings() {
           <>
             <dl className="grid grid-cols-[160px_1fr] gap-2 text-sm">
               <dt>Connection Status</dt>
-              <dd>Connected</dd>
+              <dd className={STATUS_LABELS[status.status]?.tone || ""}>
+                {STATUS_LABELS[status.status]?.label || status.status}
+              </dd>
               <dt>Account</dt>
               <dd>{status.account_name || "—"} ({status.account_email})</dd>
               <dt>Connection Date</dt>
@@ -159,8 +168,20 @@ export default function SystemSettings() {
               <dd>{status.last_refreshed_at || "Not refreshed yet"}</dd>
             </dl>
 
-            {status.requires_reconnection && (
-              <p className="text-destructive">Google Calendar must be reconnected.</p>
+            {status.status === "reauth_required" && (
+              <p className="text-destructive">
+                Google's access token could not be refreshed. Click Replace Connection below to
+                sign in again — your calendar selection will be kept.
+              </p>
+            )}
+            {status.status === "connection_error" && (
+              <p className="text-destructive">{status.last_error || "The last Google Calendar request failed. Please try again."}</p>
+            )}
+            {status.status === "calendar_selection_required" && (
+              <p className="text-sm text-muted-foreground">
+                No calendars are selected yet. Choose at least one calendar below and click
+                Change Selected Calendars.
+              </p>
             )}
 
             {hasPermission("calendar.google.connect") && (
@@ -180,6 +201,9 @@ export default function SystemSettings() {
             )}
 
             <div className="space-y-2">
+              {calendars.length === 0 && status.status !== "reauth_required" && status.status !== "connection_error" && (
+                <p className="text-sm text-muted-foreground">No Google calendars were found on this account.</p>
+              )}
               {calendars.map((calendar, index) => (
                 <label className="flex items-center gap-2" key={calendar.id}>
                   <Checkbox
@@ -188,7 +212,14 @@ export default function SystemSettings() {
                       setCalendars(calendars.map((item, itemIndex) =>
                         itemIndex === index ? { ...item, selected: !!value } : item))}
                   />
-                  {calendar.name}{calendar.primary ? " (Primary)" : ""}
+                  {calendar.color && (
+                    <span
+                      className="inline-block h-3 w-3 rounded-full border"
+                      style={{ backgroundColor: calendar.color }}
+                    />
+                  )}
+                  <span>{calendar.name}{calendar.primary ? " (Primary)" : ""}</span>
+                  <span className="text-xs text-muted-foreground">{calendar.id}</span>
                 </label>
               ))}
             </div>

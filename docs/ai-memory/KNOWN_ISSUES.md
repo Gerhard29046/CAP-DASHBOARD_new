@@ -4,10 +4,8 @@
 - No build, lint, typecheck, or test suite has been run this session for any layer
   (frontend, backend, functions, Android). All statements above are from static code
   inspection only.
-- Google Calendar OAuth functions are deployed (2026-07-23, project `capdatabasefb2`,
-  region `africa-south1`) with secrets bound, but a real connect→consent→callback round
-  trip has not yet been exercised by a user. Verify via System Settings before treating the
-  integration as fully live.
+- Google Calendar: fully live-tested 2026-07-24, including a real connect flow and event
+  sync with account `gerhard.ark.of.war@gmail.com`. No longer an open verification gap.
 - Firebase reported "No cleanup policy detected for repositories in africa-south1" during
   this deploy — old container images may accumulate a small storage cost over time. Fix
   (not yet applied, low priority): `firebase functions:artifacts:setpolicy --project
