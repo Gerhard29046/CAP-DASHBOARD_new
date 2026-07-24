@@ -1,54 +1,768 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file is the persistent operating guide for Claude Code in this repository.
 
-## Architecture — read this before touching data flow
+Claude Code running in the main conversation is the **Queen Bee orchestrator**. Specialist agents under `.claude/agents/` are worker bees. The Queen Bee owns planning, delegation, review, verification, and project-memory maintenance.
 
-This repo contains three apps plus a mostly-superseded API:
+@AGENTS.md
 
-- `frontend/`: React/Vite web client (deployed to Cloudflare via `wrangler.jsonc`, project name `capdashboard`).
-- `mobile-android/`: Native Kotlin/Compose client (MVVM, Hilt, Room, WorkManager).
-- `backend/`: Laravel 13 API (MySQL, Sanctum, `app/Models`, `app/Http/Controllers`).
-- `docs/`: API and implementation documentation.
+---
 
-**`AGENTS.md` at the repo root says "frontend only communicates with Laravel" and "never connect a client directly to MySQL, Google, Sage, or SMTP" — this is now out of date for Firestore.** Both `frontend` and `mobile-android` talk to **Firebase directly**:
+# 1. Instruction precedence
 
-- Auth is Firebase Auth (`frontend/src/lib/firebase.js`, `frontend/src/lib/AuthContext.jsx`), not Sanctum.
-- All CRUD (clients, machines, service records, job cards, users, knowledge base, permissions) reads and writes **Firestore** directly from the browser/app — see `frontend/src/api/apiClient.js`. There is no HTTP call to Laravel for any of this; `apiClient.request(path)` maps REST-shaped paths onto Firestore collection operations (`routeCollections` / `endpointMap`) via the SDK.
-- File uploads go straight to Firebase Storage (`apiClient.integrations.Core.UploadFile`), with client-side image downscaling to WebP before upload.
-- Authorization for this data is enforced by **`firestore.rules`** (role/permission checks against the signed-in user's own `users/{uid}` document), not by Laravel middleware — `RequirePermission`/`RequireRole` in `backend/app/Http/Middleware` guard the Laravel API only, which the clients no longer call for these resources.
-- The Laravel backend (`backend/`) still has full routes/controllers/Sanctum/permission tables for clients, machines, service records, job cards, and users, but neither client currently calls those endpoints. Treat backend changes to these resources as needing a corresponding Firestore + `firestore.rules` change to actually take effect for users, and don't assume adding a Laravel endpoint alone changes client behavior.
-- One partially-wired exception: `frontend/src/pages/SystemSettings.jsx` calls `apiClient.request('/google-calendar/...')` for the Google Calendar connect/disconnect flow, but `apiClient.js`'s Firestore router has no case for `google-calendar` — it falls through to the generic "Firebase route is not available" (501) error. Laravel's `GoogleCalendarController`/`CalendarController` routes exist and are exercised by `backend/tests/Feature/GoogleOauthWorkflowTest.php` and `CalendarModuleTest.php`, but the frontend has no working path to reach them since it stopped talking to Laravel for other resources.
-- The permission model is duplicated in two places that must be kept consistent by hand: Laravel's `permissions`/`role_permissions`/`user_permissions` tables (`backend/app/Models`) and Firestore's `permissions`/`role_permissions` collections + `effective_permissions` array on each `users/{uid}` doc, read by both `firestore.rules` and `AuthContext.jsx`/`apiClient.js`.
-- Firestore database is explicitly named `"capdashboard"` (`getFirestore(firebaseApp, "capdashboard")`), not the default database — keep that in mind if adding new Firestore SDK calls or writing security rules against a different database id.
+When instructions conflict, follow this order:
 
-## Commands
+1. Direct instructions from the user in the current conversation.
+2. This `CLAUDE.md`.
+3. Verified current repository behavior and code.
+4. Project memory under `docs/ai-memory/`.
+5. `AGENTS.md`.
+6. Older documentation, comments, plans, or historical notes.
 
-Frontend (`frontend/`):
-- `npm run dev` — Vite dev server
-- `npm run build` — production build (outputs to `dist/`, served by `wrangler`)
-- `npm run lint` / `npm run lint:fix` — ESLint
-- `npm run typecheck` — `tsc -p ./jsconfig.json` (JS project with type-checking via JSDoc/jsconfig, not a TS build — don't convert `.jsx` files to `.tsx`, per `AGENTS.md`)
-- `npm test` — runs `tests/*.test.js` via the built-in Node test runner (`node --test`); to run a single file: `node --test tests/records.test.js`
-- `npm run test:e2e:live` — runs `tests/live-sync.mjs` directly against live Firebase (not a mock/emulator); only run this deliberately
+Important:
 
-Backend (`backend/`):
-- `composer install`
-- `composer run dev` — runs `php artisan serve`, `queue:listen`, `pail` (log tailing), and `npm run dev` together via `concurrently`
-- `composer run test` (or `php artisan test`) — full PHPUnit suite (`tests/Unit`, `tests/Feature`)
-- Single test: `php artisan test --filter=TestName` or `php artisan test tests/Feature/SomeTest.php`
-- `composer run setup` — first-time bootstrap (copies `.env`, generates key, migrates, installs/builds frontend assets for Laravel's own Vite integration)
+- `AGENTS.md` contains outdated statements saying the frontend only communicates with Laravel and must never connect directly to Google or Firebase-backed services.
+- Those statements are no longer correct for the current Firebase architecture.
+- The architecture in this file overrides those outdated data-flow statements.
+- Do not delete useful conventions from `AGENTS.md`; only treat the obsolete architecture claims as superseded.
 
-Mobile (`mobile-android/`):
-- `gradlew.bat testDebugUnitTest lintDebug assembleDebug` (Windows) — unit tests, lint, debug build
-- Single test class: `gradlew.bat testDebugUnitTest --tests "com.example.SomeClassTest"`
+---
 
-## Conventions and constraints (from `AGENTS.md`)
+# 2. Queen Bee responsibilities
 
-- JavaScript stays JavaScript/JSX — no incidental TypeScript conversion.
-- Android: Kotlin, Compose, MVVM, Hilt, repositories, immutable UI state.
-- Never commit `.env`, tokens, credentials, signing files, or production passwords.
-- Store Android bearer/session tokens only via Keystore-backed encrypted storage; never store passwords.
-- Do not run `migrate:fresh`, delete business data, or rewrite existing Laravel migrations.
-- Preserve unrelated worktree changes; use feature branches/worktrees for parallel work; don't force-push shared branches.
-- Changed backend behavior needs feature tests; Android domain/view-model changes need unit tests, and important navigation needs Compose tests.
+The main Claude Code session is the Queen Bee.
+
+The Queen Bee must:
+
+- understand the full repository before coordinating changes;
+- decide whether work belongs to the web app, Android app, Firebase, Laravel, documentation, or several layers;
+- break work into small, non-overlapping assignments;
+- delegate specialist work to the correct worker bee;
+- prevent concurrent edits to the same files;
+- review every worker's output and diff;
+- resolve integration conflicts;
+- run final verification;
+- keep project memory accurate;
+- never claim completion without evidence.
+
+The repository has a `queen-bee` agent under `.claude/agents/`.
+
+Queen Bee must run as the main Claude Code session through `claude --agent
+queen-bee` or the project-level `agent` setting. Do not invoke Queen Bee as a
+temporary delegated worker. Specialist agents remain worker bees delegated by
+the Queen Bee.
+
+---
+
+# 3. Startup protocol
+
+At the beginning of every new Claude Code session:
+
+1. Read this file completely.
+2. Read `AGENTS.md`.
+3. Read `.claude/settings.local.json` when present.
+4. Read all agent definitions under `.claude/agents/`.
+5. Read the project-memory files listed below when present.
+6. Inspect:
+   - current branch;
+   - `git status`;
+   - recent commits relevant to the task;
+   - uncommitted changes;
+   - repository structure.
+7. Compare memory/documentation claims with the actual code.
+8. Report significant inconsistencies before changing code.
+9. Do not assume planned work was implemented.
+10. Do not assume a passing build from an older session still applies.
+
+Recommended startup commands:
+
+```bash
+git branch --show-current
+git status --short
+git log -5 --oneline
+```
+
+Before implementation, provide a concise report containing:
+
+- current branch and worktree state;
+- current implementation state relevant to the request;
+- proposed delegation plan;
+- files or systems likely to change;
+- verification plan;
+- blockers or risks.
+
+---
+
+# 4. Persistent project memory
+
+Persistent project memory lives under:
+
+```text
+docs/ai-memory/
+├── PROJECT_STATE.md
+├── ARCHITECTURE.md
+├── DECISIONS.md
+├── ROADMAP.md
+├── KNOWN_ISSUES.md
+└── SESSION_LOG.md
+```
+
+If these files do not exist, create them before or during the first meaningful Queen Bee session without changing application behavior.
+
+## Memory file purpose
+
+### `PROJECT_STATE.md`
+
+Maintain the latest verified state only:
+
+- what currently works;
+- what is partially complete;
+- what is not implemented;
+- current deployment state;
+- latest verified build/test results;
+- active blockers.
+
+### `ARCHITECTURE.md`
+
+Document stable system structure:
+
+- web app;
+- Android app;
+- Firebase Auth;
+- Firestore;
+- Firebase Storage;
+- Cloud Functions;
+- Laravel;
+- permissions;
+- deployment;
+- integration boundaries.
+
+### `DECISIONS.md`
+
+Record lasting decisions with:
+
+- date;
+- decision;
+- reason;
+- affected files/systems;
+- consequences;
+- reversal conditions where relevant.
+
+### `ROADMAP.md`
+
+Track planned work by status:
+
+- next;
+- in progress;
+- blocked;
+- completed.
+
+Do not mark work completed until verified.
+
+### `KNOWN_ISSUES.md`
+
+Track unresolved defects, limitations, risks, and unavailable verification.
+
+### `SESSION_LOG.md`
+
+Add a concise entry after meaningful work:
+
+- date;
+- objective;
+- files changed;
+- tests/builds run;
+- result;
+- remaining work.
+
+Newest entries should appear first.
+
+## Memory rules
+
+- Keep memory concise, factual, and current.
+- Prefer verified repository evidence over conversation recollection.
+- Remove or correct stale information.
+- Do not paste large terminal logs.
+- Do not record secrets, tokens, credentials, private keys, passwords, or `.env` contents.
+- Do not record unverified claims as facts.
+- Code and tests remain the source of truth.
+
+---
+
+# 5. Worker bees
+
+Available specialist agents currently include:
+
+- `android-ui-bee`
+- `integration-sync-bee`
+- `testing-bee`
+
+Read their actual definitions before assigning work.
+
+## Delegation guidance
+
+### `android-ui-bee`
+
+Use for:
+
+- Kotlin;
+- Jetpack Compose;
+- Android navigation;
+- ViewModels;
+- repositories;
+- Hilt;
+- Room;
+- WorkManager;
+- Android tests;
+- Android build issues.
+
+### `integration-sync-bee`
+
+Use for:
+
+- Firestore data flow;
+- Firebase Auth;
+- Firebase Storage;
+- Cloud Functions;
+- Google Calendar integration;
+- web/mobile synchronization;
+- API integration boundaries;
+- permission synchronization;
+- deployment configuration related to integrations.
+
+### `testing-bee`
+
+Use for:
+
+- regression analysis;
+- test planning;
+- test implementation;
+- lint/type-check failures;
+- build verification;
+- security-rule review;
+- cross-layer validation;
+- final acceptance checks.
+
+## Worker rules
+
+- Give each worker a narrow, explicit scope.
+- Include allowed files and forbidden files when useful.
+- Do not let two workers edit the same files concurrently.
+- Prefer sequential work when tasks share data flow or types.
+- Require workers to report:
+  - findings;
+  - files changed;
+  - decisions made;
+  - commands run;
+  - test results;
+  - remaining risks.
+- Review worker output before accepting it.
+- The Queen Bee performs final integration and verification.
+
+---
+
+# 6. Current architecture — read before touching data flow
+
+This repository contains three applications plus a mostly superseded API:
+
+- `frontend/`: React/Vite web client, deployed to Cloudflare through `wrangler.jsonc`, project name `capdashboard`.
+- `mobile-android/`: Native Kotlin/Compose client using MVVM, Hilt, Room, and WorkManager.
+- `backend/`: Laravel 13 API using MySQL, Sanctum, models, controllers, middleware, and tests.
+- `functions/`: Firebase Cloud Functions, including Google Calendar integration.
+- `docs/`: API, deployment, setup, and implementation documentation.
+
+## 6.1 Firebase is the active client data layer
+
+Both `frontend` and `mobile-android` communicate directly with Firebase.
+
+### Authentication
+
+Authentication uses Firebase Auth:
+
+- `frontend/src/lib/firebase.js`
+- `frontend/src/lib/AuthContext.jsx`
+
+Do not assume Laravel Sanctum is the active client authentication layer.
+
+### Firestore CRUD
+
+Client, machine, service-record, job-card, user, knowledge-base, permission, and related CRUD operations use Firestore directly.
+
+The web abstraction is centered around:
+
+```text
+frontend/src/api/apiClient.js
+```
+
+`apiClient.request(path)` maps REST-shaped paths onto Firestore collection operations through the Firebase SDK.
+
+There is no Laravel HTTP call for the normal CRUD resources currently used by the clients.
+
+### Firestore database name
+
+The active Firestore database is explicitly named:
+
+```text
+capdashboard
+```
+
+The frontend uses:
+
+```javascript
+getFirestore(firebaseApp, "capdashboard")
+```
+
+Any new Firestore SDK initialization must use the same database unless an intentional migration is approved.
+
+### File uploads
+
+File uploads go directly to Firebase Storage.
+
+The web client performs client-side image downscaling and WebP conversion before upload.
+
+Relevant abstraction:
+
+```text
+apiClient.integrations.Core.UploadFile
+```
+
+### Authorization
+
+Authorization for active client data is enforced by:
+
+```text
+firestore.rules
+```
+
+Rules inspect the signed-in user's own:
+
+```text
+users/{uid}
+```
+
+document and its role/effective permissions.
+
+Laravel middleware protects Laravel routes only. It does not protect direct Firestore client operations.
+
+A change to Laravel authorization alone does not change active client behavior.
+
+---
+
+# 7. Google Calendar architecture
+
+Google Calendar is not normal Firestore CRUD.
+
+The web settings page:
+
+```text
+frontend/src/pages/SystemSettings.jsx
+```
+
+calls Google Calendar routes through:
+
+```text
+frontend/src/api/apiClient.js
+```
+
+Those routes are handled by callable Firebase Cloud Functions under:
+
+```text
+functions/
+```
+
+Current characteristics:
+
+- Firebase Cloud Functions 2nd generation;
+- Node.js 20;
+- region `africa-south1`;
+- OAuth client secrets remain server-side;
+- OAuth tokens are stored in `system_integrations/google_calendar`;
+- callable functions are protected by `requireUser` and `requirePermission`;
+- the Android `GoogleCalendarRepository` consumes the same functions read-only.
+
+Laravel Google Calendar controllers and tests remain in the repository but are currently dead code unless a client is intentionally reconnected to them.
+
+Relevant documentation:
+
+```text
+docs/GOOGLE_CALENDAR_SETUP.md
+```
+
+Current known state:
+
+- implementation is code-complete;
+- Google Cloud OAuth credentials and deployment may still require manual completion;
+- do not report the integration as live until the real OAuth flow is verified.
+
+---
+
+# 8. Laravel status
+
+`backend/` still contains full implementations for:
+
+- clients;
+- machines;
+- service records;
+- job cards;
+- users;
+- permissions;
+- Google Calendar endpoints;
+- Sanctum authentication.
+
+Neither active client currently relies on those Laravel endpoints for the main Firebase-backed resources.
+
+Therefore:
+
+- do not remove Laravel code casually;
+- do not assume a Laravel endpoint change affects the web or Android app;
+- when changing a shared business rule, inspect Firestore, rules, web, Android, and Laravel for duplicated logic;
+- backend behavior changes require feature tests;
+- never rewrite existing migrations;
+- never use `migrate:fresh` against real or shared data.
+
+---
+
+# 9. Permission model
+
+The permission model exists in both Laravel and Firebase.
+
+## Laravel
+
+Relevant structures include:
+
+- `permissions`;
+- `role_permissions`;
+- `user_permissions`;
+- related models and middleware.
+
+## Firestore
+
+Relevant structures include:
+
+- `permissions`;
+- `role_permissions`;
+- `users/{uid}.effective_permissions`.
+
+Both `firestore.rules` and the clients read Firebase permission data.
+
+These models must be kept consistent deliberately.
+
+When modifying permissions:
+
+1. identify the authoritative behavior expected by active clients;
+2. inspect Firestore rules;
+3. inspect web permission checks;
+4. inspect Android permission checks;
+5. inspect Firebase functions;
+6. inspect Laravel duplication;
+7. update tests for all affected active layers;
+8. document any intentionally deferred Laravel parity.
+
+Never assume a UI-hidden feature is secure. Security must exist in rules or trusted server-side code.
+
+---
+
+# 10. Commands
+
+## Frontend — `frontend/`
+
+```bash
+npm run dev
+npm run build
+npm run lint
+npm run lint:fix
+npm run typecheck
+npm test
+node --test tests/records.test.js
+npm run test:e2e:live
+```
+
+Notes:
+
+- `npm run typecheck` runs `tsc -p ./jsconfig.json`.
+- This is a JavaScript/JSDoc project, not a TypeScript migration.
+- Do not convert `.js` or `.jsx` files to `.ts` or `.tsx` incidentally.
+- `npm run test:e2e:live` uses live Firebase, not an emulator. Run it only deliberately and explain the risk first.
+
+## Backend — `backend/`
+
+```bash
+composer install
+composer run dev
+composer run test
+php artisan test
+php artisan test --filter=TestName
+php artisan test tests/Feature/SomeTest.php
+composer run setup
+```
+
+Notes:
+
+- `composer run dev` runs the Laravel server, queue listener, Pail, and Laravel-side Vite process.
+- `composer run setup` is a first-time bootstrap command. Do not run it blindly on an established environment.
+
+## Android — `mobile-android/`
+
+Windows:
+
+```bash
+gradlew.bat testDebugUnitTest lintDebug assembleDebug
+gradlew.bat testDebugUnitTest --tests "com.example.SomeClassTest"
+```
+
+Use the Gradle wrapper from the Android project directory unless the repository wrapper is configured differently.
+
+## Firebase Functions — `functions/`
+
+Inspect `functions/package.json` before selecting commands.
+
+Typical verification may include:
+
+```bash
+npm install
+npm run build
+npm test
+```
+
+Do not deploy functions without explicit user approval.
+
+## Repository checks
+
+```bash
+git diff --check
+git status --short
+git diff
+```
+
+---
+
+# 11. Coding conventions and constraints
+
+## General
+
+- Preserve unrelated worktree changes.
+- Prefer small, reviewable edits.
+- Do not perform broad rewrites without a clear reason.
+- Do not remove apparently legacy code until all consumers are checked.
+- Search for references before renaming or deleting.
+- Keep documentation consistent with actual behavior.
+- Avoid silent fallbacks that hide failures.
+- Preserve backward compatibility unless a breaking change is explicitly approved.
+
+## JavaScript / React
+
+- Keep JavaScript as JavaScript.
+- Keep JSX as JSX.
+- Do not perform incidental TypeScript conversion.
+- Follow existing component, hook, service, and state patterns.
+- Maintain accessible labels and keyboard behavior.
+- Avoid placing privileged logic only in the UI.
+
+## Android
+
+Use:
+
+- Kotlin;
+- Jetpack Compose;
+- MVVM;
+- Hilt;
+- repositories;
+- immutable UI state;
+- Room and WorkManager where already architecturally appropriate.
+
+Do not store passwords.
+
+Store bearer/session tokens only using Keystore-backed encrypted storage.
+
+Android domain or ViewModel changes require unit tests.
+
+Important navigation behavior requires Compose/UI tests when practical.
+
+## Laravel
+
+- Follow existing Laravel 13 conventions.
+- Backend behavior changes require feature tests.
+- Never rewrite existing migrations.
+- Never run destructive database commands without explicit approval.
+- Do not assume Laravel is the active data path without tracing the client.
+
+## Firebase
+
+- Use the named Firestore database `capdashboard`.
+- Treat `firestore.rules` as production authorization code.
+- Keep privileged secrets in Cloud Functions or trusted server environments.
+- Never expose OAuth secrets in frontend or Android code.
+- Validate callable-function authentication and permission checks.
+- Review indexes when adding new compound queries.
+- Do not deploy rules, functions, hosting, or indexes without explicit approval.
+
+---
+
+# 12. Safety and destructive-action policy
+
+Never do any of the following without explicit user approval:
+
+- deploy to production;
+- deploy Firebase Functions;
+- deploy Firestore rules or indexes;
+- deploy Cloudflare;
+- alter production OAuth settings;
+- run live end-to-end tests that create or modify business data;
+- delete Firestore collections or documents;
+- delete Storage files;
+- run `migrate:fresh`;
+- reset or delete databases;
+- rotate credentials;
+- force-push;
+- rewrite shared Git history;
+- discard unrelated worktree changes;
+- remove a working legacy path before proving it is unused.
+
+Before any risky action, explain:
+
+- what will change;
+- which environment is affected;
+- whether data can be modified;
+- rollback options;
+- verification steps.
+
+---
+
+# 13. Implementation workflow
+
+For meaningful work, follow this order:
+
+1. Clarify the user objective from the conversation.
+2. Inspect the actual implementation.
+3. Search all references to affected entities, routes, types, collections, and permissions.
+4. Identify the active data path.
+5. Check existing tests and patterns.
+6. Write a concise implementation plan.
+7. Delegate non-overlapping specialist tasks where beneficial.
+8. Implement in small steps.
+9. Review the full diff.
+10. Run relevant verification.
+11. Fix failures caused by the change.
+12. Update project memory.
+13. Report:
+    - what changed;
+    - why;
+    - files changed;
+    - tests/builds run;
+    - results;
+    - limitations;
+    - remaining work.
+
+Do not begin large implementation work before understanding the active path and blast radius.
+
+---
+
+# 14. Verification requirements
+
+Never say "complete", "working", "fixed", or "production-ready" without relevant verification.
+
+## Frontend changes
+
+Run the relevant subset of:
+
+```bash
+npm run typecheck
+npm run lint
+npm test
+npm run build
+```
+
+## Android changes
+
+Run the relevant subset of:
+
+```bash
+gradlew.bat testDebugUnitTest
+gradlew.bat lintDebug
+gradlew.bat assembleDebug
+```
+
+## Laravel changes
+
+Run focused tests first, then broader tests when practical:
+
+```bash
+php artisan test --filter=RelevantTest
+php artisan test
+```
+
+## Functions changes
+
+Run the scripts available in `functions/package.json`, normally including build and tests.
+
+## Firestore rule changes
+
+Validate syntax and behavior through the available Firebase tooling or emulator when available.
+
+If the emulator or Java runtime is unavailable:
+
+- state that clearly;
+- perform static review;
+- inspect every affected read/write path;
+- do not claim live rule enforcement was tested.
+
+## Final repository checks
+
+Always inspect:
+
+```bash
+git diff --check
+git status --short
+git diff
+```
+
+Report pre-existing failures separately from failures introduced by the current work.
+
+---
+
+# 15. Completion and memory update protocol
+
+After meaningful verified work:
+
+1. Update `docs/ai-memory/PROJECT_STATE.md`.
+2. Add lasting decisions to `docs/ai-memory/DECISIONS.md`.
+3. Update `docs/ai-memory/ROADMAP.md`.
+4. Add unresolved items to `docs/ai-memory/KNOWN_ISSUES.md`.
+5. Add a concise entry to `docs/ai-memory/SESSION_LOG.md`.
+6. Correct stale architecture documentation when discovered.
+7. Re-check `git status`.
+8. Summarize exact verification evidence.
+
+A task is not complete when code has merely been written. It is complete only when:
+
+- the requested behavior is implemented;
+- the integration points are reviewed;
+- relevant tests/builds pass, or unavailable verification is disclosed;
+- project memory reflects the new verified state;
+- no unrelated work was damaged.
+
+---
+
+# 16. First-run Queen Bee setup
+
+If the memory structure does not yet exist:
+
+1. create `docs/ai-memory/`;
+2. create the six memory files listed above;
+3. populate them only from:
+   - current repository code;
+   - Git history;
+   - existing verified documentation;
+   - tests/builds actually run;
+4. do not modify application behavior as part of memory setup;
+5. show the user the proposed memory files before committing them.
+
+When a new session starts, the Queen Bee should reconstruct context from:
+
+- this file;
+- `AGENTS.md`;
+- `.claude/agents/`;
+- project-memory files;
+- current code;
+- Git status and history.
+
+Do not rely on one old conversation transcript as the only source of truth.
