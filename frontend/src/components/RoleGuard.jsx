@@ -6,8 +6,9 @@ export default function RoleGuard({
   children,
   allowedRoles = [],
   requiredPermission,
+  requiredAnyPermission,
 }) {
-  const { user, isAuthenticated, hasPermission } = useAuth();
+  const { user, isAuthenticated, hasPermission, hasAnyPermission } = useAuth();
 
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
@@ -17,9 +18,11 @@ export default function RoleGuard({
     return null;
   }
 
-  const denied = requiredPermission
-    ? !hasPermission(requiredPermission)
-    : !allowedRoles.map(role => role.toLowerCase()).includes(user.role?.toLowerCase());
+  const denied = requiredAnyPermission
+    ? !hasAnyPermission(requiredAnyPermission)
+    : requiredPermission
+      ? !hasPermission(requiredPermission)
+      : !allowedRoles.map(role => role.toLowerCase()).includes(user.role?.toLowerCase());
 
   if (denied) {
     return (

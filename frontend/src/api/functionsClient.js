@@ -1,6 +1,7 @@
 import { auth } from "@/lib/firebase";
 
 const FUNCTIONS_BASE_URL = import.meta.env.VITE_FUNCTIONS_BASE_URL;
+const REQUEST_TIMEOUT_MS = 20000;
 
 /**
  * Calls a deployed Firebase Cloud Function (2nd gen, `onRequest`) by name,
@@ -23,18 +24,27 @@ export async function callFunction(name, { method = "GET", searchParams, body } 
   const query = searchParams ? `?${searchParams.toString()}` : "";
   const url = `${FUNCTIONS_BASE_URL}/${name}${query}`;
 
+  const timeoutController = new AbortController();
+  const timeoutId = setTimeout(() => timeoutController.abort(), REQUEST_TIMEOUT_MS);
+
   let response;
   try {
     response = await fetch(url, {
       method,
+      signal: timeoutController.signal,
       headers: {
         Authorization: `Bearer ${idToken}`,
         ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
       },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     });
-  } catch {
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw Object.assign(new Error("The server took too long to respond. Please try again."), { status: 504 });
+    }
     throw new Error("Unable to reach the server. Please check your connection and try again.");
+  } finally {
+    clearTimeout(timeoutId);
   }
 
   if (response.status === 204) return null;

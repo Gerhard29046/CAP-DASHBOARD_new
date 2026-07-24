@@ -38,7 +38,13 @@ service cloud.firestore {
         && request.resource.data.role == 'admin'
         && request.resource.data.is_active == true;
 
-      allow update, delete: if isAdmin();
+      // Admins may update any field. A signed-in user may also update only
+      // their own `preferences` map on their own doc (e.g. personal display
+      // toggles) - never role, permissions, or active status.
+      allow update: if isAdmin()
+        || (signedIn() && request.auth.uid == userId
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['preferences', 'updated_at']));
+      allow delete: if isAdmin();
     }
 
     match /permissions/{document=**} {

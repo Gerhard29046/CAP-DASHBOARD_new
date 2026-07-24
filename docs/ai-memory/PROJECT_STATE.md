@@ -1,5 +1,24 @@
 # Project State
-_Last verified: 2026-07-23 (static repo inspection, no builds/tests run this session)_
+_Last verified: 2026-07-23 (Google Calendar shared-integration feature implemented and locally
+verified; not yet deployed — see SESSION_LOG.md)_
+
+## Google Calendar — implementation status (2026-07-23, not deployed)
+- Shared company-level model confirmed correct at the data layer: single
+  `system_integrations/google_calendar` Firestore doc, one admin-managed connection, shared
+  `selectedCalendarIds` — this was already the existing design, not new.
+- Added this session: `displayEnabled` system-wide toggle (separate from connection aliveness),
+  a real Disconnect (best-effort Google token revoke + clears calendar selection/identity, not
+  just a UI hide), per-user persisted "Show Google Calendar" preference at
+  `users/{uid}.preferences.show_google_calendar` (new narrow self-update `firestore.rules`
+  carve-out), distinct `reason` codes on the events endpoint (not_connected/display_disabled/
+  no_calendars_selected/reauth_required), a 20s request timeout, and a real fix for the
+  System Settings infinite-loading bug (`load()` previously never left `status` at `null` on
+  error). See `docs/ai-memory/SESSION_LOG.md` 2026-07-23 entry for the full file list.
+- **Deployed** (2026-07-23): `firestore.rules`, all 8 functions (7 updated + new
+  `googleCalendarSetDisplayEnabled`), and the Cloudflare frontend rebuild
+  (https://capdashboard.gerhardvanwijk.workers.dev, version `b525df23-c936-4c6e-af94-ac0b26262f31`).
+- Live OAuth round trip (connect→consent→callback) still has never been exercised by a real
+  user — do not report the integration as fully live until that happens.
 
 ## Works (verified in code)
 - Web (`frontend/`) and Android (`mobile-android/`) both talk to Firebase directly:
@@ -27,12 +46,33 @@ _Last verified: 2026-07-23 (static repo inspection, no builds/tests run this ses
   described in `.claude/agents/android-ui-bee.md` and `integration-sync-bee.md`.
 
 ## Not implemented / unverified
-- Real Google OAuth flow has not been verified live (per `docs/GOOGLE_CALENDAR_SETUP.md`,
-  setup requires manual Google Cloud Console steps). Do not report the integration as live
-  until confirmed.
-- No build/test run performed this session (frontend `npm run build`/`lint`/`typecheck`,
-  Android `gradlew.bat`, Laravel `php artisan test`, functions `npm test` — all unexercised
-  as of this memory-setup pass).
+- Google Cloud OAuth client (`CAP Dashboard Google Calendar`, Web application type) created
+  in project `capdatabasefb2`; Calendar API enabled; consent screen configured.
+  `GOOGLE_CALENDAR_CLIENT_ID`/`GOOGLE_CALENDAR_CLIENT_SECRET` are now stored in Firebase
+  Secret Manager, and all 7 Google Calendar functions were deployed successfully on
+  2026-07-23 (`googleCalendarStatus/Connect/Callback/ListCalendars/SelectCalendars/
+  Disconnect/Events`, region `africa-south1`) with `secretAccessor` granted to the runtime
+  service account. Deploy required adding `functions/.env.capdatabasefb2` (gitignored,
+  non-secret — just `FRONTEND_URL=https://capdashboard.gerhardvanwijk.workers.dev`) since
+  non-interactive `firebase deploy` can't confirm a parameter default; recreate this file if
+  it's ever missing on redeploy. The **live OAuth round-trip (connect → consent → callback)
+  has not yet been exercised by a real user** — do not report the integration as fully live
+  until that's confirmed.
+- 2026-07-23 code audit (queen-bee + integration-sync-bee + testing-bee) confirmed, by
+  reading `functions/index.js` and `functions/lib/googleOAuthClient.js`/`googleCalendarStore.js`:
+  - Secrets `GOOGLE_CALENDAR_CLIENT_ID`/`GOOGLE_CALENDAR_CLIENT_SECRET` via `defineSecret()`,
+    correctly bound to all 7 calendar functions, accessed lazily via `.value()`.
+  - Callback redirect URI built in code == `https://africa-south1-capdatabasefb2.cloudfunctions.net/googleCalendarCallback`,
+    matching `docs/GOOGLE_CALENDAR_SETUP.md` exactly.
+  - OAuth `state` CSRF protection is solid: `crypto.randomBytes(32)` random, stored hashed
+    in Firestore (`google_calendar_oauth_states/{sha256(state)}`) with the initiating uid,
+    single-use (atomic transaction), 10-minute TTL, no client-suppliable redirect target.
+  - Minor drift risk (not a bug): `googleOAuthClient.js` redeclares its own `REGION`/`PROJECT_ID`
+    constants instead of importing them from `index.js` — currently identical values, but a
+    second source of truth.
+- Local verification run this session (no deploy):
+  `functions`: `npm test` 46/46 pass, `npm run lint` clean, no build step (plain JS).
+  `frontend`: `npm run typecheck` clean, `npm run lint` clean (build/e2e-live not run).
 
 ## Deployment
 - Frontend deploys to Cloudflare via `wrangler.jsonc`, project `capdashboard`.

@@ -68,6 +68,7 @@ function safeStatus(connection) {
     last_refreshed_at: toIso(connection?.lastRefreshedAt),
     selected_calendars: connection?.selectedCalendarIds ?? [],
     last_error: connection?.lastError ?? null,
+    display_enabled: store.isDisplayEnabled(connection),
   };
 }
 
@@ -301,12 +302,41 @@ exports.googleCalendarSelectCalendars = onRequest(
   }),
 );
 
+// 5b. Set display enabled -----------------------------------------------------
+
+exports.googleCalendarSetDisplayEnabled = onRequest(
+  { secrets: SECRETS },
+  guarded(async (req, res, user) => {
+    if (!requirePermission(user, "calendar.google.connect", res)) return;
+
+    let body = req.body;
+    if (typeof body === "string") {
+      try {
+        body = JSON.parse(body);
+      } catch {
+        body = {};
+      }
+    }
+    if (typeof body?.enabled !== "boolean") {
+      res.status(400).json({ message: "enabled must be a boolean." });
+      return;
+    }
+
+    const updated = await store.setDisplayEnabled(body.enabled);
+    res.json(safeStatus(updated?.isActive === true ? updated : null));
+  }),
+);
+
 // 6. Disconnect ---------------------------------------------------------------
 
 exports.googleCalendarDisconnect = onRequest(
   { secrets: SECRETS },
   guarded(async (req, res, user) => {
     if (!requirePermission(user, "calendar.google.disconnect", res)) return;
+    const connection = await store.getConnectionRaw();
+    if (connection) {
+      await googleCalendar.revokeConnection(connection);
+    }
     await store.clearConnection();
     res.json({ connected: false });
   }),
@@ -329,7 +359,22 @@ exports.googleCalendarEvents = onRequest(
 
     const connection = await store.getConnection();
     if (!connection) {
-      res.json({ events: [], warnings: ["Google Calendar is not connected."] });
+      res.json({ events: [], reason: "not_connected", warnings: ["Google Calendar is not connected."] });
+      return;
+    }
+
+    if (!store.isDisplayEnabled(connection)) {
+      res.json({
+        events: [],
+        reason: "display_disabled",
+        warnings: ["Google Calendar display is currently disabled by an administrator."],
+      });
+      return;
+    }
+
+    const selectedIds = connection.selectedCalendarIds || [];
+    if (selectedIds.length === 0) {
+      res.json({ events: [], reason: "no_calendars_selected", warnings: ["No Google calendars have been selected yet."] });
       return;
     }
 
@@ -339,11 +384,9 @@ exports.googleCalendarEvents = onRequest(
     } catch (error) {
       console.error("Google Calendar token refresh failed for events fetch", error);
       await store.updateConnection({ lastError: "Google Calendar must be reconnected." });
-      res.json({ events: [], warnings: ["Google Calendar must be reconnected."] });
+      res.json({ events: [], reason: "reauth_required", warnings: ["Google Calendar must be reconnected."] });
       return;
     }
-
-    const selectedIds = connection.selectedCalendarIds || [];
 
     let calendarNameById = {};
     try {

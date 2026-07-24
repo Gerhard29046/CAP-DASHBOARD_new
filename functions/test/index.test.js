@@ -20,6 +20,7 @@ test("safeStatus: null connection returns disconnected defaults without throwing
     last_refreshed_at: null,
     selected_calendars: [],
     last_error: null,
+    display_enabled: true,
   });
 });
 
@@ -35,6 +36,16 @@ test("safeStatus: connected connection reflects its fields", () => {
   assert.equal(result.account_name, "Jane Doe");
   assert.equal(result.account_email, "jane@example.com");
   assert.deepEqual(result.selected_calendars, ["cal-1"]);
+});
+
+test("safeStatus: display_enabled defaults true when unset on an existing connection", () => {
+  const result = safeStatus({ isActive: true });
+  assert.equal(result.display_enabled, true);
+});
+
+test("safeStatus: display_enabled reflects an explicit false", () => {
+  const result = safeStatus({ isActive: true, displayEnabled: false });
+  assert.equal(result.display_enabled, false);
 });
 
 test("safeStatus: connection with lastError requires reconnection", () => {

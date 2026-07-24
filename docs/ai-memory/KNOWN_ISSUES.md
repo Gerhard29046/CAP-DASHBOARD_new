@@ -4,8 +4,14 @@
 - No build, lint, typecheck, or test suite has been run this session for any layer
   (frontend, backend, functions, Android). All statements above are from static code
   inspection only.
-- Google Calendar OAuth has not been exercised against real Google credentials; per
-  `docs/GOOGLE_CALENDAR_SETUP.md` this requires manual Google Cloud Console setup.
+- Google Calendar OAuth functions are deployed (2026-07-23, project `capdatabasefb2`,
+  region `africa-south1`) with secrets bound, but a real connect→consent→callback round
+  trip has not yet been exercised by a user. Verify via System Settings before treating the
+  integration as fully live.
+- Firebase reported "No cleanup policy detected for repositories in africa-south1" during
+  this deploy — old container images may accumulate a small storage cost over time. Fix
+  (not yet applied, low priority): `firebase functions:artifacts:setpolicy --project
+  capdatabasefb2`.
 
 ## Documentation drift risk
 - `AGENTS.md` still states the frontend only talks to Laravel and must never connect

@@ -87,6 +87,22 @@ async function ensureFreshToken(connection) {
   return client;
 }
 
+/**
+ * Best-effort revocation of the connection's Google OAuth token. Never throws
+ * - the token may already be invalid/expired, and disconnect must succeed
+ * locally regardless of whether Google's revoke endpoint accepts the call.
+ */
+async function revokeConnection(connection) {
+  const token = connection?.accessToken?.access_token || connection?.refreshToken;
+  if (!token) return;
+  try {
+    const client = authorizedClientFor(connection);
+    await client.revokeToken(token);
+  } catch (error) {
+    console.error("Google Calendar token revoke failed (continuing with local disconnect)", error.message || error);
+  }
+}
+
 /** Lists the connected account's calendars, flagging which are selected. */
 async function listCalendars(client, selectedCalendarIds = []) {
   const calendar = google.calendar({ version: "v3", auth: client });
@@ -143,6 +159,7 @@ module.exports = {
   exchangeCode,
   fetchAccountIdentity,
   ensureFreshToken,
+  revokeConnection,
   listCalendars,
   listEventsForCalendar,
   mapGoogleEventToFullCalendar,

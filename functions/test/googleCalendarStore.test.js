@@ -1,6 +1,24 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { isOAuthStateValid } = require("../lib/googleCalendarStore");
+const { isOAuthStateValid, isDisplayEnabled } = require("../lib/googleCalendarStore");
+
+// --- isDisplayEnabled ------------------------------------------------------
+
+test("isDisplayEnabled: defaults true for a connection with no displayEnabled field", () => {
+  assert.equal(isDisplayEnabled({ isActive: true }), true);
+});
+
+test("isDisplayEnabled: true when explicitly set true", () => {
+  assert.equal(isDisplayEnabled({ isActive: true, displayEnabled: true }), true);
+});
+
+test("isDisplayEnabled: false when explicitly set false", () => {
+  assert.equal(isDisplayEnabled({ isActive: true, displayEnabled: false }), false);
+});
+
+test("isDisplayEnabled: defaults true for a null connection", () => {
+  assert.equal(isDisplayEnabled(null), true);
+});
 
 function timestamp(millis) {
   return { toMillis: () => millis };

@@ -72,7 +72,7 @@ const AuthenticatedApp = () => {
           <Route path="/machines/:id" element={<MachineDetail />} />
           <Route path="/upcoming-services" element={<RoleGuard requiredPermission="upcoming_services.view"><UpcomingServices /></RoleGuard>} />
           <Route path="/calendar" element={<RoleGuard requiredPermission="calendar.view"><CalendarPage /></RoleGuard>} />
-          <Route path="/settings" element={<RoleGuard requiredPermission="calendar.google.view"><SystemSettings /></RoleGuard>} />
+          <Route path="/settings" element={<RoleGuard requiredAnyPermission={["calendar.google.view", "calendar.google.connect", "calendar.google.calendars.select", "calendar.google.disconnect"]}><SystemSettings /></RoleGuard>} />
           <Route path="/service-records" element={<RoleGuard requiredPermission="services.view"><ServiceRecords /></RoleGuard>} />
           <Route path="/book-in" element={<RoleGuard requiredPermission="job_cards.create"><BookIn /></RoleGuard>} />
           <Route path="/jobs" element={<RoleGuard requiredPermission="job_cards.view"><Jobs /></RoleGuard>} />

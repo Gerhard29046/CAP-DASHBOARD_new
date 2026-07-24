@@ -195,6 +195,7 @@ async function calendarEvents(searchParams) {
 
   let events = [];
   const warnings = [];
+  let googleReason = null;
 
   if (includeServices) {
     const [services, machines, clients] = await Promise.all([
@@ -240,20 +241,23 @@ async function calendarEvents(searchParams) {
       if (end) googleParams.set("end", end);
       const googleResult = await callFunction("googleCalendarEvents", { searchParams: googleParams });
       events = events.concat(googleResult?.events || []);
+      googleReason = googleResult?.reason || null;
       if (Array.isArray(googleResult?.warnings)) warnings.push(...googleResult.warnings);
     } catch (error) {
       console.error("Failed to load Google Calendar events", error);
+      googleReason = "function_unavailable";
       warnings.push("Google Calendar is unavailable. Upcoming Services are still shown.");
     }
   }
 
-  return { events, warnings };
+  return { events, warnings, google_reason: googleReason };
 }
 
 const googleCalendarFunctionMap = {
   status: { GET: "googleCalendarStatus" },
   connect: { GET: "googleCalendarConnect" },
   calendars: { GET: "googleCalendarListCalendars", PUT: "googleCalendarSelectCalendars", POST: "googleCalendarSelectCalendars" },
+  display: { PATCH: "googleCalendarSetDisplayEnabled" },
   disconnect: { DELETE: "googleCalendarDisconnect", POST: "googleCalendarDisconnect" },
 };
 
@@ -265,6 +269,9 @@ async function googleCalendarRoute(action, method, options) {
   }
   if (functionName === "googleCalendarSelectCalendars") {
     return callFunction(functionName, { method: "PUT", body: parseBody(options) });
+  }
+  if (functionName === "googleCalendarSetDisplayEnabled") {
+    return callFunction(functionName, { method: "PATCH", body: parseBody(options) });
   }
   return callFunction(functionName, { method: functionName === "googleCalendarDisconnect" ? "DELETE" : "GET" });
 }

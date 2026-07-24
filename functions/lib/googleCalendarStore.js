@@ -54,10 +54,28 @@ async function clearConnection() {
       isActive: false,
       accessToken: null,
       refreshToken: null,
+      googleAccountId: null,
+      googleAccountName: null,
+      googleAccountEmail: null,
+      tokenExpiresAtMillis: null,
+      scopes: [],
+      selectedCalendarIds: [],
+      lastError: null,
+      displayEnabled: true,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     },
     { merge: true },
   );
+}
+
+/** Pure: whether Google events should be displayed dashboard-wide. Defaults true when unset. */
+function isDisplayEnabled(connection) {
+  return connection?.displayEnabled !== false;
+}
+
+async function setDisplayEnabled(enabled) {
+  await updateConnection({ displayEnabled: Boolean(enabled) });
+  return getConnectionRaw();
 }
 
 /** Creates a new OAuth state, storing only its sha256 hash - never the raw value. */
@@ -130,6 +148,8 @@ module.exports = {
   upsertConnection,
   updateConnection,
   clearConnection,
+  isDisplayEnabled,
+  setDisplayEnabled,
   createOAuthState,
   pruneExpiredOAuthStates,
   consumeOAuthState,

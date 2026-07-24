@@ -30,18 +30,19 @@ const ALL_NAV_ITEMS = [
   { label: "Machine Knowledge Base", path: "/knowledge-base", icon: Library, permission: "knowledge_base.view" },
   { label: "Invoice Queue", path: "/invoice-queue", icon: Receipt, permission: "invoices.queue.view" },
   { label: "User Management", path: "/admin/users", icon: ShieldCheck, permission: "users.view" },
-  { label: "System Settings", path: "/settings", icon: Settings, permission: "calendar.google.connect" },
+  { label: "System Settings", path: "/settings", icon: Settings, anyPermission: ["calendar.google.view", "calendar.google.connect", "calendar.google.calendars.select", "calendar.google.disconnect"] },
 ];
 
 export default function AppLayout() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const location = useLocation();
-  const { user, logout, hasPermission } = useAuth();
+  const { user, logout, hasPermission, hasAnyPermission } = useAuth();
 
   const role = user?.role || "technician";
   const userName = user?.name || user?.full_name || user?.email || "User";
 
-  const navItems = ALL_NAV_ITEMS.filter((item) => hasPermission(item.permission));
+  const navItems = ALL_NAV_ITEMS.filter((item) =>
+    item.anyPermission ? hasAnyPermission(item.anyPermission) : hasPermission(item.permission));
 
   const handleLogout = () => {
     logout();
