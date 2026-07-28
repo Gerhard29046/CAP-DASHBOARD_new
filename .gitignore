@@ -62,3 +62,10 @@ lerna-debug.log*
 
 # Private source documents
 reference-docs/
+
+# Ruflo / Claude Flow MCP local runtime state (generated, machine-specific)
+.claude-flow/
+.swarm/
+ruvector.db
+.claude/.proven-config-version
+.claude/helpers/.helpers-version

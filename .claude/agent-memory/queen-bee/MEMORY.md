@@ -1,0 +1,1 @@
+- [User language preference](user_language_preference.md) — favorite lang is TypeScript, but repo's frontend is intentionally plain JS/JSX; don't convert files.
