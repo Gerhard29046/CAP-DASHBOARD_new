@@ -1,5 +1,22 @@
 # Known Issues
 
+## Deploy gap (2026-07-28)
+- Commit `aa72fa8` (Ruflo/Claude Flow MCP tooling) exists on local `main` but is **not
+  pushed** to `origin/main` — `git push` was denied by the Claude Code auto-mode
+  classifier and requires the user to run/approve it directly.
+- `functions/index.js`'s CORS fix (adds `PATCH` to `Access-Control-Allow-Methods`, from
+  commit `25f4819`) is **not deployed** — `firebase deploy --only functions` was denied
+  by the same classifier. The frontend (already deployed, version
+  `5f00ef33-e00d-4f47-a84b-115df2954f3d`) now expects PATCH to work for the System
+  Settings "show Google Calendar" toggle; until functions are redeployed this call will
+  still fail cross-origin in production.
+- Upstream `@claude-flow/cli@latest` npm package is broken (`npm error Invalid Version:`
+  on install), which is why the `plugin:ruflo-core:ruflo` MCP server fails to connect
+  (`claude mcp list`). The `.mcp.json`-defined `claude-flow` server (a different
+  package, `ruflo@latest`) connects fine. Not fixable from this repo; either wait for
+  upstream or disable `ruflo-core`/`ruflo-swarm`/`ruflo-rag-memory`/`ruflo-neural-trader`
+  in `.claude/settings.json` → `enabledPlugins` if the failures are noisy.
+
 ## Verification gaps
 - No build, lint, typecheck, or test suite has been run this session for any layer
   (frontend, backend, functions, Android). All statements above are from static code

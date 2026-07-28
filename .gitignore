@@ -47,6 +47,10 @@ lerna-debug.log*
 # Vite
 .vite
 
+# Wrangler local cache
+.wrangler/
+frontend/.wrangler/
+
 # IDE and editor directories
 .vscode/*
 !.vscode/extensions.json
