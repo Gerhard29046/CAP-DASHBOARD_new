@@ -1,1 +1,2 @@
 - [User language preference](user_language_preference.md) — favorite lang is TypeScript, but repo's frontend is intentionally plain JS/JSX; don't convert files.
+- [Supabase migration status](project_supabase_migration.md) — phased, live-app migration; check current phase before assuming Firebase was removed or Supabase is wired in.

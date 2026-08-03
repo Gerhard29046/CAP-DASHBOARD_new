@@ -1,5 +1,102 @@
 # Session Log
 
+## 2026-08-03 (cont. 2) — Phase 1 continued: SQL-Editor-only workflow, storage buckets, script expansion
+- User declined to provide a Postgres connection string or grant direct DB access;
+  instead will run `0001`-`0003` (now `0001`-`0005`) manually via the Supabase SQL
+  Editor, and asked to continue: the Firestore migration script (build, don't execute),
+  the Supabase service layer, frontend integration, and storage abstraction.
+- Re-reviewed `0001`/`0002` before treating them as final (no more iteration possible
+  once the user runs them) and fixed a real gap: added explicit GRANT/REVOKE +
+  `alter default privileges` statements to `0002`, since RLS alone doesn't grant
+  PostgREST table access and I couldn't verify this project's default template already
+  had them (no DB access to check `pg_catalog`).
+- Added `0004_storage_buckets.sql` (buckets + `storage.objects` RLS, created via SQL —
+  fits the no-dashboard-access constraint) and `0005_legacy_user_ids.sql`
+  (`legacy_firebase_uid` on `public.users`).
+- Extracted `frontend/src/lib/imageOptimize.js` from `apiClient.js`'s inline
+  `optimizeUpload()`, verified byte-identical behavior via lint/typecheck/build/test
+  (2/2 pass), so `services/supabase/storage.js` can share it.
+- Expanded the migration script to 4 phases (entities/relink/users/storage) with clear
+  documented gaps (no password-hash import, no source data found for 3 of 5 buckets) —
+  still dry-run by default, still never executed, only `node --check` verified.
+- Added `frontend/src/services/supabase/SupabaseAuthContext.jsx`, matching
+  `AuthContext.jsx`'s interface, not wired into `App.jsx`.
+- Cleaned up 3 more stray 0-byte artifacts (`,+`, `functions/Postgres`,
+  `frontend/where(field`) and a duplicate `frontend/.claude/` tooling-cache dir, all
+  apparent side effects of shell/hook state during this session, not intentional writes.
+- Verification: `frontend` lint/typecheck/build/test all clean after every edit.
+- Remaining: user to run `0001`-`0005` in SQL Editor and confirm success; only then does
+  Phase 2 (actual cutover) begin, per the user's own stated sequencing.
+
+## 2026-08-03 (cont.) — Firebase-to-Supabase migration, Phase 1 (user approved: "yes, go ahead with Phase 1")
+- Corrected schema field names using real code (see PROJECT_STATE.md Phase 1 entry) —
+  Phase 0's schema had plausible-but-wrong generic column names.
+- Confirmed `calendar_records`/`invoice_queue` are unused anywhere in the client/functions
+  codebase (grepped `frontend/src`, `functions/`, `mobile-android/`) — not a gap.
+- Added `frontend/src/services/supabase/entities.js` (entity service layer, unimported),
+  `supabase/migrations/0003_legacy_migration_ids.sql`, `supabase/scripts/
+  migrate-firestore-to-postgres.mjs` (dry-run by default), `supabase/package.json`.
+- Did NOT run any migration against the real Supabase project (no DB connection string
+  provided yet) and did NOT execute the migration script (needs Firebase Admin
+  credentials not available to Queen Bee; one credential-read attempt,
+  `gcloud auth application-default print-access-token`, was blocked by the auto-mode
+  classifier this session — treated as a correct guard, not worked around).
+- Verification: `frontend` lint/typecheck/build clean after each edit;
+  `node --check supabase/scripts/migrate-firestore-to-postgres.mjs` syntax-valid.
+- Remaining Phase 1 work: get Postgres connection string from user (or have them run
+  `0001`/`0002`/`0003` via SQL Editor themselves), create 5 Storage buckets, get Firebase
+  Admin credentials sorted (user's call how), then dry-run the migration script for real
+  and review its output before ever considering `--apply`.
+
+## 2026-08-03 — Firebase-to-Supabase migration, Phase 0 (schema + scaffolding only)
+- Objective: user requested a full migration off Firebase (Auth/Firestore/Storage/
+  Functions) onto Supabase, framed by a detailed task brief that assumed generic
+  agent roles (Database/Backend/Frontend/Security/QA Agent) not present in this repo's
+  `.claude/agents/` (only `android-ui-bee`/`integration-sync-bee`/`testing-bee` exist,
+  all Android-scoped) and a generic vehicle/invoice schema that doesn't match this app's
+  actual domain.
+- Startup: read CLAUDE.md/AGENTS.md/agent defs/all ai-memory files; confirmed via
+  `frontend/src/api/apiClient.js`, `firestore.rules`, and `docs/ai-memory/*` that this is
+  a live production app (real Firebase Auth users, real Firestore data, a real
+  live-tested Google Calendar OAuth connection from 2026-07-24) — not a greenfield
+  migration. Flagged the blast-radius and missing prerequisites (no Supabase project,
+  no worker bee scoped for frontend/schema work) before writing any code; user then
+  supplied the Supabase project name/ref (`CAPDATABASE` / `cjvrquipmnoihksijful`),
+  publishable key, and secret key, in that order, over several messages.
+- Decided (see DECISIONS.md): phased migration, Phase 0 only this session, no Firebase
+  code touched or removed, no cutover.
+- Files changed:
+  - `frontend/package.json` / `package-lock.json`: added `@supabase/supabase-js`.
+  - `frontend/.env` (gitignored, not committed): added `VITE_SUPABASE_URL`,
+    `VITE_SUPABASE_ANON_KEY` (publishable key).
+  - `frontend/.env.example`: added blank `VITE_SUPABASE_URL`/`VITE_SUPABASE_ANON_KEY`
+    placeholders.
+  - `supabase/.env` (new, gitignored): secret/service_role key, server-side only.
+  - `frontend/src/services/supabase/{client,auth,database,storage}.js` (new): scaffolded,
+    not imported by any existing app code.
+  - `supabase/migrations/0001_initial_schema.sql`, `0002_rls_policies.sql` (new): schema
+    + RLS modeled on real Firestore collections and `firestore.rules`, not yet run
+    against the actual Supabase project.
+  - `docs/ai-memory/{PROJECT_STATE,DECISIONS,ROADMAP,KNOWN_ISSUES}.md`: updated per
+    above.
+- Verification run: `frontend`: `npm run typecheck` clean, `npm run lint` clean,
+  `npm run build` clean (produced `dist/`). Confirmed via `git check-ignore -v` that both
+  new `.env` files are excluded from git before writing secrets into them. No Supabase-
+  side verification possible yet (migrations not run against the project; no way to
+  test RLS/auth without applying them, which was intentionally deferred pending user
+  confirmation to proceed to Phase 1).
+- Result: Phase 0 complete and verified inert (no regression, Firebase still fully
+  active). Result reported to user with an explicit ask for confirmation before Phase 1
+  (run migrations against the real project, build entity services, write data-migration
+  scripts) and Phase 2 (actual destructive cutover).
+- Remaining work: everything in ROADMAP.md's "In progress" Supabase entry beyond Phase 0.
+- Unrelated observation, not investigated: `.claude/helpers/{auto-memory-hook.mjs,
+  helpers.manifest.json,hook-handler.cjs,intelligence.cjs,statusline.cjs}` show as
+  modified in `git status` at both the start and end of this session with no edits made
+  to them by this session — appears to be Ruflo/Claude Flow tooling mutating its own
+  state files as a side effect of hooks running. Left untouched per "preserve unrelated
+  worktree changes."
+
 ## 2026-07-28 — Ruflo/Claude Flow MCP tooling commit, partial deploy, MCP health check
 - Objective: user asked to "push to git and deploy and make sure mcp server is working."
 - Startup found `main` already up to date with `origin/main` (prior 3 commits, incl.

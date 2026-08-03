@@ -1,5 +1,48 @@
 # Known Issues
 
+## Supabase migration secrets exposed in chat/session transcript (2026-08-03)
+- The user pasted both the Supabase publishable key (`sb_publishable_...`, low risk — it's
+  designed to be public and RLS-constrained) and the **secret key**
+  (`sb_secret_...`, service_role-equivalent, bypasses RLS entirely) directly into the
+  chat during this session. Both are stored only in gitignored files
+  (`frontend/.env` for the publishable key, `supabase/.env` for the secret key), never
+  committed. Recommend rotating the secret key in the Supabase dashboard once migration
+  tooling stabilizes, since it now exists in session logs outside version control.
+
+## Supabase migration schema gaps (2026-08-03, updated during Phase 1)
+- `calendar_records` and `invoice_queue` are permission-gated in `firestore.rules` but
+  **confirmed unused** by any current client code (`frontend/src/api/apiClient.js`'s
+  `calendarEvents()` derives Calendar-page events from `service_records`/`machines`/
+  `clients` directly; grepping `frontend/src`, `functions/`, and `mobile-android/` found
+  no reader/writer of either collection). Deliberately not modeled in the Postgres schema
+  — not a gap, since there is nothing live to migrate. Re-check before assuming this if a
+  future feature starts writing to either collection.
+- `sites` in the new Postgres schema is gated on `clients.*` permissions (no dedicated
+  `sites.*` permission key exists in `firestore.rules`). Still an inference, not a direct
+  translation — confirm before relying on it.
+
+## Supabase migration Phase 1 — data-migration script is incomplete by design (2026-08-03)
+- `supabase/scripts/migrate-firestore-to-postgres.mjs` exists (dry-run by default, syntax
+  verified with `node --check`, dependencies NOT installed, NOT executed against real
+  Firestore data) but its own TODO section lists what's still missing before it's usable
+  for a real cutover: (1) foreign-key re-linking pass from `legacy_firestore_id` to the
+  new Postgres uuids — columns added in `0003_legacy_migration_ids.sql` but no re-link
+  logic written yet; (2) `auth.users` creation per Firestore user (must go through
+  `supabase.auth.admin.createUser`, separate from the `public.users` profile row);
+  (3) Storage file copy from Firebase Storage to Supabase Storage — not attempted at all.
+  Do not treat this script as migration-ready.
+- Running it (even in dry-run mode) requires Firebase Admin credentials
+  (`GOOGLE_APPLICATION_CREDENTIALS` pointing at a downloaded service-account key, or
+  `gcloud auth application-default login` run interactively by the user) which Queen Bee
+  does not have and should not try to obtain itself — the auto-mode permission classifier
+  already blocked one credential-read attempt (`gcloud auth application-default
+  print-access-token`) this session as an appropriate guard. The user must set this up
+  and run the script themselves, or explicitly hand over a service-account key file path.
+- `supabase/migrations/0001_initial_schema.sql`/`0002`/`0003` have NOT been run against
+  the real `CAPDATABASE` Supabase project yet — blocked on the Postgres connection string
+  (Dashboard → Project Settings → Database), which has not been provided. No Storage
+  buckets created yet either.
+
 ## Deploy gap (2026-07-28)
 - Commit `aa72fa8` (Ruflo/Claude Flow MCP tooling) exists on local `main` but is **not
   pushed** to `origin/main` — `git push` was denied by the Claude Code auto-mode

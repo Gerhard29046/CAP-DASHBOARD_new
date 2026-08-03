@@ -1,0 +1,142 @@
+import React, { createContext, useContext, useEffect, useState } from "react";
+import { supabase } from "@/services/supabase/client";
+import { loadUserProfile, requestPasswordReset, signInWithPassword, signOut as supabaseSignOut } from "@/services/supabase/auth";
+
+// Parallel Supabase-backed auth context, matching frontend/src/lib/AuthContext.jsx's
+// public interface (user/isAuthenticated/isLoadingAuth/authError/login/logout/
+// checkUserAuth/refreshCurrentUser/hasPermission/hasAnyPermission/hasAllPermissions) so
+// that swapping AuthProvider -> SupabaseAuthProvider in App.jsx (Phase 2, not done yet)
+// is a near drop-in replacement. NOT wired into App.jsx yet -- Firebase's AuthContext
+// remains the live one. See docs/ai-memory/DECISIONS.md 2026-08-03 entries.
+
+const SupabaseAuthContext = createContext();
+
+function normalizeProfile(profileRow) {
+  const rawPermissions = profileRow.effective_permissions ?? [];
+  const permissions = Array.isArray(rawPermissions) ? rawPermissions : [];
+  return {
+    ...profileRow,
+    uid: profileRow.id,
+    effective_permissions: permissions,
+  };
+}
+
+function supabaseAuthMessage(error) {
+  switch (error?.message) {
+    case "Invalid login credentials":
+      return "Incorrect email address or password.";
+    case "Email not confirmed":
+      return "Please confirm your email address before signing in.";
+    default:
+      return error?.message || "Unable to connect to Supabase.";
+  }
+}
+
+export const SupabaseAuthProvider = ({ children }) => {
+  const [user, setUser] = useState(null);
+  const [isLoadingAuth, setIsLoadingAuth] = useState(true);
+  const [authError, setAuthError] = useState(null);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadFromSession(session) {
+      if (!session?.user) {
+        if (active) { setUser(null); setIsLoadingAuth(false); }
+        return;
+      }
+      try {
+        const profileRow = await loadUserProfile(session.user.id);
+        if (!profileRow.is_active) {
+          await supabaseSignOut();
+          throw Object.assign(new Error("This account is disabled."), { code: "profile/inactive" });
+        }
+        if (active) { setUser(normalizeProfile(profileRow)); setAuthError(null); }
+      } catch (error) {
+        if (active) {
+          setUser(null);
+          setAuthError({
+            type: error.code === "profile/inactive" ? "user_disabled" : "supabase_error",
+            message: supabaseAuthMessage(error),
+          });
+        }
+      } finally {
+        if (active) setIsLoadingAuth(false);
+      }
+    }
+
+    supabase.auth.getSession().then(({ data }) => loadFromSession(data.session));
+    const { data: subscription } = supabase.auth.onAuthStateChange((_event, session) => loadFromSession(session));
+
+    return () => { active = false; subscription.subscription.unsubscribe(); };
+  }, []);
+
+  const login = async (email, password) => {
+    setAuthError(null);
+    setIsLoadingAuth(true);
+    try {
+      const { user: authUser } = await signInWithPassword(email, password);
+      const profileRow = await loadUserProfile(authUser.id);
+      if (!profileRow.is_active) {
+        await supabaseSignOut();
+        throw Object.assign(new Error("This account is disabled."), { code: "profile/inactive" });
+      }
+      setUser(normalizeProfile(profileRow));
+      return true;
+    } catch (error) {
+      setUser(null);
+      setAuthError({ type: "supabase_error", message: supabaseAuthMessage(error) });
+      return false;
+    } finally {
+      setIsLoadingAuth(false);
+    }
+  };
+
+  const logout = async () => {
+    await supabaseSignOut();
+    setUser(null);
+    window.location.href = "/login";
+  };
+
+  const checkUserAuth = async () => {
+    const { data } = await supabase.auth.getSession();
+    if (!data.session?.user) return null;
+    const profileRow = await loadUserProfile(data.session.user.id);
+    setUser(normalizeProfile(profileRow));
+    return profileRow;
+  };
+
+  const hasPermission = (key) => user?.role === "admin" || user?.effective_permissions?.includes(key) || false;
+  const hasAnyPermission = (keys) => keys.some(hasPermission);
+  const hasAllPermissions = (keys) => keys.every(hasPermission);
+
+  return (
+    <SupabaseAuthContext.Provider value={{
+      user,
+      isAuthenticated: Boolean(user),
+      isLoadingAuth,
+      isLoadingPublicSettings: false,
+      authError,
+      appPublicSettings: null,
+      authChecked: !isLoadingAuth,
+      login,
+      logout,
+      requestPasswordReset,
+      navigateToLogin: () => { window.location.href = "/login"; },
+      checkUserAuth,
+      refreshCurrentUser: checkUserAuth,
+      hasPermission,
+      hasAnyPermission,
+      hasAllPermissions,
+      checkAppState: async () => {},
+    }}>
+      {children}
+    </SupabaseAuthContext.Provider>
+  );
+};
+
+export const useSupabaseAuth = () => {
+  const context = useContext(SupabaseAuthContext);
+  if (!context) throw new Error("useSupabaseAuth must be used within a SupabaseAuthProvider");
+  return context;
+};

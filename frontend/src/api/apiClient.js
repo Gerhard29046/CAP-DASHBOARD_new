@@ -21,6 +21,7 @@ import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import { auth, db, storage } from "@/lib/firebase";
 import { relatedRecords } from "@/lib/records";
 import { callFunction } from "@/api/functionsClient";
+import { optimizeImageForUpload } from "@/lib/imageOptimize";
 
 const endpointMap = {
   Client: "clients",
@@ -75,32 +76,9 @@ function writeData(data, creating = false) {
   };
 }
 
-async function optimizeUpload(file) {
-  if (!file.type.startsWith("image/")) return file;
-  const maxEdge = 1920;
-  const quality = 0.82;
-  try {
-    const bitmap = await createImageBitmap(file);
-    const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
-    canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    bitmap.close();
-    const blob = await new Promise((resolve, reject) => canvas.toBlob(
-      (result) => result ? resolve(result) : reject(new Error("Image compression failed.")),
-      "image/webp",
-      quality,
-    ));
-    const baseName = file.name.replace(/\.[^.]+$/, "") || "photo";
-    return new File([blob], `${baseName}.webp`, { type: "image/webp", lastModified: Date.now() });
-  } catch (error) {
-    if (file.size > 8 * 1024 * 1024) {
-      throw new Error("This picture could not be optimized. Please choose a JPEG, PNG or WebP image under 8 MB.", { cause: error });
-    }
-    return file;
-  }
-}
+// Moved to frontend/src/lib/imageOptimize.js (2026-08-03) so the Supabase storage
+// service can share identical upload-optimization behavior. Logic unchanged.
+const optimizeUpload = optimizeImageForUpload;
 
 async function listCollection(name, conditions = {}) {
   const filters = Object.entries(conditions).map(([field, value]) => where(field, "==", value));
