@@ -13,14 +13,42 @@
     4-phase Firestore->Postgres migration script (entities/relink/users/storage),
     syntax-checked but never executed. `calendar_records`/`invoice_queue` confirmed
     unused, not modeled.
-  - Next (Phase 1, blocked on user): user runs `0001`-`0005` manually via the Supabase
-    SQL Editor (no DB connection string will be provided — confirmed 2026-08-03), then
-    confirms success before Phase 2 starts. Also blocked: Firebase Admin credentials for
-    a real dry run of the migration script (user will provide later).
+  - In progress (2026-08-03): `0001` confirmed executed successfully by the user;
+    `0002`-`0005` being run next, in order, via the Supabase SQL Editor (no DB connection
+    string provided — confirmed 2026-08-03). Not yet confirmed successful as of this
+    entry.
+  - Done (Phase 2 prep, 2026-08-03, while `0002`-`0005` were in progress): fixed a real
+    migration-script gap (Phase A was missing 4 live `knowledge_*` collections) found by
+    static review — see DECISIONS.md/KNOWN_ISSUES.md. Added new
+    `supabase/migrations/0006_knowledge_legacy_ids.sql`, a unit-tested pure mapping module
+    (`supabase/scripts/lib/entityMappings.{mjs,test.mjs}`), and a read-only `verify` phase
+    to the migration script. Wrote a Phase 2 execution runbook (DECISIONS.md) so
+    "proceed with Phase 2" maps to specific, individually-approved steps rather than a
+    blanket go-ahead for `--apply`/cutover/Firebase removal.
+  - Done (2026-08-03): all 7 migrations (`0001`-`0007`) confirmed applied against the real
+    project (`0006` briefly appeared to fail on re-run but was verified live to have
+    already fully committed earlier; the file was made idempotent — see KNOWN_ISSUES.md/
+    DECISIONS.md). Ran `supabase/scripts/smoke-test.mjs` live (user-approved) — **9/9
+    checks pass** after `0007`: RLS deny+allow branches, storage buckets, both triggers,
+    and the profile-creation default shape all confirmed working live. Built
+    `frontend/src/api/supabaseApiClient.js`, a Supabase-backed drop-in equivalent of
+    `apiClient.js`, unwired — verified via `frontend` lint/typecheck/test.
+  - Done (2026-08-03): expanded the live smoke test to cover RLS deny+allow across 4
+    representative tables/permission namespaces (18/18 pass). Wrote the complete cutover
+    plan: `docs/migration/PHASE2_CUTOVER_CHECKLIST.md` — task list, downtime estimate,
+    rollback plan, verification checklist. Surfaces open decisions (Android timing, `sites`
+    migration source, staging target, generic-bucket permission tightening) and a real gap
+    (no password-reset-email delivery script yet, no incremental-sync capability).
+  - Next: resolve the open decisions/gaps listed in that document's section 1 before
+    scheduling an actual cutover date. Frontend wiring (flag + `App.jsx`/`apiClient` swap)
+    and Android parity are both explicitly deferred pending separate approval — not
+    started. Firebase Admin credentials for a real Firestore migration dry run still not
+    provided (user has said not to run it this session regardless).
   - Blocked on user decision (Phase 2, destructive/irreversible): actual cutover of
     `AuthContext.jsx`/`apiClient.js` to Supabase, real user/data migration, Firebase
     removal, Android update. Do not start without explicit go-ahead per CLAUDE.md
-    section 12 AND without the user's confirmation that `0001`-`0005` succeeded.
+    section 12 AND without the user's confirmation that `0001`-`0005` succeeded — see the
+    Phase 2 runbook in DECISIONS.md for the ordered, individually-gated steps.
 - Android "Connection and Sync Status" feature (per `.claude/agents/android-ui-bee.md`
   and `integration-sync-bee.md`):
   - Done: `StatusRepository`, `ConnectionStatus` enum, and connection-state derivation

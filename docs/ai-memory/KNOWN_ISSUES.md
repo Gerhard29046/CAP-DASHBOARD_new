@@ -1,5 +1,36 @@
 # Known Issues
 
+## `restrict_self_user_update` trigger blocked service_role writes to role/permissions — FIXED, applied (2026-08-03)
+- Found by running `supabase/scripts/smoke-test.mjs` live against the real project:
+  granting a test user a permission via the **service_role** client (bypasses RLS by
+  design) was rejected by the trigger with "Only preferences may be self-updated." Root
+  cause: the trigger's bypass check is `is_admin()` alone, which depends on `auth.uid()` —
+  NULL under service_role — so the trigger couldn't distinguish trusted server-side writes
+  from a genuine self-update attempt.
+- Impact if unfixed: `migrate-firestore-to-postgres.mjs`'s Phase C (sets each migrated
+  user's real role/`effective_permissions` via the service_role/admin client) would have
+  failed for every user whose role or permissions differ from the trigger-created default.
+- Fix: `supabase/migrations/0007_fix_admin_user_update_trigger.sql`. **User confirmed this
+  ran with no errors** (2026-08-03). Adds `or auth.uid() is null` to the trigger's bypass
+  condition. Not yet re-verified live (the smoke test's grant-permission check hasn't been
+  re-run since), but the fix is applied.
+
+## `frontend/.env` still does not exist in this clone (2026-08-03, `supabase/.env` resolved)
+- Both `supabase/.env` and `frontend/.env` were missing in this fresh clone (gitignored
+  files don't travel with `git clone`; they were created session-locally on whatever
+  machine ran Phase 0). **`supabase/.env` has since been recreated by the user** (real
+  URL + anon + service_role keys, confirmed present and gitignored) and the live smoke
+  test ran successfully against it.
+- `frontend/.env` is still missing. Practical effect: the frontend cannot run `npm run
+  dev`/`build` in this clone (`vite.config.js` throws in production mode if Firebase keys
+  are missing; the Supabase client in `services/supabase/client.js` throws unconditionally
+  if its two vars are missing) until it's recreated with both the Firebase and Supabase
+  values. Not blocking any work done so far this session (lint/typecheck/`node --test`
+  don't need it), but will block manual UI verification whenever that's needed.
+- Exact keys needed are documented in `frontend/.env.example` and `supabase/.env.example`
+  (added 2026-08-03, at the user's request, specifically so future required variables get
+  documented there rather than pasted into chat).
+
 ## Supabase migration secrets exposed in chat/session transcript (2026-08-03)
 - The user pasted both the Supabase publishable key (`sb_publishable_...`, low risk — it's
   designed to be public and RLS-constrained) and the **secret key**
@@ -38,11 +69,33 @@
   already blocked one credential-read attempt (`gcloud auth application-default
   print-access-token`) this session as an appropriate guard. The user must set this up
   and run the script themselves, or explicitly hand over a service-account key file path.
-- `supabase/migrations/0001`-`0005` have NOT been run against the real `CAPDATABASE`
-  Supabase project yet. **No connection string will be provided** (user's explicit
-  decision, 2026-08-03) — the user will run all five files manually via the Supabase SQL
-  Editor and confirm success before Phase 2 (actual app cutover) begins. No Storage
-  buckets created yet either (created by `0004`, pending that manual run).
+- `supabase/migrations/0001` has been run against the real `CAPDATABASE` Supabase project
+  and confirmed successful by the user (2026-08-03). `0002`-`0005` are being run next, in
+  order, by the user via the SQL Editor — **no connection string will be provided** (user's
+  explicit decision, 2026-08-03). Not yet confirmed successful as of this entry — do not
+  assume RLS/grants/storage buckets/legacy-id columns exist until the user confirms all
+  five. Phase 2 (actual app cutover) begins only after that confirmation, and even then
+  only proceeds through the ordered, individually-approved steps in the Phase 2 runbook
+  (DECISIONS.md) — see that entry before assuming "proceed with Phase 2" authorizes a
+  `--apply` run or the `AuthContext`/`apiClient` cutover on its own.
+- **Fixed 2026-08-03** (was a real gap, found by static review of the migration script
+  before anyone ran it): `migrate-firestore-to-postgres.mjs`'s Phase A never imported
+  `knowledge_notes`/`knowledge_service_codes`/`knowledge_media`/`knowledge_documents`, and
+  Phase C's `knowledge_notes.created_by` relink referenced a `legacy_firestore_id` column
+  that didn't exist on that table (`0003` only added it to `knowledge_machines`). Fixed via
+  `supabase/migrations/0006_knowledge_legacy_ids.sql` and updates to the script's
+  entity/relink phases. See DECISIONS.md.
+  - **`0006` confirmed complete 2026-08-03**: the user's SQL Editor run errored with
+    `column "legacy_firestore_id" of relation "knowledge_notes" already exists` —
+    verified live (not just inferred from the error) via read-only `supabase-js` probes
+    against all four tables using the service_role key: all four columns already exist.
+    This means all four `ADD COLUMN` statements had already committed in an earlier,
+    unreported run of the same file before this one. Index existence for the four new
+    `..._legacy_firestore_id_idx` indexes could not be directly confirmed the same way
+    (no PostgREST-exposed introspection route for `pg_indexes`), so the migration file was
+    rewritten in place to be idempotent (`if not exists` on every `add column`/
+    `create index`) rather than left in a state where re-running it always errors — safe
+    to run again at any time, including to fill in the indexes if they didn't make it.
 
 ## Deploy gap (2026-07-28, push resolved 2026-08-03)
 - ~~Commit `aa72fa8` (Ruflo/Claude Flow MCP tooling) exists on local `main` but is not

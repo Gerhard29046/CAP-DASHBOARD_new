@@ -1,5 +1,178 @@
 # Session Log
 
+## 2026-08-03 (cont. 7) — RLS coverage expanded to 4 tables (18/18); full cutover checklist written; pushed to origin
+- Objective: user approved continuing Phase 2 prep with hard constraints (Supabase-only,
+  behind feature flags not yet wired, Firebase stays active, no migration/auth-switch/
+  frontend-wiring/Android-changes/Firebase-removal without separate approval), asked for a
+  complete pre-cutover checklist (tasks/downtime/rollback/verification), and asked to push
+  to git without asking permission first.
+- Expanded `supabase/scripts/smoke-test.mjs` from a single-table (`clients`) RLS check into
+  a data-driven matrix over 4 tables spanning distinct permission namespaces: `clients`,
+  `machines`, `job_cards`, `knowledge_machines`. Live run: 18/18 checks pass. Cleanup order
+  respects `machines.client_id`'s `ON DELETE RESTRICT` FK.
+- Wrote `docs/migration/PHASE2_CUTOVER_CHECKLIST.md`: full task list tagged
+  no-approval/approval/decision, downtime-window reasoning (no incremental-sync capability
+  exists — one-time bulk import only — so a real, short maintenance window is recommended
+  rather than claiming true zero-downtime), rollback plan (flag flip back to Firebase is
+  lossless for Firebase's own data; explains what it does NOT undo), and a staged
+  verification checklist (pre-cutover / immediately-before / during / post-cutover soak /
+  Firebase-removal-as-a-separate-later-approval).
+- Did not touch `App.jsx`/`AuthContext.jsx`/`apiClient.js`/any Android file/the migration
+  script's execution — interpreted "behind feature flags only" as design intent for the
+  eventual wiring, not permission to start it now, consistent with the explicit "do not
+  wire the frontend to Supabase... without explicit approval" instruction.
+- Committed and pushed to `origin/main` at the user's explicit request ("push to git dont
+  ask permission") — see commit(s) for the full file list.
+- Verification: live `node scripts/smoke-test.mjs`, 18/18 pass. `git status --short`/`git
+  diff --check` reviewed before committing.
+- Remaining: everything listed in `PHASE2_CUTOVER_CHECKLIST.md` section 1 (open
+  decisions/gaps) before a cutover date should even be scheduled; frontend wiring and
+  Android parity both explicitly not started.
+
+## 2026-08-03 (cont. 6) — 0006 verified already-complete + made idempotent; 0007 applied and confirmed live (9/9)
+- Objective: user reported `0006` erroring on re-run (`column "legacy_firestore_id" ...
+  already exists` on `knowledge_notes`) and asked to verify actual DB state before
+  assuming what that meant, provide an idempotent version if needed, and separately
+  reported `0007` ran with no errors.
+- Did not trust the error message alone: ran read-only `select legacy_firestore_id
+  limit 1` probes (via `supabase-js` + the service_role key already in `supabase/.env`,
+  no direct Postgres connection) against all four affected tables. Confirmed all four
+  columns already exist — `0006` had fully committed in an earlier, unreported run.
+- Rewrote `supabase/migrations/0006_knowledge_legacy_ids.sql` in place to be idempotent
+  (`add column if not exists` / `create index if not exists`) — safe to run again
+  regardless of partial state; also covers index existence, which couldn't be confirmed
+  the same way (no PostgREST route for `pg_indexes`).
+- Since the user confirmed `0007` applied cleanly, re-ran `smoke-test.mjs` to verify the
+  fix live rather than just trusting "no errors" from the SQL Editor: **9/9 checks now
+  pass**, including the previously-failing "grant clients.view via service_role, then
+  confirm RLS allows the read" step. All of `0001`-`0007` are now confirmed applied and
+  behaving as designed on the real `CAPDATABASE` project.
+- Verification: live `node scripts/smoke-test.mjs` run, 9/9 pass, test user + test client
+  both cleaned up automatically. `git status --short` reviewed.
+- Did NOT: run the Firestore migration script; touch `AuthContext.jsx`/`apiClient.js`/
+  `App.jsx`; remove Firebase code; edit `0001`-`0005`/`0007` (only `0006`, and only
+  because its target state hadn't changed, just its re-run safety).
+- Remaining: nothing currently blocking further Phase 2 prep on the Supabase side. Real
+  Firestore data migration still blocked on Firebase Admin credentials (and user has said
+  not to run it this session regardless); `frontend/.env` still missing in this clone.
+
+## 2026-08-03 (cont. 5) — Live smoke test run (8/9 pass), real trigger bug found+fixed, Supabase apiClient scaffolded
+- Objective: user recreated `supabase/.env` locally with real credentials and asked to run
+  the smoke test, then continue Phase 2 work if it passed (explicitly still forbidding
+  Firestore migration execution, `AuthContext` switch, Firebase removal, or destructive
+  actions without approval; asked for undocumented new env vars to go in a `.env.example`
+  rather than chat).
+- Ran the smoke test live: `supabase/.env` confirmed present, gitignored, with all 3
+  expected keys. First run: 6/6 passed, but the "RLS denies clients read" check was
+  inconclusive (0 rows proves nothing on a table that might just be empty) — fixed by
+  seeding one real client row via service_role first, and added a second check granting
+  the permission afterward to prove the ALLOW branch too, plus a storage-bucket-existence
+  check. Re-ran the strengthened version: 8/9 passed.
+- **Real bug found**: granting the test user `clients.view` via service_role failed with
+  "Only preferences may be self-updated." — `restrict_self_user_update()`'s bypass
+  (`is_admin()`) depends on `auth.uid()`, NULL under service_role, so the trigger blocked
+  trusted service-role writes, not just genuine self-updates. Would have broken the real
+  Firestore migration's Phase C (sets migrated users' role/permissions via service_role).
+  Wrote `supabase/migrations/0007_fix_admin_user_update_trigger.sql` (adds `or auth.uid()
+  is null` to the bypass) — not applied, needs the user's SQL Editor run.
+- Added `supabase/.env.example` (per the user's request that new required vars be
+  documented there, not pasted into chat).
+- Built `frontend/src/api/supabaseApiClient.js`: full Supabase-backed equivalent of
+  `apiClient.js`'s `request`/`entities`/`integrations.Core.UploadFile`/`auth.*` shape, on
+  top of the existing entity/database/storage/auth service layer. Not imported anywhere.
+  Documented (not resolved) interface deviations: normalized `role_permissions` shape,
+  `knowledge_service_codes.code` vs. Firestore's `service_code`, session-based password
+  reset, and postgres_changes re-query semantics for `subscribe()`/`watch()`.
+- Installed `frontend/node_modules` (also missing in this fresh clone, no credentials
+  needed) so `npm run lint`/`typecheck`/`test` could actually run against the new file.
+- Verification: `supabase`: `node --check` clean, live smoke test 8/9 (1 known, fixed-not-
+  applied bug). `frontend`: `npm run lint` clean, `npm run typecheck` clean, `npm test` 2/2
+  pass. `git status --short` reviewed — only expected files new/changed.
+- Did NOT: run the Firestore migration script; touch `AuthContext.jsx`/`apiClient.js`/
+  `App.jsx`; remove Firebase code; apply `0006`/`0007` (both prepared only).
+- Remaining: user to run `0006`/`0007` whenever convenient; `frontend/.env` still missing
+  in this clone (blocks `npm run dev`/`build`, not blocking anything done so far).
+
+## 2026-08-03 (cont. 4) — All 6 migrations confirmed; smoke-test script built, blocked on missing local env
+- Objective: user confirmed `0001`-`0006` all executed successfully; asked to continue the
+  Phase 2 runbook, explicitly forbidding execution of the Firestore migration script,
+  `AuthContext` switch, Firebase removal, or any other destructive action without approval,
+  and asked to continue implementing/testing the Supabase service layer with Firebase still
+  live. Asked the user to choose between a live smoke test against the real Supabase
+  project vs. code-only work; user chose the live smoke test.
+- Discovered a real, previously-undocumented gap while preparing to run it: this is a
+  fresh clone, so `supabase/.env` and `frontend/.env` (gitignored, referenced throughout
+  earlier memory as already populated) don't exist here at all. Confirmed via `git
+  status`/`ls` and the new script's own fail-fast check. Nothing secret was at risk —
+  there was simply nothing local to read.
+- Built `supabase/scripts/smoke-test.mjs`: creates one throwaway auth user (admin API if
+  `SUPABASE_SERVICE_ROLE_KEY` present, else `signUp` fallback), checks the
+  `handle_new_auth_user` trigger's default profile shape, confirms RLS blocks a
+  permission-gated `clients` select, confirms self-preferences update succeeds, confirms
+  `restrict_self_user_update` blocks self role-escalation, then cleans up. `node --check`
+  clean; ran once with no env file present to confirm it fails fast and cleanly (exit 1,
+  clear message) rather than crashing.
+- Ran `npm install` in `supabase/` (175 packages; no credentials required) so both this
+  script and the data-migration script have their dependencies available whenever needed.
+- Verification: `node --check` on the new script; `npm test` in `supabase/` still 7/7
+  pass; `git status --short` reviewed — only expected files new/changed
+  (`smoke-test.mjs`, `package-lock.json`, memory docs).
+- Did NOT: run the data-migration script in any form; touch `AuthContext.jsx`/`apiClient.js`;
+  remove any Firebase code; actually execute the smoke test (blocked on the missing env
+  file, not yet resolved as of this entry).
+- Remaining: user to recreate `supabase/.env` (`SUPABASE_URL`/`SUPABASE_ANON_KEY`,
+  optionally `SUPABASE_SERVICE_ROLE_KEY`) via their own terminal/editor, not by pasting
+  into chat again; then the smoke test can actually run.
+
+## 2026-08-03 (cont. 3) — Phase 2 prep while 0002-0005 run; fixed a real migration-script gap
+- Objective: user confirmed `0001_initial_schema.sql` executed successfully and was running
+  `0002`-`0005` next; asked to prepare whatever Phase 2 work doesn't depend on those
+  finishing, without removing Firebase or switching the live app, and to proceed with
+  Phase 2 implementation once all five are confirmed.
+- Used plan mode before writing code, given the live-production blast radius and multi-file
+  scope. Static-reviewed `migrate-firestore-to-postgres.mjs` and `0001`-`0005` while
+  planning and found a real bug: Phase A (`ENTITY_COLLECTIONS`) never imported
+  `knowledge_notes`/`knowledge_service_codes`/`knowledge_media`/`knowledge_documents` —
+  confirmed live collections via `frontend/src/api/apiClient.js`'s `routeCollections` and
+  `entities.js`'s `KnowledgeBaseService` — and Phase C's existing
+  `knowledge_notes.created_by` relink referenced a `legacy_firestore_id` column that was
+  never added to that table (`0003` only added it to `knowledge_machines`). Running
+  `--apply` as the script stood would have silently skipped 4 real tables and then errored.
+- Files changed:
+  - New `supabase/scripts/lib/entityMappings.mjs`: extracted the entity-mapping table out
+    of the main script into a zero-dependency module (no `firebase-admin`/
+    `@supabase/supabase-js` imports), added the 4 missing collections, added a
+    `stripLegacyMarkers()` helper so a future new `_legacy_*` marker can't silently leak
+    into an `insert()` call again.
+  - New `supabase/scripts/lib/entityMappings.test.mjs`: 7 `node:test` cases covering all
+    10 entities' defaults and the new knowledge_* legacy-marker tagging — runs with zero
+    `npm install` since the module under test has no dependencies.
+  - `supabase/scripts/migrate-firestore-to-postgres.mjs`: imports `ENTITY_COLLECTIONS`
+    from the new module instead of defining it inline; added `knowledge_machines` to
+    `idMaps`; added 4 `relinkTable()` calls for the knowledge_* tables' `knowledge_machine_id`
+    FK in `runRelinkPhase`; added a new read-only `runVerifyPhase()` (Firestore doc count
+    vs Postgres row count per table, no writes) wired into the default `PHASES` list and a
+    new `migrate:verify` npm script; updated header comments.
+  - New `supabase/migrations/0006_knowledge_legacy_ids.sql`: adds `legacy_firestore_id` to
+    the four knowledge_* tables `0003` missed. Deliberately a new file, not folded into
+    `0001`-`0005`, since those were mid-execution by the user and must be left as-is.
+  - `supabase/package.json`: added `test` and `migrate:verify` scripts.
+  - `docs/ai-memory/{PROJECT_STATE,KNOWN_ISSUES,ROADMAP,DECISIONS}.md`: recorded `0001`
+    confirmed executed, `0002`-`0005` in progress, the bug fix, and a new Phase 2 execution
+    runbook (DECISIONS.md) that maps "proceed with Phase 2" to specific, individually
+    CLAUDE.md-section-12-gated steps rather than a blanket go-ahead for `--apply`/cutover/
+    Firebase removal.
+- Did NOT: run the migration script (dry-run or otherwise — still blocked on Firebase
+  Admin credentials, unchanged this session); touch `frontend/`, `backend/`,
+  `mobile-android/`, or `functions/`; wire `SupabaseAuthProvider` into `App.jsx`; edit
+  `0001`-`0005`.
+- Verification: `cd supabase && node --check scripts/migrate-firestore-to-postgres.mjs
+  scripts/lib/entityMappings.mjs` clean; `npm test` 7/7 pass (no install needed);
+  `git status --short` reviewed, only the listed files changed.
+- Remaining: user to confirm `0002`-`0005` succeeded, then run `0006` whenever convenient
+  (not urgent — script still can't run without Firebase Admin credentials). Phase 2's real
+  steps (per the new runbook) each still need their own explicit approval when reached.
+
 ## 2026-08-03 (cont. 2) — Phase 1 continued: SQL-Editor-only workflow, storage buckets, script expansion
 - User declined to provide a Postgres connection string or grant direct DB access;
   instead will run `0001`-`0003` (now `0001`-`0005`) manually via the Supabase SQL

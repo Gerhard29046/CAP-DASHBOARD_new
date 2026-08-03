@@ -20,16 +20,23 @@
 //   2. Supabase service_role key: already stored in ../.env as SUPABASE_SERVICE_ROLE_KEY
 //      (gitignored, server-side only).
 //
-// Prerequisite: supabase/migrations/0001-0005 must already be applied (run manually by
+// Prerequisite: supabase/migrations/0001-0006 must already be applied (run manually by
 // the user via the SQL Editor) before this script's --apply mode can do anything useful;
-// dry-run mode only needs Firestore read access and works regardless.
+// dry-run mode only needs Firestore read access and works regardless. 0006 specifically
+// (added 2026-08-03, Phase 2 prep) adds legacy_firestore_id to the four knowledge_* tables
+// below that 0003 originally missed -- without it, the users-phase relink of
+// knowledge_notes.created_by will fail with an unknown-column error.
 //
 // Phases (run in order, each gated by --apply for its writes):
 //   A. entities  - import clients/machines/service_records/job_cards/job_card_lines/
-//                  knowledge_machines, tagged with legacy_firestore_id.
-//   B. relink    - re-point client_id/machine_id/job_card_id FK columns from the
-//                  Firestore doc-id values they held in Firestore to the new Postgres
-//                  uuids generated in phase A, using the legacy_firestore_id columns.
+//                  knowledge_machines/knowledge_notes/knowledge_service_codes/
+//                  knowledge_media/knowledge_documents, tagged with legacy_firestore_id.
+//                  Mapping table lives in scripts/lib/entityMappings.mjs (unit-tested
+//                  separately -- see entityMappings.test.mjs).
+//   B. relink    - re-point client_id/machine_id/job_card_id/knowledge_machine_id FK
+//                  columns from the Firestore doc-id values they held in Firestore to the
+//                  new Postgres uuids generated in phase A, using the legacy_firestore_id
+//                  columns.
 //   C. users     - create a Supabase Auth user per Firestore users/{uid} doc (via
 //                  auth.admin.createUser), then update the auto-created public.users
 //                  profile row with role/effective_permissions/is_active/preferences and
@@ -38,18 +45,22 @@
 //                  storage_path fields from Firebase Storage to the matching Supabase
 //                  bucket. Best-effort; logs and continues on individual file failures
 //                  rather than aborting the whole migration.
+//   E. verify    - read-only: compares Firestore doc counts against Postgres row counts
+//                  per collection/table and prints a match/mismatch report. No writes.
 //
 // Usage:
 //   node scripts/migrate-firestore-to-postgres.mjs                       # dry run, all phases
 //   node scripts/migrate-firestore-to-postgres.mjs --apply               # writes, all phases
 //   node scripts/migrate-firestore-to-postgres.mjs --apply --phases=entities,relink
 //   node scripts/migrate-firestore-to-postgres.mjs --apply --only=clients,machines
+//   node scripts/migrate-firestore-to-postgres.mjs --phases=verify        # read-only check
 
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { createClient } from "@supabase/supabase-js";
 import admin from "firebase-admin";
+import { ENTITY_COLLECTIONS, stripLegacyMarkers } from "./lib/entityMappings.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -79,7 +90,7 @@ const FIREBASE_STORAGE_BUCKET = process.env.FIREBASE_STORAGE_BUCKET || fileEnv.F
 const args = process.argv.slice(2);
 const APPLY = args.includes("--apply");
 const ONLY = (args.find((a) => a.startsWith("--only="))?.split("=")[1] ?? "").split(",").filter(Boolean);
-const PHASES = (args.find((a) => a.startsWith("--phases="))?.split("=")[1] ?? "entities,relink,users,storage").split(",").filter(Boolean);
+const PHASES = (args.find((a) => a.startsWith("--phases="))?.split("=")[1] ?? "entities,relink,users,storage,verify").split(",").filter(Boolean);
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
   console.error("Missing SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY. Check supabase/.env.");
@@ -99,49 +110,17 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 // ---------------------------------------------------------------------------
 // Phase A: entities
 // ---------------------------------------------------------------------------
-// Column-mapping per collection -> table. Field names match
-// supabase/migrations/0001_initial_schema.sql (verified against real component usage
-// 2026-08-03). `id` is NOT reused from Firestore doc IDs -- a fresh uuid is generated and
-// the Firestore doc ID is kept in `legacy_firestore_id` so phase B can re-link FKs.
-const ENTITY_COLLECTIONS = [
-  { collection: "clients", table: "clients", map: (d) => ({
-    company_name: d.company_name ?? "", contact_person: d.contact_person ?? null,
-    email: d.email ?? null, phone: d.phone ?? null, address: d.address ?? null,
-    notes: d.notes ?? null, is_active: d.is_active ?? true,
-  }) },
-  { collection: "machines", table: "machines", map: (d) => ({
-    brand: d.brand ?? null, model: d.model ?? null, serial_number: d.serial_number ?? null,
-    machine_type: d.machine_type ?? null, refrigerant_type: d.refrigerant_type ?? null,
-    installation_date: d.installation_date ?? null, notes: d.notes ?? null,
-    // raw legacy FK values, consumed (not written) by phase B:
-    _legacy_client_id: d.client_id != null ? String(d.client_id) : null,
-  }) },
-  { collection: "service_records", table: "service_records", map: (d) => ({
-    technician_name: d.technician_name ?? null, status: d.status ?? null,
-    next_service_due: d.next_service_due ?? null, notes: d.notes ?? null,
-    _legacy_machine_id: d.machine_id != null ? String(d.machine_id) : null,
-  }) },
-  { collection: "job_cards", table: "job_cards", map: (d) => ({
-    status: d.status ?? "Open", fault_description: d.fault_description ?? null,
-    technician_name: d.technician_name ?? null, technician_notes: d.technician_notes ?? null,
-    arrival_condition: d.arrival_condition ?? null, date_completed: d.date_completed ?? null,
-    _legacy_client_id: d.client_id != null ? String(d.client_id) : null,
-    _legacy_machine_id: d.machine_id != null ? String(d.machine_id) : null,
-  }) },
-  { collection: "job_card_lines", table: "job_card_lines", map: (d) => ({
-    line_type: d.line_type ?? "Labour", description: d.description ?? "",
-    quantity: d.quantity ?? 1, unit_price: d.unit_price ?? 0, line_total: d.line_total ?? 0,
-    _legacy_job_card_id: d.job_card_id != null ? String(d.job_card_id) : null,
-  }) },
-  { collection: "knowledge_machines", table: "knowledge_machines", map: (d) => ({
-    name: d.name ?? "", model: d.model ?? null, description: d.description ?? null,
-  }) },
-];
+// Column-mapping per collection -> table now lives in scripts/lib/entityMappings.mjs
+// (imported above), so it can be unit-tested without firebase-admin/@supabase/supabase-js.
+// Field names match supabase/migrations/0001_initial_schema.sql (verified against real
+// component usage 2026-08-03). `id` is NOT reused from Firestore doc IDs -- a fresh uuid is
+// generated and the Firestore doc ID is kept in `legacy_firestore_id` so phase B can
+// re-link FKs.
 
 // In-memory legacy-id -> new-uuid maps, populated during phase A, consumed by phase B.
 // Also re-derivable from the database alone (via legacy_firestore_id columns) if phase B
 // is run in a separate invocation from phase A -- see loadIdMapFromDb().
-const idMaps = { clients: new Map(), machines: new Map(), job_cards: new Map() };
+const idMaps = { clients: new Map(), machines: new Map(), job_cards: new Map(), knowledge_machines: new Map() };
 
 async function loadIdMapFromDb(table) {
   const map = new Map();
@@ -162,22 +141,21 @@ async function runEntityPhase() {
     if (snapshot.empty) { results.push({ collection, count: 0 }); continue; }
 
     const rows = snapshot.docs.map((doc) => {
-      const mapped = map(doc.data());
-      const { _legacy_client_id, _legacy_machine_id, _legacy_job_card_id, ...columns } = mapped;
-      return { legacy_firestore_id: doc.id, ...columns, _legacy: { _legacy_client_id, _legacy_machine_id, _legacy_job_card_id } };
+      const { columns } = stripLegacyMarkers(map(doc.data()));
+      return { legacy_firestore_id: doc.id, ...columns };
     });
 
-    console.log(`  sample: ${JSON.stringify({ ...rows[0], _legacy: undefined })}`);
+    console.log(`  sample: ${JSON.stringify(rows[0])}`);
 
     if (!APPLY) { console.log("  (dry run - not written)"); results.push({ collection, count: rows.length }); continue; }
 
-    for (const row of rows) {
-      const { _legacy, ...insertRow } = row;
+    for (const insertRow of rows) {
       const { data, error } = await supabase.from(table).insert(insertRow).select("id").single();
-      if (error) { console.error(`  ERROR inserting into ${table} (legacy id ${row.legacy_firestore_id}):`, error.message); continue; }
-      if (table === "clients") idMaps.clients.set(row.legacy_firestore_id, data.id);
-      if (table === "machines") idMaps.machines.set(row.legacy_firestore_id, data.id);
-      if (table === "job_cards") idMaps.job_cards.set(row.legacy_firestore_id, data.id);
+      if (error) { console.error(`  ERROR inserting into ${table} (legacy id ${insertRow.legacy_firestore_id}):`, error.message); continue; }
+      if (table === "clients") idMaps.clients.set(insertRow.legacy_firestore_id, data.id);
+      if (table === "machines") idMaps.machines.set(insertRow.legacy_firestore_id, data.id);
+      if (table === "job_cards") idMaps.job_cards.set(insertRow.legacy_firestore_id, data.id);
+      if (table === "knowledge_machines") idMaps.knowledge_machines.set(insertRow.legacy_firestore_id, data.id);
     }
     console.log(`  inserted up to ${rows.length} rows into ${table}`);
     results.push({ collection, count: rows.length });
@@ -199,6 +177,7 @@ async function runRelinkPhase() {
   const clientMap = idMaps.clients.size ? idMaps.clients : await loadIdMapFromDb("clients");
   const machineMap = idMaps.machines.size ? idMaps.machines : await loadIdMapFromDb("machines");
   const jobCardMap = idMaps.job_cards.size ? idMaps.job_cards : await loadIdMapFromDb("job_cards");
+  const knowledgeMachineMap = idMaps.knowledge_machines.size ? idMaps.knowledge_machines : await loadIdMapFromDb("knowledge_machines");
 
   async function relinkTable(table, fkColumn, legacyCollection, legacyField, idMap) {
     const snapshot = await firestore.collection(legacyCollection).get();
@@ -220,6 +199,12 @@ async function runRelinkPhase() {
   await relinkTable("job_cards", "client_id", "job_cards", "client_id", clientMap);
   await relinkTable("job_cards", "machine_id", "job_cards", "machine_id", machineMap);
   await relinkTable("job_card_lines", "job_card_id", "job_card_lines", "job_card_id", jobCardMap);
+  // Added 2026-08-03 (Phase 2 prep): these four tables were previously not imported by
+  // phase A at all -- see entityMappings.mjs and 0006_knowledge_legacy_ids.sql.
+  await relinkTable("knowledge_notes", "knowledge_machine_id", "knowledge_notes", "knowledge_machine_id", knowledgeMachineMap);
+  await relinkTable("knowledge_service_codes", "knowledge_machine_id", "knowledge_service_codes", "knowledge_machine_id", knowledgeMachineMap);
+  await relinkTable("knowledge_media", "knowledge_machine_id", "knowledge_media", "knowledge_machine_id", knowledgeMachineMap);
+  await relinkTable("knowledge_documents", "knowledge_machine_id", "knowledge_documents", "knowledge_machine_id", knowledgeMachineMap);
 }
 
 // ---------------------------------------------------------------------------
@@ -333,6 +318,35 @@ async function runStoragePhase() {
   console.log("  here once a real feature using them is confirmed.");
 }
 
+// ---------------------------------------------------------------------------
+// Phase E: verify (read-only Firestore-count vs Postgres-count check)
+// ---------------------------------------------------------------------------
+async function runVerifyPhase() {
+  console.log("\n=== Phase E: verify (read-only) ===");
+  const targets = ONLY.length ? ENTITY_COLLECTIONS.filter((c) => ONLY.includes(c.collection)) : ENTITY_COLLECTIONS;
+  let anyMismatch = false;
+
+  for (const { collection, table } of targets) {
+    const snapshot = await firestore.collection(collection).get();
+    const firestoreCount = snapshot.size;
+    const { count: postgresCount, error } = await supabase
+      .from(table)
+      .select("*", { count: "exact", head: true });
+    if (error) {
+      console.error(`  ${collection} -> ${table}: ERROR reading Postgres count:`, error.message);
+      anyMismatch = true;
+      continue;
+    }
+    const match = firestoreCount === postgresCount;
+    if (!match) anyMismatch = true;
+    console.log(`  ${collection} -> ${table}: Firestore=${firestoreCount} Postgres=${postgresCount} ${match ? "OK" : "MISMATCH"}`);
+  }
+
+  console.log(anyMismatch
+    ? "  Result: at least one mismatch found -- do not treat the migration as complete until resolved."
+    : "  Result: all counts match.");
+}
+
 async function main() {
   console.log(`Mode: ${APPLY ? "APPLY (writes to Supabase, creates auth users, copies files)" : "DRY RUN (no writes)"}`);
   console.log(`Firestore: project ${FIREBASE_PROJECT_ID}, database ${FIRESTORE_DATABASE_ID}`);
@@ -344,6 +358,7 @@ async function main() {
   if (PHASES.includes("relink")) await runRelinkPhase();
   if (PHASES.includes("users")) await runUsersPhase();
   if (PHASES.includes("storage")) await runStoragePhase();
+  if (PHASES.includes("verify")) await runVerifyPhase();
 
   console.log("\nRemaining known gaps after all phases (see docs/ai-memory/KNOWN_ISSUES.md):");
   console.log("  - sites collection: not migrated (nested under clients in current Firestore");

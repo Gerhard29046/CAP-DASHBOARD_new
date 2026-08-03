@@ -1,5 +1,156 @@
 # Decisions
 
+## 2026-08-03 — Verified `0006`'s actual state live instead of trusting the error message, then made it idempotent
+- Decision: when the user reported `0006` erroring with "column ... already exists," did
+  not assume from the error text alone what state the database was in. Instead ran
+  read-only `select legacy_firestore_id limit 1` probes against all four affected tables
+  via `supabase-js` with the service_role key (no direct Postgres connection available or
+  wanted — the user has consistently declined providing one). Confirmed all four columns
+  already exist, meaning `0006` had already fully committed in an earlier, unreported run.
+  Then rewrote `0006_knowledge_legacy_ids.sql` in place (`add column if not exists` /
+  `create index if not exists`) so it's safe to run again regardless of partial state.
+- Reason: CLAUDE.md section 3 ("do not assume planned work was implemented") and section
+  13 ("inspect the actual implementation") both argue against treating an error message as
+  self-explanatory without checking real state, especially for something as consequential
+  as whether a schema migration actually applied. Rewriting the file in place (rather than
+  leaving it as a one-shot, now-broken-to-re-run artifact) was judged acceptable here
+  specifically because its target state was already fully achieved — this is not the same
+  as editing an already-applied migration to change its effect.
+- Affected: `supabase/migrations/0006_knowledge_legacy_ids.sql` (content changed, same
+  filename/number — no new migration file, since nothing about its target end-state
+  changed).
+- Consequences: index existence for the four new indexes could not be confirmed the same
+  way (no PostgREST-exposed route for `pg_indexes`), so the idempotent rewrite also
+  functions as a safety net for that unknown, not just the confirmed column case.
+- Reversal condition: none expected.
+
+## 2026-08-03 — Fixed a real trigger bug found by the live smoke test, via new migration 0007
+- Decision: `supabase/migrations/0007_fix_admin_user_update_trigger.sql` amends
+  `restrict_self_user_update()` to also bypass its restriction when `auth.uid() is null`
+  (i.e. no authenticated end-user session — service_role/definer-context calls), not only
+  when `is_admin()` is true.
+- Reason: running `supabase/scripts/smoke-test.mjs` live against the real project showed
+  the service_role client itself was blocked from updating `effective_permissions`, because
+  `is_admin()` depends on `auth.uid()`, which is NULL under service_role. Left unfixed, this
+  would break `migrate-firestore-to-postgres.mjs`'s Phase C (sets each migrated user's real
+  role/permissions via the service_role/admin client) for any user who isn't left at the
+  trigger-created default.
+- Affected: `public.restrict_self_user_update()` (function only, via `create or replace` —
+  no table/column changes). Written as a new migration, not an edit to `0002`, since `0002`
+  is already applied to the real project.
+- Consequences: authenticated non-admin users are unaffected — self-updates outside
+  `preferences` are still blocked exactly as before. Only trusted service_role writes
+  (already RLS-bypassing by design) gain the ability to set role/is_active/
+  effective_permissions/email.
+- Reversal condition: none expected — this closes a real gap, not a judgment call.
+- **Applied 2026-08-03** — user ran it via the SQL Editor with no errors, and a follow-up
+  live smoke test re-run confirmed the fix works (the previously-failing "grant
+  clients.view via service_role" check now passes; 9/9 checks pass overall).
+
+## 2026-08-03 — Built a Supabase-backed apiClient equivalent, unwired
+- Decision: added `frontend/src/api/supabaseApiClient.js`, matching `apiClient.js`'s
+  exact exported shape (`request`/`entities`/`integrations.Core.UploadFile`/`auth.*`),
+  built on the existing `entities.js`/`database.js`/`storage.js`/`auth.js` scaffolding
+  from Phase 0/1. Not imported by any page or `App.jsx`.
+- Reason: this is the biggest remaining piece of "Phase 2, step 6" from the runbook
+  (wiring a Supabase-backed data layer behind a flag before ever flipping it live) — having
+  it built and verified via lint/typecheck now, ahead of the real data migration, means the
+  eventual cutover is closer to a routing change than a rewrite done under time pressure.
+- Affected: new file only; no existing file imports it. Google Calendar routes
+  intentionally still call the same Firebase Cloud Functions (out of scope for this
+  migration regardless of which data layer serves the rest of the app).
+- Documented, not resolved, deviations from `apiClient.js`'s exact Firestore-era behavior:
+  `role_permissions` is now a normalized (role, permission_key) table rather than one doc
+  per role with a `permissions` array; `knowledge_service_codes`'s column is `code`, not
+  Firestore's `service_code` (response key kept the same for caller compatibility); password
+  reset is Supabase's session-based recovery flow, not Firebase's opaque-token exchange;
+  and its `subscribe()`/`watch()` re-query on every postgres_changes event rather than
+  Firestore's full-snapshot-per-change semantics (flagged as a gap for whichever page
+  first consumes it, not solved here since nothing does yet).
+- Verified: `frontend` `npm run lint`/`typecheck`/`test` (2/2) all clean with the file
+  present but unimported. `npm run build` not run — still blocked by `frontend/.env` not
+  existing in this clone (pre-existing, unrelated to this file).
+- Reversal condition: if Phase 2 cutover is abandoned, this file (like `entities.js`/
+  `SupabaseAuthContext.jsx`) can be deleted with zero impact — nothing imports it.
+
+## 2026-08-03 — Full cutover checklist written as a dedicated doc, not just this runbook entry
+- Decision: wrote `docs/migration/PHASE2_CUTOVER_CHECKLIST.md` as the authoritative,
+  detailed cutover plan (task-by-task, tagged no-approval/approval/decision; downtime
+  estimate; rollback plan; verification checklist) rather than expanding the shorter
+  runbook entry below in place.
+- Reason: user explicitly asked for "a complete checklist of every remaining task,
+  estimated downtime (if any), rollback plan, and verification steps" before the final
+  cutover is requested — a first-class, scannable document serves that better than a
+  memory-file paragraph. The runbook entry below stays as the short version / historical
+  record of why a phased approach was chosen at all; the new doc is what to actually work
+  from when scheduling a cutover.
+- Affected: new `docs/migration/PHASE2_CUTOVER_CHECKLIST.md`. Surfaced several real,
+  previously-implicit gaps as explicit open items: no password-reset-email delivery script
+  exists yet for migrated users, no incremental/delta-sync capability exists in the
+  migration script (one-time bulk import only), `sites` has no Firestore source to migrate
+  from, Android cutover timing is an unmade decision, and a single Supabase project serves
+  both "the real target" and "wherever staging testing would happen."
+- Reversal condition: update the doc as decisions get made and gaps get closed — it's a
+  living checklist, not a historical record like DECISIONS.md entries otherwise are.
+
+## 2026-08-03 — Phase 2 execution runbook (not started; steps below gate their own approval)
+- Written while `0001` was confirmed executed and `0002`-`0005` were being run by the user,
+  in response to "once I confirm all five migrations have completed successfully, proceed
+  with Phase 2 implementation." That instruction authorizes *starting* Phase 2 once
+  migrations are confirmed — it does not by itself satisfy CLAUDE.md section 12's
+  requirement that destructive/irreversible actions each get their own explicit approval.
+  This runbook exists so that distinction is applied consistently rather than re-litigated
+  each time.
+- Ordered steps, each tagged with what it needs before running:
+  1. Install `supabase/` script deps, dry-run all phases (including `verify`, added
+     2026-08-03), review output line by line. No approval needed — read-only.
+  2. `--apply --phases=entities,relink,verify` against the real project. Needs explicit
+     user go-ahead — first real write to Postgres, though Firebase/Firestore remain
+     untouched and authoritative throughout.
+  3. Spot-check row counts (via the new `verify` phase) and a handful of real records
+     against their Firestore originals.
+  4. `--apply --phases=users`. Needs explicit go-ahead — creates real Supabase Auth
+     accounts. Immediately follow with password-reset emails (migrated users have no
+     usable password — the script already reminds of this).
+  5. `--apply --phases=storage`. Needs explicit go-ahead — copies real files.
+  6. Wire `SupabaseAuthProvider` / a Supabase-backed data layer into the app behind an
+     env flag defaulting off; test end-to-end against the migrated data without it being
+     the live path yet.
+  7. Flip the flag so Supabase becomes the live path. Needs explicit go-ahead — this is
+     the actual cutover moment CLAUDE.md section 12 is guarding.
+  8. Only after a confirmed soak period: remove Firebase code/config. Needs explicit
+     go-ahead — treated as irreversible in spirit even though git history retains it.
+- Reversal condition: if the user decides to stop at any step, everything up to and
+  including step 5 is additive to Postgres only (Firebase stays live and authoritative);
+  rolling back means deleting the migrated Postgres rows/Auth users/Storage files, not
+  reverting any app code, since nothing before step 6 touches `frontend/`/`mobile-android/`.
+
+## 2026-08-03 — Fixed a real Phase-A coverage gap found during Phase 2 prep (static review)
+- Decision: extracted the entity-mapping table into a new zero-dependency
+  `supabase/scripts/lib/entityMappings.mjs` (unit-tested in `entityMappings.test.mjs`) and
+  added the four collections it was missing — `knowledge_notes`, `knowledge_service_codes`,
+  `knowledge_media`, `knowledge_documents` — plus a new `supabase/migrations/
+  0006_knowledge_legacy_ids.sql` giving those tables the `legacy_firestore_id` column
+  `0003_legacy_migration_ids.sql` only gave `knowledge_machines`. Also added a read-only
+  `verify` phase to `migrate-firestore-to-postgres.mjs` that compares Firestore doc counts
+  to Postgres row counts per table.
+- Reason: `frontend/src/api/apiClient.js`'s `routeCollections` and `frontend/src/services/
+  supabase/entities.js`'s `KnowledgeBaseService` both confirm these four collections are
+  live, but the migration script's Phase A never imported them, and Phase C's existing
+  `knowledge_notes.created_by` relink referenced a `legacy_firestore_id` column that did
+  not exist on that table — running `--apply` as the script stood would have silently
+  skipped real data and then errored. Found by static review, not execution (the script
+  still has never been run, dry or otherwise).
+- Affected: `supabase/scripts/migrate-firestore-to-postgres.mjs`, new
+  `supabase/scripts/lib/entityMappings.{mjs,test.mjs}`, new `supabase/migrations/
+  0006_knowledge_legacy_ids.sql`, `supabase/package.json` (added `test`/`migrate:verify`
+  scripts).
+- Consequences: `0006` must be applied (whenever convenient, after `0001`-`0005`) before a
+  real `--apply` run touching the `users` phase; not urgent today since Firebase Admin
+  credentials still block any real run regardless.
+- Reversal condition: none expected — this closes a real gap, not a judgment call that
+  could go the other way.
+
 ## 2026-08-03 — Firebase-to-Supabase migration will be phased, not a single cutover
 - Decision: migrate incrementally (Phase 0 schema/scaffolding -> Phase 1 service layer +
   data-migration scripts, run against a copy -> Phase 2 actual cutover of Auth/Firestore/

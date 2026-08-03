@@ -4,8 +4,10 @@
   "type": "module",
   "description": "Firestore -> Postgres data-migration tooling for the CAP Dashboard Supabase migration. Not part of the deployed app.",
   "scripts": {
+    "test": "node --test scripts/lib/*.test.mjs",
     "migrate:dry-run": "node scripts/migrate-firestore-to-postgres.mjs",
-    "migrate:apply": "node scripts/migrate-firestore-to-postgres.mjs --apply"
+    "migrate:apply": "node scripts/migrate-firestore-to-postgres.mjs --apply",
+    "migrate:verify": "node scripts/migrate-firestore-to-postgres.mjs --phases=verify"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",
