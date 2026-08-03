@@ -38,15 +38,17 @@
   already blocked one credential-read attempt (`gcloud auth application-default
   print-access-token`) this session as an appropriate guard. The user must set this up
   and run the script themselves, or explicitly hand over a service-account key file path.
-- `supabase/migrations/0001_initial_schema.sql`/`0002`/`0003` have NOT been run against
-  the real `CAPDATABASE` Supabase project yet — blocked on the Postgres connection string
-  (Dashboard → Project Settings → Database), which has not been provided. No Storage
-  buckets created yet either.
+- `supabase/migrations/0001`-`0005` have NOT been run against the real `CAPDATABASE`
+  Supabase project yet. **No connection string will be provided** (user's explicit
+  decision, 2026-08-03) — the user will run all five files manually via the Supabase SQL
+  Editor and confirm success before Phase 2 (actual app cutover) begins. No Storage
+  buckets created yet either (created by `0004`, pending that manual run).
 
-## Deploy gap (2026-07-28)
-- Commit `aa72fa8` (Ruflo/Claude Flow MCP tooling) exists on local `main` but is **not
-  pushed** to `origin/main` — `git push` was denied by the Claude Code auto-mode
-  classifier and requires the user to run/approve it directly.
+## Deploy gap (2026-07-28, push resolved 2026-08-03)
+- ~~Commit `aa72fa8` (Ruflo/Claude Flow MCP tooling) exists on local `main` but is not
+  pushed to `origin/main`~~ — **resolved 2026-08-03**: `git push origin main` succeeded
+  this session (`25f4819..59e9702`), carrying `aa72fa8`, `f5246f7`, and the new Supabase
+  migration Phase 0/1 commit `59e9702` to `origin/main`. `main`/`origin/main` are in sync.
 - `functions/index.js`'s CORS fix (adds `PATCH` to `Access-Control-Allow-Methods`, from
   commit `25f4819`) is **not deployed** — `firebase deploy --only functions` was denied
   by the same classifier. The frontend (already deployed, version
