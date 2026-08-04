@@ -1,5 +1,64 @@
 # Known Issues
 
+## First real `--apply` partially failed on NOT NULL FK constraints — FIXED via 0012, NOT yet applied (2026-08-04)
+- `0009`/`0010`/`0011` confirmed applied ("100% success" per user) and live-verified
+  (columns queryable) before attempting the first real `--apply --phases=entities,relink,
+  verify`. Result, confirmed via the read-only `verify` phase (not just script output):
+  `clients` (6/6) and `job_cards` (4/4) succeeded and relinked correctly. `machines` (0/6),
+  `service_records` (0/7), `job_card_lines` (0/3), `knowledge_machines` (0/3) all failed
+  outright — Postgres `NOT NULL constraint` violations, zero rows written to any of the
+  four (not a partial/corrupt write).
+- Root cause: the script's insert-then-relink two-phase design needs the relevant FK
+  column to be nullable at insert time; `job_cards.client_id`/`machine_id` were, the other
+  three FK columns weren't. `knowledge_machines.name` (pre-`0011` vestigial column) is
+  separately still `NOT NULL` despite the `0011` mapper no longer supplying it.
+- Fixed via `supabase/migrations/0012_nullable_fks_for_two_phase_insert.sql` (drops NOT
+  NULL on 4 columns; does not weaken the FK `references` constraint itself). **Not yet
+  applied to the real project.**
+- **Important for the retry**: once `0012` is applied, re-run with
+  `--only=machines,service_records,job_card_lines,knowledge_machines` — NOT a bare
+  `--apply --phases=entities,relink,verify` with no `--only`, which would try to
+  re-insert the already-successful `clients`/`job_cards` rows and likely hit a
+  `legacy_firestore_id` unique-constraint error. The script does not currently check
+  "already migrated" before inserting.
+
+## `machines`/`service_records`/`knowledge_machines` schema gaps + a date empty-string bug — FIXED, NOT yet applied (2026-08-04)
+- Full spot-check of all real docs (not just dry-run samples) in the 4 remaining non-empty
+  collections found 4 more real issues beyond the `job_cards` one below:
+  1. `machines` missing `warranty_expiry` (real, on all 6 docs).
+  2. `service_records` missing `service_date`/`work_performed`/`findings` (all three real,
+     `service_date` required by both real creation forms).
+  3. `knowledge_machines`'s entire schema was wrong — real fields are `manufacturer`/
+     `model_name`/`variant`/`product_code`/`category`/`summary`/`supported_refrigerants`/
+     `technical_specifications`/`main_functions`, none of which overlap with the old
+     `name`/`model`/`description` columns. Would have silently blanked every real
+     knowledge-base entry.
+  4. A latent bug independent of the above: `?? null` doesn't catch empty strings, and
+     date fields come through as `""` (not absent) from blank `<input type=date>`
+     elements — confirmed live on 4 of 6 real `machines.installation_date` values. Would
+     have hard-failed `--apply` with a Postgres date-type error. Fixed defensively across
+     every date field via a new `toDateOrNull()` helper, not just the one proven broken.
+- Fixed via `supabase/migrations/0009_machines_warranty_expiry.sql`,
+  `0010_service_records_missing_fields.sql`, `0011_knowledge_machines_real_fields.sql`,
+  and updates to `supabase/scripts/lib/entityMappings.mjs` (10/10 tests pass, was 8/8).
+- **`0009`/`0010`/`0011` have NOT been run against the real `CAPDATABASE` project yet** —
+  needs the user to apply them via the SQL Editor before any real `--apply` of the
+  migration script.
+
+## `knowledge_notes`/`knowledge_media`/`knowledge_documents`/`knowledge_service_codes` likely have the same class of schema gap — NOT fixed, no data at risk yet (2026-08-04)
+- Found as a side effect of investigating `knowledge_machines` (`KnowledgeMachineDetail.jsx`
+  renders all four sub-collections together): real code uses `content` on notes (schema has
+  `body`), stores an uploaded `file_url` (the full download URL `UploadFile` returns) on
+  media/documents rather than a `storage_path`, plus an `original_filename` the schema
+  doesn't capture at all, and `knowledge_service_codes` has a `function_name` field with no
+  schema column.
+- **Not fixed this session** — deliberately deferred, since the live dry run confirmed all
+  four collections currently have **zero real documents** (only ever seen at 0 in every dry
+  run so far), so there is no data-loss risk today, unlike the collections above that do
+  have real data. Must be fixed before any real content is added to the knowledge base
+  through these four sub-tables, or before a real `--apply` if that ever changes. Re-check
+  Firestore doc counts for these four before assuming this is still safe to defer.
+
 ## `job_cards` missing `job_number`/`date_received` columns — FIXED, applied and verified live (2026-08-04)
 - Found via a live dry-run spot-check: `0001_initial_schema.sql` never gave `job_cards`
   columns for `job_number`/`date_received`, both of which are real, universally-populated

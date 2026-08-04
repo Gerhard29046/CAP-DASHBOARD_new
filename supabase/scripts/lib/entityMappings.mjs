@@ -7,6 +7,18 @@
 // the Firestore doc ID is kept in `legacy_firestore_id` so the relink phase can re-point
 // foreign keys. Keys prefixed `_legacy_` are FK markers consumed by the caller before
 // insert (never real Postgres columns -- must be stripped, or insert() will error).
+//
+// Found 2026-08-04 during the remaining-collections spot-check: `?? null` does NOT catch
+// empty strings, and several date-typed fields (installation_date confirmed on 4 of 6 real
+// machines docs; others are currently clean but the same UI pattern -- an <input type=date>
+// defaulting to "" -- applies to every date field below) come through Firestore as `""`,
+// not `null`/absent, when left blank in a form. Inserting `""` into a Postgres `date`
+// column errors ("invalid input syntax for type date"). Every date-typed field mapped
+// below uses this helper instead of a bare `?? null` for that reason.
+function toDateOrNull(value) {
+  return value ? value : null;
+}
+
 export const ENTITY_COLLECTIONS = [
   { collection: "clients", table: "clients", map: (d) => ({
     company_name: d.company_name ?? "", contact_person: d.contact_person ?? null,
@@ -16,23 +28,33 @@ export const ENTITY_COLLECTIONS = [
   { collection: "machines", table: "machines", map: (d) => ({
     brand: d.brand ?? null, model: d.model ?? null, serial_number: d.serial_number ?? null,
     machine_type: d.machine_type ?? null, refrigerant_type: d.refrigerant_type ?? null,
-    installation_date: d.installation_date ?? null, notes: d.notes ?? null,
+    installation_date: toDateOrNull(d.installation_date), notes: d.notes ?? null,
+    // Added 2026-08-04: found missing during the remaining-collections spot-check (see
+    // supabase/migrations/0009_machines_warranty_expiry.sql) -- present on all 6 real
+    // docs, real MachineForm.jsx/MachineDetail.jsx field, not test-only.
+    warranty_expiry: toDateOrNull(d.warranty_expiry),
     _legacy_client_id: d.client_id != null ? String(d.client_id) : null,
   }) },
   { collection: "service_records", table: "service_records", map: (d) => ({
     technician_name: d.technician_name ?? null, status: d.status ?? null,
-    next_service_due: d.next_service_due ?? null, notes: d.notes ?? null,
+    next_service_due: toDateOrNull(d.next_service_due), notes: d.notes ?? null,
+    // Added 2026-08-04: found missing during the remaining-collections spot-check (see
+    // supabase/migrations/0010_service_records_missing_fields.sql) -- confirmed via the
+    // two real creation forms (LogServiceModal.jsx, ServiceForm.jsx); service_date is
+    // required in both, work_performed/findings are real fields, not test-only.
+    service_date: toDateOrNull(d.service_date), work_performed: d.work_performed ?? null,
+    findings: d.findings ?? null,
     _legacy_machine_id: d.machine_id != null ? String(d.machine_id) : null,
   }) },
   { collection: "job_cards", table: "job_cards", map: (d) => ({
     status: d.status ?? "Open", fault_description: d.fault_description ?? null,
     technician_name: d.technician_name ?? null, technician_notes: d.technician_notes ?? null,
-    arrival_condition: d.arrival_condition ?? null, date_completed: d.date_completed ?? null,
+    arrival_condition: d.arrival_condition ?? null, date_completed: toDateOrNull(d.date_completed),
     // Added 2026-08-04: found missing during a live dry-run spot-check (see
     // supabase/migrations/0008_job_cards_missing_fields.sql) -- confirmed present on all 4
     // real job_cards docs and actively used by BookIn.jsx/JobCardDetail.jsx/Jobs.jsx/
     // InvoiceQueue.jsx/MachineDetail.jsx, not test-only fields.
-    job_number: d.job_number ?? null, date_received: d.date_received ?? null,
+    job_number: d.job_number ?? null, date_received: toDateOrNull(d.date_received),
     _legacy_client_id: d.client_id != null ? String(d.client_id) : null,
     _legacy_machine_id: d.machine_id != null ? String(d.machine_id) : null,
   }) },
@@ -41,8 +63,20 @@ export const ENTITY_COLLECTIONS = [
     quantity: d.quantity ?? 1, unit_price: d.unit_price ?? 0, line_total: d.line_total ?? 0,
     _legacy_job_card_id: d.job_card_id != null ? String(d.job_card_id) : null,
   }) },
+  // Rewritten 2026-08-04 -- the previous name/model/description mapping was based on the
+  // original schema brief's guess, not real data. The remaining-collections spot-check
+  // showed the real field set (confirmed via all 3 live docs AND
+  // frontend/src/pages/KnowledgeMachineForm.jsx/KnowledgeMachineDetail.jsx) is entirely
+  // different -- see supabase/migrations/0011_knowledge_machines_real_fields.sql. Old
+  // name/model/description columns are left in the schema (unused) but no longer mapped
+  // to here since no real document has ever had those fields.
   { collection: "knowledge_machines", table: "knowledge_machines", map: (d) => ({
-    name: d.name ?? "", model: d.model ?? null, description: d.description ?? null,
+    manufacturer: d.manufacturer ?? null, model_name: d.model_name ?? null,
+    variant: d.variant ?? null, product_code: d.product_code ?? null,
+    category: d.category ?? null, summary: d.summary ?? null,
+    supported_refrigerants: d.supported_refrigerants ?? [],
+    technical_specifications: d.technical_specifications ?? {},
+    main_functions: d.main_functions ?? [],
   }) },
   // Added 2026-08-03 (Phase 2 prep) -- these four collections are confirmed live via
   // frontend/src/api/apiClient.js's routeCollections and entities.js's KnowledgeBaseService

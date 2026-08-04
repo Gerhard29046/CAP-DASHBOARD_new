@@ -49,12 +49,50 @@ test("missing optional fields fall back to documented defaults, not undefined", 
     address: null, notes: null, is_active: true,
   });
   assert.deepEqual(entryFor("knowledge_machines").map({}), {
-    name: "", model: null, description: null,
+    manufacturer: null, model_name: null, variant: null, product_code: null,
+    category: null, summary: null, supported_refrigerants: [],
+    technical_specifications: {}, main_functions: [],
   });
   const jobCardLine = entryFor("job_card_lines").map({});
   assert.equal(jobCardLine.line_type, "Labour");
   assert.equal(jobCardLine.quantity, 1);
   assert.equal(jobCardLine._legacy_job_card_id, null);
+});
+
+test("knowledge_machines maps the real field set, not the original name/model/description guess (fixed 2026-08-04)", () => {
+  const { map } = entryFor("knowledge_machines");
+  const row = map({
+    manufacturer: "Wigam", model_name: "Optima", variant: "Pro", product_code: "OPT-100",
+    category: "AC Machine", summary: "Flagship unit.",
+    supported_refrigerants: ["R-134a", "R-1234yf"],
+    technical_specifications: { "Tank Capacity": "12kg" },
+    main_functions: ["Recovery", "Recycling"],
+  });
+  assert.equal(row.manufacturer, "Wigam");
+  assert.equal(row.model_name, "Optima");
+  assert.deepEqual(row.supported_refrigerants, ["R-134a", "R-1234yf"]);
+  assert.deepEqual(row.technical_specifications, { "Tank Capacity": "12kg" });
+  assert.deepEqual(row.main_functions, ["Recovery", "Recycling"]);
+  assert.ok(!("name" in row) && !("model" in row) && !("description" in row),
+    "old name/model/description fields should no longer be produced by this mapper");
+});
+
+test("date-typed fields coerce empty string to null, not a literal \"\" (fixed 2026-08-04 -- found via a live dry-run: 4 of 6 real machines docs have installation_date: \"\")", () => {
+  const machineRow = entryFor("machines").map({ installation_date: "", warranty_expiry: "" });
+  assert.equal(machineRow.installation_date, null);
+  assert.equal(machineRow.warranty_expiry, null);
+
+  const serviceRow = entryFor("service_records").map({ next_service_due: "", service_date: "" });
+  assert.equal(serviceRow.next_service_due, null);
+  assert.equal(serviceRow.service_date, null);
+
+  const jobCardRow = entryFor("job_cards").map({ date_completed: "", date_received: "" });
+  assert.equal(jobCardRow.date_completed, null);
+  assert.equal(jobCardRow.date_received, null);
+
+  // Real dates still pass through unchanged.
+  const withRealDate = entryFor("machines").map({ installation_date: "1995-04-05" });
+  assert.equal(withRealDate.installation_date, "1995-04-05");
 });
 
 test("job_cards maps job_number/date_received (added 2026-08-04 after a live dry-run spot-check found them missing)", () => {
@@ -79,7 +117,11 @@ test("stripLegacyMarkers removes every known marker key and never leaks one into
 });
 
 test("stripLegacyMarkers is a no-op on columns for entities with no legacy markers (e.g. knowledge_machines)", () => {
-  const mapped = entryFor("knowledge_machines").map({ name: "Compressor X" });
+  const mapped = entryFor("knowledge_machines").map({ manufacturer: "Wigam" });
   const { columns } = stripLegacyMarkers(mapped);
-  assert.deepEqual(columns, { name: "Compressor X", model: null, description: null });
+  assert.deepEqual(columns, {
+    manufacturer: "Wigam", model_name: null, variant: null, product_code: null,
+    category: null, summary: null, supported_refrigerants: [],
+    technical_specifications: {}, main_functions: [],
+  });
 });

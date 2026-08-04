@@ -1,6 +1,99 @@
 # Project State
-_Last verified: 2026-08-04 (live dry-run of the Firestore migration script performed; found
-and fixed a real job_cards schema gap — see below and SESSION_LOG.md)_
+_Last verified: 2026-08-04 (FIRST REAL WRITE to Postgres happened: clients + job_cards fully
+migrated and live-verified; machines/service_records/job_card_lines/knowledge_machines
+failed on NOT NULL FK constraints, fix written as 0012, not yet applied — see below and
+SESSION_LOG.md)_
+
+## Firebase -> Supabase migration — first real --apply, partial success, one more real bug found+fixed (2026-08-04)
+- User (about to step away) said "continue with the phases, I want the database to work
+  soon" and separately confirmed `0009`-`0011` applied "100% success." Verified live
+  (read-only) that all three migrations' new columns exist and are queryable before
+  attempting any write.
+- Ran the first-ever `--apply --phases=entities,relink,verify` against the real project.
+  **Note**: the harness's own permission classifier blocked this exact command (and even
+  the read-only `verify` phase) once earlier in the session — did not attempt to route
+  around it, reported it to the user, and it was not blocked on this later attempt.
+- **Result: partial success, verified via the read-only `verify` phase, not just the
+  script's own claims:**
+  - `clients`: 6/6 inserted. `job_cards`: 4/4 inserted, `client_id` FK relinked to the
+    real new client uuids for all 4. Both confirmed Firestore=Postgres via `verify`.
+  - `machines` (0/6), `service_records` (0/7), `job_card_lines` (0/3), `knowledge_machines`
+    (0/3): **every insert failed** with a Postgres `NOT NULL constraint` violation.
+    Confirmed via `verify` that all four tables are still at 0 rows — nothing partial or
+    corrupt was written, the inserts simply never committed.
+- **Root cause, a real design bug**: the script's two-phase pattern (Phase A inserts
+  entities with FK columns unset, Phase B `UPDATE`s them afterward via
+  `legacy_firestore_id`) only works if the FK column is nullable.
+  `job_cards.client_id`/`machine_id` already were (why job_cards succeeded first try);
+  `machines.client_id`, `service_records.machine_id`, `job_card_lines.job_card_id` were
+  not. Separately, `knowledge_machines.name` (the old vestigial pre-`0011` column) is
+  still `NOT NULL`, but the `0011`-rewritten mapper no longer supplies it at all.
+- Fixed via new `supabase/migrations/0012_nullable_fks_for_two_phase_insert.sql` — drops
+  `NOT NULL` on those 4 columns (does not weaken the FK `references` constraint itself,
+  only the nullability, matching the existing `job_cards` precedent). **Not yet applied**
+  — needs the user via the SQL Editor, same as every prior migration.
+- Once `0012` is applied, re-running `--apply --phases=entities,relink,verify` should
+  complete `machines`/`service_records`/`job_card_lines`/`knowledge_machines` — safe to
+  re-run since `clients`/`job_cards` already succeeded and re-running only affects the 4
+  tables still at 0 rows (no duplicate-insert risk for the two that already worked, since
+  those aren't re-attempted... **verify this assumption before re-running**: the script
+  does not currently check "already migrated" before inserting -- if `--only` isn't used
+  to scope the retry to just the 4 failed tables, re-running the full entities phase would
+  attempt to re-insert clients/job_cards too and likely hit unique-constraint errors on
+  `legacy_firestore_id`. Use `--only=machines,service_records,job_card_lines,
+  knowledge_machines` for the retry, not a bare re-run of everything.
+- Still not done: `users`/`storage` phases (need separate go-ahead per the runbook, not
+  attempted this round), any frontend wiring, any Firebase changes.
+
+## Firebase -> Supabase migration — full remaining-collections spot-check found 4 more real gaps (2026-08-04)
+- User chose "finish spot-checking the other 4 collections" over going straight to
+  `--apply`. Good call: dumped every real doc (not just the dry-run's one-sample-per-
+  collection summary) in `clients`/`machines`/`service_records`/`knowledge_machines` via
+  read-only temp scripts (deleted after use, no writes) and diffed the union of real field
+  names against what the mapper/schema actually capture.
+- **`clients`: clean, no gap.** Every field in the schema matches every field on all 6 real
+  docs exactly.
+- **`machines`: missing `warranty_expiry`.** Real, on all 6 docs (sometimes `""`), used by
+  `MachineForm.jsx`/`MachineDetail.jsx` (warranty-active/expiring logic). Fixed via
+  `supabase/migrations/0009_machines_warranty_expiry.sql`.
+- **`service_records`: missing `service_date`/`work_performed`/`findings`.** All three
+  real, confirmed via both actual creation forms (`LogServiceModal.jsx`, `ServiceForm.jsx`)
+  — `service_date` is required (submit disabled without it) in both. Fixed via
+  `supabase/migrations/0010_service_records_missing_fields.sql`.
+- **`knowledge_machines`: the schema was completely wrong**, not just missing a field.
+  `0001_initial_schema.sql` had `name`/`model`/`description`; the real field set (confirmed
+  on all 3 live docs AND `KnowledgeMachineForm.jsx`/`KnowledgeMachineDetail.jsx`) is
+  `manufacturer`/`model_name`/`variant`/`product_code`/`category`/`summary`/
+  `supported_refrigerants` (array)/`technical_specifications` (map)/`main_functions`
+  (array) — no overlap at all with the old columns. Migrating against the old schema would
+  have silently blanked every real knowledge-base entry. Fixed via
+  `supabase/migrations/0011_knowledge_machines_real_fields.sql` (adds the real columns,
+  does NOT drop the old vestigial ones — a separate, more invasive decision left for
+  later) and a full rewrite of that mapper entry.
+- **Separately, and more severe in a different way: found a latent bug that would have
+  hard-failed `--apply` regardless of the above.** `?? null` does not catch empty strings,
+  and date-typed fields come through Firestore as `""` (not absent) when a date `<input>`
+  is left blank — confirmed live: 4 of 6 real `machines` docs have
+  `installation_date: ""`. Inserting `""` into a Postgres `date` column errors. Fixed
+  defensively across every date field in the mapper (not just the one proven broken today)
+  via a new `toDateOrNull()` helper in `entityMappings.mjs`.
+- Added tests for every fix (`entityMappings.test.mjs` now 10/10, was 8/8) and updated two
+  existing tests whose fixtures assumed the old (wrong) `knowledge_machines` shape.
+- Verified: full dry run re-run against real Firestore data after all fixes —
+  `knowledge_machines` sample now shows real fields, all date fields show `null` instead
+  of `""` where blank, `job_cards` still correct from the earlier fix. `npm test` 10/10,
+  `node --check` on both changed files clean.
+- **Migrations `0009`/`0010`/`0011` have NOT been applied to the real project yet** —
+  needs the user to run them via the SQL Editor, same as `0001`-`0008`.
+- Not investigated further this round (flagged, not fixed, since 0 real rows exist for any
+  of them right now — no data-loss risk yet): while checking `knowledge_machines`,
+  `KnowledgeMachineDetail.jsx` revealed real field-name mismatches in the 4 sub-collections
+  too — `knowledge_notes` uses `content`, not `body`; `knowledge_media`/
+  `knowledge_documents` store an uploaded `file_url` (a full download URL from
+  `UploadFile`), not a `storage_path`, plus an `original_filename` the schema doesn't
+  capture; `knowledge_service_codes` has a `function_name` field the schema doesn't have
+  at all. See KNOWN_ISSUES.md — fix before these tables ever hold real data, not urgent
+  today.
 
 ## Firebase -> Supabase migration — first live dry-run, found+fixed a real job_cards schema gap (2026-08-04)
 - User provided Firebase Admin credentials: a service-account JSON key at
