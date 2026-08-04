@@ -1,7 +1,35 @@
 # Project State
-_Last verified: 2026-08-03 (Firebase -> Supabase migration: 0001 confirmed executed by the
-user, 0002-0005 in progress; Phase 2 prep work done ahead of that finishing — see below and
-SESSION_LOG.md)_
+_Last verified: 2026-08-04 (pulled overnight work from origin/main, re-verified on a clone
+with real env vars, fixed one real bug — see below and SESSION_LOG.md)_
+
+## Firebase -> Supabase migration — pulled overnight work, verified, fixed a private-bucket URL bug (2026-08-04)
+- Pulled commit `009ad93` from `origin/main` (work done on another clone overnight):
+  migrations `0006`/`0007` (both confirmed applied to the real project), live smoke test
+  18/18 passing across 4 permission namespaces, `frontend/src/api/supabaseApiClient.js`
+  (unwired), `docs/migration/PHASE2_CUTOVER_CHECKLIST.md`, an expanded (still unexecuted)
+  migration script with a unit-tested `entityMappings.mjs` and a read-only `verify` phase.
+- Did not take the commit message/memory notes at face value — re-verified independently
+  on this machine (which has real `frontend/.env`/`supabase/.env`, unlike the clone that
+  produced this commit, closing a gap it had flagged): `frontend` lint/typecheck/build/
+  test all clean; `supabase` deps install, its new unit tests pass (7/7), all 3 scripts
+  `node --check` clean; read `0006`/`0007` SQL directly and confirmed both are sound (the
+  `0007` trigger fix doesn't open an anonymous-escalation path, since RLS's own `USING`
+  clause already blocks unauthenticated updates before the trigger runs).
+- **Found and fixed a real bug** reviewing `supabaseApiClient.js`:
+  `integrations.Core.UploadFile` called `getPublicUrl()` on the `documents` bucket, but
+  `0004_storage_buckets.sql` makes every bucket private (`public: false`) — that URL
+  shape 400/403s on a private bucket. Fixed to use `getSignedUrl()` (7-day expiry)
+  instead, matching every other private-bucket read path. Flagged a related but separate
+  design gap inline (not fixed, no caller exists yet to need it): a signed URL expires,
+  unlike Firebase's effectively-permanent `getDownloadURL()` token — whoever wires this
+  route to a real feature should re-sign on read rather than persist `file_url` long-term.
+  Verified via `frontend` lint/typecheck/build/test after the fix.
+- Repo hygiene: same recurring Ruflo/Claude-Flow tooling-artifact pattern noted before
+  (`supabase/.claude/` duplicate cache dir, `supabase/updatePassword(newPassword)` —
+  lifted verbatim from a code comment just written) — removed both, not application code.
+- Still blocked exactly as before: migration script not executed (Firebase Admin
+  credentials still not provided), `0001`-`0007` not touched further, checklist's open
+  `[decision]` items not yet resolved by the user.
 
 ## Firebase -> Supabase migration — RLS coverage expanded, full cutover checklist written (2026-08-03)
 - User approved continuing Phase 2 prep with hard constraints: Supabase work only, behind

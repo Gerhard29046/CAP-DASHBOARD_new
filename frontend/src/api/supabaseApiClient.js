@@ -4,7 +4,7 @@ import {
   ClientService, MachineService, ServiceRecordService, JobCardService, JobCardLineService,
   SiteService, UserService, PermissionService, RolePermissionService, KnowledgeBaseService,
 } from "@/services/supabase/entities";
-import { uploadFile } from "@/services/supabase/storage";
+import { getSignedUrl, uploadFile } from "@/services/supabase/storage";
 import { requestPasswordReset as supabaseRequestPasswordReset, updatePassword, signOut as supabaseSignOut, loadUserProfile } from "@/services/supabase/auth";
 import { optimizeImageForUpload } from "@/lib/imageOptimize";
 import { callFunction } from "@/api/functionsClient";
@@ -328,9 +328,24 @@ export const supabaseApiClient = {
         // dedicated permission/feature exists yet for this specific route -- see
         // 0004_storage_buckets.sql's comments). Revisit once a real caller/feature for
         // this route is identified.
+        //
+        // BUG FIX (2026-08-04): this previously called getPublicUrl() on a bucket that
+        // 0004_storage_buckets.sql creates with `public: false` -- that returns a URL
+        // that 400/403s when actually fetched, since Supabase only serves that URL shape
+        // for genuinely public buckets. Switched to a signed URL instead, matching every
+        // other private-bucket read path in this codebase.
+        //
+        // KNOWN LIMITATION, not fixed here (narrower than the bug above): Firebase's
+        // getDownloadURL() (apiClient.js's equivalent) returns an effectively permanent
+        // token URL that's safe to store in a record and reuse indefinitely. A Supabase
+        // signed URL expires (7 days below) -- if a caller persists this `file_url` value
+        // for long-term reuse rather than displaying it immediately, it will eventually
+        // stop working. Whoever wires this route to a real page/field should either
+        // re-sign on read instead of storing the URL, or store `path` and generate a fresh
+        // signed URL each time it's needed. Not solved here since no caller exists yet.
         await uploadFile("documents", path, optimizedFile, { optimizeImage: false });
-        const { data } = supabase.storage.from("documents").getPublicUrl(path);
-        return { file_url: data.publicUrl };
+        const fileUrl = await getSignedUrl("documents", path, 60 * 60 * 24 * 7);
+        return { file_url: fileUrl };
       },
     },
   },
