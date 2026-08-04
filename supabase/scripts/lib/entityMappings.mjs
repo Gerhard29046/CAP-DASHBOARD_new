@@ -28,6 +28,11 @@ export const ENTITY_COLLECTIONS = [
     status: d.status ?? "Open", fault_description: d.fault_description ?? null,
     technician_name: d.technician_name ?? null, technician_notes: d.technician_notes ?? null,
     arrival_condition: d.arrival_condition ?? null, date_completed: d.date_completed ?? null,
+    // Added 2026-08-04: found missing during a live dry-run spot-check (see
+    // supabase/migrations/0008_job_cards_missing_fields.sql) -- confirmed present on all 4
+    // real job_cards docs and actively used by BookIn.jsx/JobCardDetail.jsx/Jobs.jsx/
+    // InvoiceQueue.jsx/MachineDetail.jsx, not test-only fields.
+    job_number: d.job_number ?? null, date_received: d.date_received ?? null,
     _legacy_client_id: d.client_id != null ? String(d.client_id) : null,
     _legacy_machine_id: d.machine_id != null ? String(d.machine_id) : null,
   }) },

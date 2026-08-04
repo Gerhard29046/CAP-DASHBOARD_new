@@ -57,6 +57,16 @@ test("missing optional fields fall back to documented defaults, not undefined", 
   assert.equal(jobCardLine._legacy_job_card_id, null);
 });
 
+test("job_cards maps job_number/date_received (added 2026-08-04 after a live dry-run spot-check found them missing)", () => {
+  const { map } = entryFor("job_cards");
+  const row = map({ job_number: "JOB-314551", date_received: "2026-07-22" });
+  assert.equal(row.job_number, "JOB-314551");
+  assert.equal(row.date_received, "2026-07-22");
+  const empty = map({});
+  assert.equal(empty.job_number, null);
+  assert.equal(empty.date_received, null);
+});
+
 test("stripLegacyMarkers removes every known marker key and never leaks one into columns", () => {
   const mapped = entryFor("job_cards").map({ client_id: "c1", machine_id: "m1" });
   const { columns, legacy } = stripLegacyMarkers(mapped);

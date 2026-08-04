@@ -20,12 +20,15 @@
 //   2. Supabase service_role key: already stored in ../.env as SUPABASE_SERVICE_ROLE_KEY
 //      (gitignored, server-side only).
 //
-// Prerequisite: supabase/migrations/0001-0006 must already be applied (run manually by
+// Prerequisite: supabase/migrations/0001-0008 must already be applied (run manually by
 // the user via the SQL Editor) before this script's --apply mode can do anything useful;
 // dry-run mode only needs Firestore read access and works regardless. 0006 specifically
 // (added 2026-08-03, Phase 2 prep) adds legacy_firestore_id to the four knowledge_* tables
 // below that 0003 originally missed -- without it, the users-phase relink of
-// knowledge_notes.created_by will fail with an unknown-column error.
+// knowledge_notes.created_by will fail with an unknown-column error. 0008 (added
+// 2026-08-04) adds job_cards.job_number/date_received, found missing during a live
+// dry-run spot-check -- without it, --apply would silently drop both fields for every job
+// card.
 //
 // Phases (run in order, each gated by --apply for its writes):
 //   A. entities  - import clients/machines/service_records/job_cards/job_card_lines/
@@ -86,6 +89,15 @@ const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || fileE
 const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || fileEnv.FIREBASE_PROJECT_ID || "capdatabasefb2";
 const FIRESTORE_DATABASE_ID = process.env.FIRESTORE_DATABASE_ID || fileEnv.FIRESTORE_DATABASE_ID || "capdashboard";
 const FIREBASE_STORAGE_BUCKET = process.env.FIREBASE_STORAGE_BUCKET || fileEnv.FIREBASE_STORAGE_BUCKET || `${FIREBASE_PROJECT_ID}.firebasestorage.app`;
+
+// google-auth-library (used internally by firebase-admin) reads this directly from
+// process.env, not from anything we pass to admin.initializeApp() -- so if it's only in
+// supabase/.env (not already exported in the shell), copy it across before firebase-admin
+// looks for it. Lets GOOGLE_APPLICATION_CREDENTIALS live in the same gitignored .env file
+// as the Supabase keys instead of needing `export`ing by hand every run.
+if (!process.env.GOOGLE_APPLICATION_CREDENTIALS && fileEnv.GOOGLE_APPLICATION_CREDENTIALS) {
+  process.env.GOOGLE_APPLICATION_CREDENTIALS = fileEnv.GOOGLE_APPLICATION_CREDENTIALS;
+}
 
 const args = process.argv.slice(2);
 const APPLY = args.includes("--apply");

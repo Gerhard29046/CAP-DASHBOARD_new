@@ -1,5 +1,18 @@
 # Known Issues
 
+## `job_cards` missing `job_number`/`date_received` columns — fixed in code, NOT yet applied (2026-08-04)
+- Found via a live dry-run spot-check: `0001_initial_schema.sql` never gave `job_cards`
+  columns for `job_number`/`date_received`, both of which are real, universally-populated
+  fields (confirmed on all 4 real docs) actively used by `BookIn.jsx`, `JobCardDetail.jsx`,
+  `Jobs.jsx`, `InvoiceQueue.jsx`, `MachineDetail.jsx`. Fixed via new
+  `supabase/migrations/0008_job_cards_missing_fields.sql` and an updated
+  `supabase/scripts/lib/entityMappings.mjs` job_cards mapper (unit-tested, 8/8 pass).
+- **`0008` has not been run against the real `CAPDATABASE` project yet** — needs the user
+  to apply it via the SQL Editor before any real `--apply` of the migration script's
+  `entities`/`relink` phases, or every job card will migrate with a null job number and
+  received date (the columns now exist in the mapper's output, but not in the live table
+  until this migration runs).
+
 ## `restrict_self_user_update` trigger blocked service_role writes to role/permissions — FIXED, applied (2026-08-03)
 - Found by running `supabase/scripts/smoke-test.mjs` live against the real project:
   granting a test user a permission via the **service_role** client (bypasses RLS by

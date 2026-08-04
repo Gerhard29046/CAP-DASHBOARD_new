@@ -1,6 +1,52 @@
 # Project State
-_Last verified: 2026-08-04 (pulled overnight work from origin/main, re-verified on a clone
-with real env vars, fixed one real bug — see below and SESSION_LOG.md)_
+_Last verified: 2026-08-04 (live dry-run of the Firestore migration script performed; found
+and fixed a real job_cards schema gap — see below and SESSION_LOG.md)_
+
+## Firebase -> Supabase migration — first live dry-run, found+fixed a real job_cards schema gap (2026-08-04)
+- User provided Firebase Admin credentials: a service-account JSON key at
+  `C:\Users\Gerhard\Documents\cap database firebase files\capdatabasefb2-firebase-adminsdk-fbsvc-2193141cfc.json`
+  (verified structurally — `type`/`project_id`/`client_email` checked, `private_key`
+  presence confirmed — without ever printing the key itself into this session). Left in
+  place outside the repo on purpose; referenced via `GOOGLE_APPLICATION_CREDENTIALS` in
+  `supabase/.env` (gitignored). `migrate-firestore-to-postgres.mjs` updated to copy that
+  var into `process.env` from the `.env` file if not already exported, since
+  google-auth-library reads it directly from `process.env`, not from anything passed to
+  `admin.initializeApp()`.
+- Ran the **first-ever dry run** of the migration script (all 5 phases, read-only,
+  writes nothing) against the real, live Firestore data. Real counts: 6 clients, 6
+  machines, 7 service_records, 4 job_cards, 3 job_card_lines, 3 knowledge_machines, 0 in
+  the other 4 knowledge_* collections, 1 user (`admin@connoisseurauto.co.za`, role
+  `admin`). `verify` phase correctly reported mismatches against the still-empty Postgres
+  tables (expected — nothing written yet, this is the verify phase working correctly).
+- Per the checklist's "spot-check a handful of real records" step, inspected two flagged
+  records directly against raw Firestore (temp read-only scripts, deleted after use, no
+  writes): one `job_card_lines` doc came back with `line_total: 0` in the dry-run
+  sample. Direct inspection showed the raw Firestore doc has **no** `line_type`/
+  `line_total` field at all — confirmed via `frontend/src/pages/JobCardDetail.jsx`'s
+  `handleAddLine()` that the real UI has always written both on every create, so this is
+  an old/synthetic record (job number prefixed `JOB-CODEX-E2E-...`, i.e. from an automated
+  test harness), not a live schema gap — Postgres's existing column defaults
+  (`'Labour'`/`0` from `0001`) handle it correctly. No fix needed here.
+- **Found a real, universal gap while checking the parent job card**: `job_cards` docs
+  have `job_number` and `date_received` fields that `0001_initial_schema.sql` never gave
+  Postgres columns for. Confirmed via a direct read of all 4 real `job_cards` docs that
+  every one has both fields populated (not test-only), and via grep that they're actively
+  read/written by `BookIn.jsx`, `JobCardDetail.jsx`, `Jobs.jsx`, `InvoiceQueue.jsx`, and
+  `MachineDetail.jsx` (including `BookIn.jsx`'s default sort `"-date_received"`). Without
+  this fix, every real job card would have silently lost its job number and received date
+  during migration. Fixed via new `supabase/migrations/0008_job_cards_missing_fields.sql`
+  (adds both columns + indexes) and updated `supabase/scripts/lib/entityMappings.mjs`'s
+  `job_cards` mapper to include them. Added a new unit test covering this in
+  `entityMappings.test.mjs` (8/8 pass now, was 7/7).
+- Verified: `cd supabase && npm test` 8/8 pass; `node --check` on all 3 scripts; re-ran
+  the dry run scoped to `job_cards` after the fix — `job_number`/`date_received` now
+  appear correctly in the mapped sample row. `frontend` lint/typecheck unaffected (no
+  frontend files touched this round).
+- **`0008` has NOT been applied to the real Supabase project yet** — needs the user to
+  run it via the SQL Editor, same as `0001`-`0007`, before any real `--apply` of the
+  `job_cards` phase.
+- Still did NOT: run `--apply` (still needs its own explicit go-ahead per the runbook);
+  touch `frontend/`/`AuthContext.jsx`/`apiClient.js`/`App.jsx`; touch Android.
 
 ## Firebase -> Supabase migration — pulled overnight work, verified, fixed a private-bucket URL bug (2026-08-04)
 - Pulled commit `009ad93` from `origin/main` (work done on another clone overnight):
