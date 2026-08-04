@@ -1,8 +1,46 @@
 # Project State
-_Last verified: 2026-08-04 (FIRST REAL WRITE to Postgres happened: clients + job_cards fully
-migrated and live-verified; machines/service_records/job_card_lines/knowledge_machines
-failed on NOT NULL FK constraints, fix written as 0012, not yet applied — see below and
+_Last verified: 2026-08-04 (entities + relink phases FULLY COMPLETE and content-verified
+against the real Supabase project — all 10 collections match Firestore counts exactly, FK
+relinking confirmed correct by tracing actual IDs, not just counts. See below and
 SESSION_LOG.md)_
+
+## Firebase -> Supabase migration — entities + relink phases complete, content-verified (2026-08-04)
+- User confirmed `0012` applied "100% success." Verified live via a throwaway probe
+  insert (immediately deleted) that `machines.client_id` is now nullable before retrying
+  anything.
+- Retried `--apply --phases=entities,relink,verify --only=machines,service_records,
+  job_card_lines,knowledge_machines` (scoped deliberately to avoid re-inserting the
+  already-successful `clients`/`job_cards` from the prior partial run). **All 4 succeeded
+  this time**: machines 6/6, service_records 7/7, job_card_lines 3/3, knowledge_machines
+  3/3. The relink pass also self-healed `job_cards.machine_id` (0/4 the first time,
+  since `machines` didn't exist yet; 4/4 now that it does).
+- Ran a full `--phases=verify`: **all 10 collections match Firestore counts exactly**,
+  including the 4 always-empty knowledge_* sub-collections (0=0, correctly not a
+  mismatch).
+- Went one step further than count-matching: pulled real rows back from Postgres by
+  `legacy_firestore_id` and checked actual content, not just counts —
+  a real (non-test) machine's `client_id` traced correctly to its real client
+  (`company_name: "abc 123"`); a real service record's `work_performed` text matches the
+  original Firestore doc verbatim; a real job card's `client_id` AND `machine_id` both
+  correctly relinked, with `machine_id` matching the exact machine verified moments
+  earlier. This is genuine content verification, not just row-count matching.
+- **Current real state of the live Supabase project**: `clients`, `machines`,
+  `service_records`, `job_cards`, `job_card_lines`, `knowledge_machines` all fully
+  migrated and correctly cross-linked. `knowledge_notes`/`knowledge_service_codes`/
+  `knowledge_media`/`knowledge_documents` still correctly empty (no real Firestore data
+  exists for them — not a gap). `users` phase and `storage` phase have NOT been run
+  (each needs its own separate go-ahead per the runbook — not attempted this round).
+  Firebase remains completely unmodified and is still the only live-serving backend;
+  nothing in `frontend/`/`mobile-android/` has been touched.
+- User is moving to work from a different machine ("home") next. **Important portability
+  note, not yet resolved**: `supabase/.env` (Supabase keys) and the Firebase
+  service-account JSON key (`GOOGLE_APPLICATION_CREDENTIALS`, currently at
+  `C:\Users\Gerhard\Documents\cap database firebase files\...json` on this machine) are
+  both gitignored/local-only by design and will NOT travel via `git clone`/`git pull` to
+  the home machine. Continuing the migration script from home requires recreating both
+  there (same values) before any further `--apply`/`--phases=verify` run works. Purely
+  documentation/code work (which is everything else in this repo) is unaffected and
+  works immediately after a clone.
 
 ## Firebase -> Supabase migration — first real --apply, partial success, one more real bug found+fixed (2026-08-04)
 - User (about to step away) said "continue with the phases, I want the database to work

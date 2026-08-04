@@ -39,16 +39,41 @@
     rollback plan, verification checklist. Surfaces open decisions (Android timing, `sites`
     migration source, staging target, generic-bucket permission tightening) and a real gap
     (no password-reset-email delivery script yet, no incremental-sync capability).
-  - Next: resolve the open decisions/gaps listed in that document's section 1 before
-    scheduling an actual cutover date. Frontend wiring (flag + `App.jsx`/`apiClient` swap)
-    and Android parity are both explicitly deferred pending separate approval — not
-    started. Firebase Admin credentials for a real Firestore migration dry run still not
-    provided (user has said not to run it this session regardless).
-  - Blocked on user decision (Phase 2, destructive/irreversible): actual cutover of
-    `AuthContext.jsx`/`apiClient.js` to Supabase, real user/data migration, Firebase
-    removal, Android update. Do not start without explicit go-ahead per CLAUDE.md
-    section 12 AND without the user's confirmation that `0001`-`0005` succeeded — see the
-    Phase 2 runbook in DECISIONS.md for the ordered, individually-gated steps.
+  - Done (2026-08-04): user provided Firebase Admin credentials. First-ever live dry run
+    of the migration script against real Firestore data. Full spot-check of every real
+    doc (not just dry-run samples) in all 6 non-empty collections found and fixed 5 more
+    real gaps beyond `job_number`/`date_received` (see KNOWN_ISSUES.md/DECISIONS.md for
+    detail): `machines.warranty_expiry`; `service_records.service_date`/
+    `work_performed`/`findings`; `knowledge_machines`'s entire schema was wrong (real
+    fields are manufacturer/model_name/variant/product_code/category/summary/
+    supported_refrigerants/technical_specifications/main_functions); a date
+    empty-string-vs-null bug across multiple tables; and NOT NULL FK constraints that
+    blocked the script's insert-then-relink pattern for `machines`/`service_records`/
+    `job_card_lines`/`knowledge_machines`. Migrations `0008`-`0012` written, applied by
+    the user, and live-verified.
+  - **Done (2026-08-04): entities + relink phases fully complete.** All 10 collections
+    (`clients`, `machines`, `service_records`, `job_cards`, `job_card_lines`,
+    `knowledge_machines`, and the 4 correctly-still-empty `knowledge_*` sub-collections)
+    migrated and `verify`-confirmed to match Firestore counts exactly. Went beyond
+    count-matching: spot-checked real row content and FK relinking by tracing actual IDs
+    through Postgres — confirmed correct, not just counted. This is real production data
+    now living in Supabase, alongside (not instead of) Firebase, which remains the only
+    live-serving backend.
+  - Next: `users` phase (creates real Supabase Auth accounts — needs separate
+    explicit go-ahead, and a password-reset-email delivery step doesn't exist yet, see
+    `docs/migration/PHASE2_CUTOVER_CHECKLIST.md` section 1) and `storage` phase (copies
+    real files — also needs separate go-ahead). Then resolve the checklist's other open
+    decisions (Android timing, `sites` migration source, staging target, generic-bucket
+    permissions) before frontend wiring or any cutover date.
+  - **Portability note**: user is switching to a different machine. The migration
+    tooling's local secrets (`supabase/.env`, the Firebase service-account key file) are
+    gitignored and won't travel via git — see KNOWN_ISSUES.md. Everything else in this
+    repo (schema, docs, code) works immediately after a clone on any machine.
+  - Blocked on user decision (Phase 2 remainder, destructive/irreversible): `users`/
+    `storage` phases, actual cutover of `AuthContext.jsx`/`apiClient.js` to Supabase,
+    Firebase removal, Android update. Do not start without explicit go-ahead per
+    CLAUDE.md section 12 — see the Phase 2 runbook in DECISIONS.md for the ordered,
+    individually-gated steps.
 - Android "Connection and Sync Status" feature (per `.claude/agents/android-ui-bee.md`
   and `integration-sync-bee.md`):
   - Done: `StatusRepository`, `ConnectionStatus` enum, and connection-state derivation

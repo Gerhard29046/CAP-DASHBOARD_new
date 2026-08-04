@@ -1,5 +1,63 @@
 # Session Log
 
+## 2026-08-04 — First real Postgres writes: entities + relink phases fully complete and content-verified
+- Objective: continue the Firestore->Postgres migration with real data, following the
+  Phase 2 runbook. Started with "check that job_card_lines record" (a spot-check request)
+  which snowballed into a full audit that found and fixed 5 real schema gaps before any
+  real data was migrated.
+- Sequence of events:
+  1. User provided Firebase Admin credentials (a service-account JSON key, kept outside
+     the repo, referenced via gitignored `supabase/.env`). Ran the first-ever dry run —
+     real Firestore data, zero writes.
+  2. User asked to check a specific `job_card_lines` record with `line_total: 0`. Direct
+     inspection showed it was an old/synthetic test record (no bug there), but checking
+     its parent job card surfaced a real, universal gap: `job_cards.job_number`/
+     `date_received` had no Postgres columns at all despite being real, actively-used
+     fields. Fixed via `0008` + mapper update, user applied and I verified live.
+  3. User chose to finish spot-checking the other 4 non-empty collections rather than go
+     straight to `--apply`. Good call — found 4 more real issues: `machines` missing
+     `warranty_expiry`; `service_records` missing `service_date`/`work_performed`/
+     `findings`; `knowledge_machines`'s entire schema was wrong (real fields don't
+     overlap at all with the original name/model/description guess); and a latent
+     date-empty-string-vs-null bug that would have hard-failed `--apply` regardless.
+     Fixed via `0009`-`0011` + mapper rewrite, 10/10 unit tests, user applied.
+  4. User said they were stepping away and to "continue with the phases." Attempted the
+     first real `--apply` — this tool's own permission classifier blocked it (and even
+     the read-only `verify` phase) once; did not attempt to route around it, reported it
+     clearly. On a later attempt (after the user returned) it was not blocked.
+  5. First real `--apply --phases=entities,relink,verify` (no `--only`): `clients` (6/6)
+     and `job_cards` (4/4) succeeded; `machines`/`service_records`/`job_card_lines`/
+     `knowledge_machines` all failed with `NOT NULL` constraint violations (a real design
+     bug — the script's insert-then-relink pattern needs nullable FK columns, and 3 of
+     these weren't, plus `knowledge_machines.name`'s NOT NULL was never relaxed after
+     `0011` stopped supplying it). Confirmed via `verify` that nothing partial/corrupt
+     was written — the 4 failed tables were still at 0 rows.
+  6. Fixed via `0012` (drops NOT NULL on 4 columns, keeps the FK `references` check
+     itself). User applied it, confirmed via a throwaway probe insert (immediately
+     deleted) that it was live, then retried scoped to
+     `--only=machines,service_records,job_card_lines,knowledge_machines` — deliberately
+     excluding the already-successful tables to avoid a duplicate-key retry error.
+  7. **All 4 succeeded.** Full `--phases=verify`: all 10 collections match Firestore
+     counts exactly. Went further than count-matching — pulled real rows back by
+     `legacy_firestore_id` and confirmed actual content and FK relinking are correct
+     (a real machine's `client_id` traces to the right client; a job card's `client_id`
+     AND `machine_id` both correctly relinked; text fields match verbatim).
+- Files changed: `supabase/migrations/0008`-`0012` (new), `supabase/scripts/lib/
+  entityMappings.{mjs,test.mjs}` (rewritten mapper entries + new tests, 10/10 pass),
+  `supabase/scripts/migrate-firestore-to-postgres.mjs` (credential-loading, comment
+  updates), `docs/ai-memory/{PROJECT_STATE,KNOWN_ISSUES,ROADMAP}.md`.
+- Verification: every fix unit-tested before being applied; every live claim
+  independently re-verified via read-only checks or content spot-checks, not taken from
+  the script's own success/failure output alone. `frontend` lint/typecheck unaffected
+  (no frontend files touched this session).
+- Result: real production data (clients/machines/service_records/job_cards/
+  job_card_lines/knowledge_machines) now lives correctly in Supabase, fully cross-linked,
+  alongside Firebase (untouched, still the only live-serving backend).
+- Remaining: `users`/`storage` phases (each needs separate go-ahead), the checklist's
+  open decisions, then frontend wiring — none started. User moving to a different
+  machine next; flagged that `supabase/.env` and the Firebase service-account key won't
+  travel via git and must be recreated there before the migration script works again.
+
 ## 2026-08-03 (cont. 7) — RLS coverage expanded to 4 tables (18/18); full cutover checklist written; pushed to origin
 - Objective: user approved continuing Phase 2 prep with hard constraints (Supabase-only,
   behind feature flags not yet wired, Firebase stays active, no migration/auth-switch/

@@ -1,6 +1,23 @@
 # Known Issues
 
-## First real `--apply` partially failed on NOT NULL FK constraints — FIXED via 0012, NOT yet applied (2026-08-04)
+## Supabase migration tooling won't work from a new machine without recreating local secrets (2026-08-04)
+- `supabase/.env` (Supabase URL/anon/service_role keys + `GOOGLE_APPLICATION_CREDENTIALS`
+  path) is gitignored by design and does not travel via `git clone`/`git pull`. The
+  Firebase service-account JSON key it points to also lives outside the repo entirely
+  (`C:\Users\Gerhard\Documents\cap database firebase files\...json` on the machine used
+  this session) and isn't tracked anywhere.
+- User is switching to a different machine ("home"). Before any further
+  `migrate-firestore-to-postgres.mjs` run (even read-only `--phases=verify`) works there,
+  both need recreating: `supabase/.env` with the same 3 values (see
+  `supabase/.env.example` for the exact keys expected), and the Firebase service-account
+  JSON key placed somewhere on that machine with `GOOGLE_APPLICATION_CREDENTIALS` in
+  `supabase/.env` pointed at it. `frontend/.env` (Firebase + Supabase client keys) is a
+  separate, also-gitignored file with the same portability gap for anything needing
+  `npm run dev`/`build` on the new machine.
+- Not a blocker for anything else — all code/schema/docs work in this repo is unaffected
+  and available immediately after a clone, on any machine.
+
+## First real `--apply` partially failed on NOT NULL FK constraints — FIXED via 0012, applied and content-verified live (2026-08-04)
 - `0009`/`0010`/`0011` confirmed applied ("100% success" per user) and live-verified
   (columns queryable) before attempting the first real `--apply --phases=entities,relink,
   verify`. Result, confirmed via the read-only `verify` phase (not just script output):
@@ -13,11 +30,15 @@
   three FK columns weren't. `knowledge_machines.name` (pre-`0011` vestigial column) is
   separately still `NOT NULL` despite the `0011` mapper no longer supplying it.
 - Fixed via `supabase/migrations/0012_nullable_fks_for_two_phase_insert.sql` (drops NOT
-  NULL on 4 columns; does not weaken the FK `references` constraint itself). **Not yet
-  applied to the real project.**
-- **Important for the retry**: once `0012` is applied, re-run with
+  NULL on 4 columns; does not weaken the FK `references` constraint itself). **User
+  applied `0012` ("100% success"); retried the write scoped to the 4 failed tables only
+  — all 4 succeeded. Full `--phases=verify` across all 10 collections: all match. Content
+  spot-checked (not just counts) by tracing real IDs through Postgres — correct.** This
+  issue is now fully resolved, not just fixed-in-code.
+- **What mattered for the retry** (worth remembering for any future partial-failure
+  retry): re-ran scoped to
   `--only=machines,service_records,job_card_lines,knowledge_machines` — NOT a bare
-  `--apply --phases=entities,relink,verify` with no `--only`, which would try to
+  `--apply --phases=entities,relink,verify` with no `--only`, which would have tried to
   re-insert the already-successful `clients`/`job_cards` rows and likely hit a
   `legacy_firestore_id` unique-constraint error. The script does not currently check
   "already migrated" before inserting.
