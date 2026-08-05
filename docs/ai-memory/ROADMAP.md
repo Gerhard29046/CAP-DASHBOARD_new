@@ -74,6 +74,27 @@
     Firebase removal, Android update. Do not start without explicit go-ahead per
     CLAUDE.md section 12 — see the Phase 2 runbook in DECISIONS.md for the ordered,
     individually-gated steps.
+  - Done (2026-08-05, prep continued, no live writes): closed the deferred
+    `knowledge_notes`/`knowledge_service_codes`/`knowledge_media`/`knowledge_documents`
+    schema gap (new `0013` migration, not yet applied) and a second, independent
+    storage-copy bug in the migration script's Phase D (new unit-tested
+    `firebaseStorageUrl.mjs` helper). Wrote `docs/migration/FIREBASE_DEPENDENCIES.md` (full
+    Firebase touchpoint inventory) — surfaced a real, previously-undocumented gap: Google
+    Calendar's Cloud Functions auth is Firebase-ID-token-specific and will break on an Auth
+    cutover unless redesigned (not yet scoped). Refreshed
+    `docs/migration/PHASE2_CUTOVER_CHECKLIST.md` to current status. See
+    `docs/ai-memory/PROJECT_STATE.md`/`DECISIONS.md` 2026-08-05 entries for full detail.
+  - Done (2026-08-05, same day, design only): Google Calendar authentication redesign —
+    `docs/migration/GOOGLE_CALENDAR_AUTH_REDESIGN.md` recommends issuer-routed dual JWT
+    verification in `functions/lib/auth.js` (Firebase branch unchanged, new Supabase branch
+    via `supabase.auth.getUser()` + service-role Postgres permission lookup, identical
+    return shape, zero call-site changes). Added as a new blocking prerequisite (step 3.0)
+    before `PHASE2_CUTOVER_CHECKLIST.md` step 3.1 (`SupabaseAuthProvider` wiring). Nothing
+    implemented in `functions/`/`frontend/` yet — implementation + deploy are separate,
+    still-gated next steps.
+  - Next: implement + deploy the Google Calendar auth redesign (needs its own approval for
+    the Functions deploy); user applies `0013` via the SQL Editor; then the same
+    `users`/`storage` phase go-aheads as before, still blocked pending explicit approval.
 - Android "Connection and Sync Status" feature (per `.claude/agents/android-ui-bee.md`
   and `integration-sync-bee.md`):
   - Done: `StatusRepository`, `ConnectionStatus` enum, and connection-state derivation

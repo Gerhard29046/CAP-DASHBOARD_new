@@ -85,20 +85,33 @@ export const ENTITY_COLLECTIONS = [
   // against a nonexistent legacy_firestore_id column. See
   // supabase/migrations/0006_knowledge_legacy_ids.sql for the column that makes the
   // relink possible.
+  //
+  // Field names corrected 2026-08-05 (see supabase/migrations/
+  // 0013_knowledge_subcollections_real_fields.sql): the original mapping below guessed
+  // `body`/`code`/`storage_path`, but frontend/src/pages/KnowledgeMachineDetail.jsx (the
+  // only real reader/writer of these four tables) confirms the actual Firestore field
+  // names are `content`/`service_code`/`file_url`, plus `note_type`/`function_name`/
+  // `original_filename`/`title` which weren't mapped at all. Deferred fixing this until
+  // now specifically because these four collections had zero real documents in every dry
+  // run so far -- no data was at risk, but the mapping would have been wrong the moment
+  // any real content was added.
   { collection: "knowledge_notes", table: "knowledge_notes", map: (d) => ({
-    title: d.title ?? null, body: d.body ?? null,
+    title: d.title ?? null, content: d.content ?? null, note_type: d.note_type ?? null,
     _legacy_knowledge_machine_id: d.knowledge_machine_id != null ? String(d.knowledge_machine_id) : null,
   }) },
   { collection: "knowledge_service_codes", table: "knowledge_service_codes", map: (d) => ({
-    code: d.code ?? "", description: d.description ?? null,
+    service_code: d.service_code ?? "", function_name: d.function_name ?? null,
+    description: d.description ?? null,
     _legacy_knowledge_machine_id: d.knowledge_machine_id != null ? String(d.knowledge_machine_id) : null,
   }) },
   { collection: "knowledge_media", table: "knowledge_media", map: (d) => ({
-    storage_path: d.storage_path ?? "", caption: d.caption ?? null,
+    file_url: d.file_url ?? "", original_filename: d.original_filename ?? null,
+    title: d.title ?? null, caption: d.caption ?? null,
     _legacy_knowledge_machine_id: d.knowledge_machine_id != null ? String(d.knowledge_machine_id) : null,
   }) },
   { collection: "knowledge_documents", table: "knowledge_documents", map: (d) => ({
-    storage_path: d.storage_path ?? "", title: d.title ?? null,
+    file_url: d.file_url ?? "", original_filename: d.original_filename ?? null,
+    title: d.title ?? null,
     _legacy_knowledge_machine_id: d.knowledge_machine_id != null ? String(d.knowledge_machine_id) : null,
   }) },
 ];

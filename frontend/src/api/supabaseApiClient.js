@@ -26,9 +26,9 @@ import { callFunction } from "@/api/functionsClient";
 //  - `roles/permissions` and `users/:id/permissions`: Postgres's `role_permissions` is a
 //    normalized (role, permission_key) table, not one Firestore doc per role with a
 //    `permissions` array -- adapted below, same external response shape.
-//  - `knowledge-service-codes/:id/reveal`: the Postgres column is `code` (0001 schema),
-//    not `service_code` (the Firestore field name) -- response key kept as
-//    `service_code` for caller compatibility, source column renamed.
+//  - `knowledge-service-codes/:id/reveal`: as of 0013_knowledge_subcollections_real_fields.sql
+//    the Postgres column is `service_code`, matching the Firestore field name directly (the
+//    original 0001 schema had this wrong as `code` -- fixed 2026-08-05, see KNOWN_ISSUES.md).
 //  - `auth.resetPassword`: Supabase's recovery flow establishes a session via the emailed
 //    link redirect first; there is no Firebase-style opaque `resetToken` you exchange
 //    directly for a new password. This assumes a recovery session already exists (i.e.
@@ -232,7 +232,7 @@ async function request(path, options = {}) {
   }
   if (segments[0] === "knowledge-service-codes" && segments[1] && segments[2] === "reveal") {
     const record = await getRow("knowledge_service_codes", segments[1]);
-    return { service_code: record.code };
+    return { service_code: record.service_code };
   }
   if (segments[0] === "roles" && segments[1] === "permissions") {
     const rows = await listRows("role_permissions");

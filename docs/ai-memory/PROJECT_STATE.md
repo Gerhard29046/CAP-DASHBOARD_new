@@ -1,8 +1,105 @@
 # Project State
-_Last verified: 2026-08-04 (entities + relink phases FULLY COMPLETE and content-verified
-against the real Supabase project — all 10 collections match Firestore counts exactly, FK
-relinking confirmed correct by tracing actual IDs, not just counts. See below and
-SESSION_LOG.md)_
+_Last verified: 2026-08-05 (same-day continuation: after the Phase 2 prep work below, also
+designed the Google Calendar authentication redesign — see the entry above the 2026-08-05
+"Phase 2 prep continued" one, and `docs/migration/GOOGLE_CALENDAR_AUTH_REDESIGN.md`. Design
+only, nothing implemented in `functions/`/`frontend/` yet. User will apply `0013` via the
+SQL Editor before the next data-migration session. Entities + relink migration phases
+remain the most recent real data-migration work — still fully complete and
+content-verified as of 2026-08-04. See below and SESSION_LOG.md)_
+
+## Firebase -> Supabase migration — Google Calendar authentication redesign (design only, 2026-08-05)
+- User instruction: treat Google Calendar's Firebase-Auth dependency (found earlier the
+  same session, see the "Phase 2 prep continued" entry below) as a first-class migration
+  task — do not assume Firebase Authentication remains available after the Supabase
+  cutover; design the integration to keep using the Google Calendar API while
+  authenticating requests independently of Firebase Auth; continue documenting the
+  architecture and migration steps.
+- Wrote `docs/migration/GOOGLE_CALENDAR_AUTH_REDESIGN.md`: recommends redesigning
+  `functions/lib/auth.js`'s `requireUser()` to branch on the bearer token's `iss` (issuer)
+  claim — Firebase tokens keep the existing verification path unchanged; Supabase tokens
+  get a new path (`supabase.auth.getUser(token)` + a service-role Postgres permission
+  lookup) returning the identical return shape, so none of the 8 functions' call sites in
+  `functions/index.js` change. This "issuer-routed dual verification" design means the
+  frontend's eventual `VITE_AUTH_BACKEND` flag flip and a Cloud Functions redeploy never
+  need to be coordinated as one atomic event. Verified the exact scope by reading the real
+  code first, not assuming: confirmed via `functions/index.js` that 7 of 8 functions
+  actually call `requireUser`/check permissions (`calendar.google.connect/view/
+  calendars.select/disconnect` — exact keys, not guessed) and that the 8th
+  (`googleCalendarCallback`) is browser-navigated, carries no bearer token, and is secured
+  by the OAuth `state` parameter instead — it needs no changes at all for this redesign.
+- Cross-referenced the new doc from `docs/migration/FIREBASE_DEPENDENCIES.md` (section 2)
+  and added it as a new blocking prerequisite step (3.0) in
+  `docs/migration/PHASE2_CUTOVER_CHECKLIST.md`, gating step 3.1's `SupabaseAuthProvider`
+  wiring.
+- **Design only — nothing implemented.** No changes to `functions/` or `frontend/` code
+  this session. Implementation (new `@supabase/supabase-js` dependency in `functions/`, new
+  `SUPABASE_SERVICE_ROLE_KEY` Firebase Secret, `functions/lib/auth.js`/`functionsClient.js`
+  code changes, a `firebase deploy --only functions`) is listed as its own ordered,
+  approval-tagged step list in the design doc — each step (especially the deploy) still
+  needs its own explicit go-ahead per CLAUDE.md section 12 when the time comes.
+- User separately confirmed they will apply `supabase/migrations/
+  0013_knowledge_subcollections_real_fields.sql` via the SQL Editor before the next
+  data-migration session, and asked to push all pending work to git before leaving for the
+  day (explicit approval given for the push itself — see git log for the resulting commit).
+
+## Firebase -> Supabase migration — Phase 2 prep continued: knowledge_* schema/storage-copy fix, Firebase dependency audit, checklist refresh (2026-08-05)
+- User confirmed the repo/Ruflo tooling cleanup from earlier this session was complete and
+  gave explicit scoped instructions: continue Supabase prep, build/verify remaining
+  service-layer functionality, document every remaining Firebase dependency, improve
+  tests/verification scripts, prepare cutover/rollback docs — explicitly NOT to migrate
+  Firestore data, touch Firebase Admin credentials, wire the frontend to Supabase, switch
+  `AuthContext`, touch Android, or remove Firebase without separate approval. No live
+  Supabase writes were made this session (no `--apply`, no `smoke-test.mjs` run) — all work
+  was code/schema-file/documentation only.
+- **Closed the knowledge_* sub-collection schema gap deferred on 2026-08-04** (see
+  KNOWN_ISSUES.md/DECISIONS.md 2026-08-05 entries for full detail): new
+  `supabase/migrations/0013_knowledge_subcollections_real_fields.sql` corrects
+  `knowledge_notes`/`knowledge_service_codes`/`knowledge_media`/`knowledge_documents` to
+  their real Firestore field names (`content` not `body`, `service_code` not `code`,
+  `file_url` not `storage_path`, plus previously-uncaptured `note_type`/`function_name`/
+  `original_filename`/`title`). Updated `entityMappings.mjs`'s mapper and
+  `supabaseApiClient.js`'s reveal handler to match. **Not yet applied to the real
+  project** — needs the user via the SQL Editor, same as every prior migration; safe to
+  apply any time before real rows exist in these four tables (still true as of 2026-08-05).
+- **Found and fixed a second, independent bug in the same area**: the data-migration
+  script's Phase D (storage copy) read the same wrong field name directly off raw Firestore
+  docs, bypassing the mapper entirely — the schema fix alone would not have caught it. Even
+  with the name corrected, the real field is a Firebase Storage download URL, not a bare
+  object path the Admin SDK can use. Fixed via a new unit-tested helper
+  `supabase/scripts/lib/firebaseStorageUrl.mjs` (`extractFirebaseStoragePath()`, 6/6 tests)
+  and rewrote Phase D to use it, plus added a new step that re-points each migrated row's
+  Postgres `file_url` to a fresh Supabase signed URL after a successful copy (previously it
+  copied the file but left Postgres pointing at the stale Firebase URL). Untested end-to-end
+  against a real file (no real documents exist in either source collection).
+- **Wrote `docs/migration/FIREBASE_DEPENDENCIES.md`**: a complete, categorized inventory of
+  every Firebase touchpoint — frontend (12 core files + 31 total consumer files, effectively
+  the whole app), Cloud Functions (8 functions, Google Calendar only, deliberately staying
+  on Firebase), `firestore.rules`, Android (`Core.kt`, `GoogleCalendarRepository.kt`,
+  explicitly out of scope this phase), and confirmed Laravel has no real Firebase
+  dependency. **Surfaced a real, previously undocumented gap**: Google Calendar's callable
+  functions authenticate via a Firebase ID token (`functionsClient.js` + all 8 functions'
+  `requireUser` guard) — if/when `AuthContext` cuts over to Supabase, this breaks unless
+  redesigned, and nothing in the existing runbook/checklist accounted for it. Added to
+  `PHASE2_CUTOVER_CHECKLIST.md` section 1 as a new decision item, called out as a blocker
+  for the `SupabaseAuthProvider` wiring step specifically.
+- **Refreshed `docs/migration/PHASE2_CUTOVER_CHECKLIST.md`**: updated its stale
+  (2026-08-03) status header to reflect the entities/relink completion and `0008`-`0013`
+  migrations; marked data-migration steps 1-6 as done with dates; added the Google Calendar
+  auth-token gap; corrected the "staging target" item to note `CAPDATABASE` now holds real
+  migrated data, not an empty test project; verified (by reading `smoke-test.mjs` directly,
+  not assuming) that its cleanup logic only ever deletes rows by the exact `id` it captured
+  from its own inserts — safe to re-run alongside real data, not a blanket wipe.
+- Verified: `supabase`: `node --check` on all 4 changed/new script files, `npm test` 18/18
+  (was 12, +6 new for the storage-URL helper). `frontend`: `npm run lint`/`typecheck`/
+  `test`/`build` all clean (build succeeds via `.env.production`'s real Firebase keys; the
+  plain `.env` on this machine currently lacks Firebase dev keys — a local `npm run dev`
+  gap, not a regression, not fixed since it would need real credentials).
+- Repo hygiene: removed 2 more stray 0-byte Ruflo/Claude-Flow tooling artifacts (`({,-`,
+  `updatePassword(newPassword)`) matching the same recurring pattern noted in prior
+  sessions — not application code.
+- Did NOT: run `--apply` or any live write against the real Supabase project; run
+  `smoke-test.mjs` live; touch `AuthContext.jsx`/`apiClient.js`/`App.jsx`; touch Android;
+  remove any Firebase code; request or handle Firebase Admin credentials.
 
 ## Firebase -> Supabase migration — entities + relink phases complete, content-verified (2026-08-04)
 - User confirmed `0012` applied "100% success." Verified live via a throwaway probe

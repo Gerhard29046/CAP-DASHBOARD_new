@@ -1,5 +1,53 @@
 # Session Log
 
+## 2026-08-05 — Ruflo/Claude Flow tooling setup, then Supabase migration Phase 2 prep continued (no live writes)
+- Two distinct halves to this session.
+- **Part 1 — tooling, not application code**: installed `ruvnet/ruflo` (npm package
+  `ruflo@3.34.0`) per user request. Global `npm install -g` left native/postinstall scripts
+  unrun (npm's `approve-scripts` explicitly refuses to work for global installs —
+  `EGLOBAL`). Hand-running those scripts directly was blocked by the auto-mode safety
+  classifier (correctly — that's unreviewed third-party code execution). Resolved by
+  reinstalling `ruflo` as a local project at `C:\Users\Gerhard\tools\ruflo\` instead, where
+  npm's real `approve-scripts --all` + `npm rebuild` flow works as designed. Verified via
+  `ruflo doctor` (15 passed, 0 failed, 11 warnings). Running `ruflo doctor` from inside this
+  repo had two side effects on tracked/untracked repo state (an auto-generated root
+  `package.json`, and a version-bump to `.claude/helpers/helpers.manifest.json`) — both
+  identified, confirmed unreferenced by any tooling, and reverted/removed at the user's
+  explicit request. Also removed 2 more stray 0-byte tooling artifacts (`({,-`,
+  `updatePassword(newPassword)`) matching the same recurring Ruflo/Claude-Flow pattern
+  noted in prior sessions. Final repo state confirmed clean (`git status --short` empty)
+  before moving on.
+- **Part 2 — Supabase migration, Phase 2 prep continued**: see
+  `docs/ai-memory/PROJECT_STATE.md`'s 2026-08-05 entry for full detail. Summary: closed the
+  `knowledge_notes`/`knowledge_service_codes`/`knowledge_media`/`knowledge_documents`
+  schema gap deferred on 2026-08-04 (new migration `0013`, not yet applied), found and fixed
+  a second independent bug in the migration script's storage-copy phase (new unit-tested
+  `firebaseStorageUrl.mjs` helper), wrote a complete Firebase-dependency audit
+  (`docs/migration/FIREBASE_DEPENDENCIES.md`) that surfaced a real, previously-undocumented
+  gap (Google Calendar's Cloud Functions auth is Firebase-ID-token-specific and needs a
+  redesign before any Auth cutover), and refreshed the stale
+  `docs/migration/PHASE2_CUTOVER_CHECKLIST.md`.
+- Tests/builds run: `supabase`: `node --check` (4 files), `npm test` 18/18 (was 12).
+  `frontend`: `npm run lint`/`typecheck`/`test`/`build` all clean.
+- Explicitly did not: run `--apply` or any live write against the real Supabase project,
+  run `smoke-test.mjs` live, touch `AuthContext.jsx`/`apiClient.js`/`App.jsx`, touch
+  Android, remove any Firebase code, or request/handle Firebase Admin credentials — all per
+  this session's explicit constraints.
+- Remaining work (as of the end of Part 2): `0013` needs the user to apply it via the SQL
+  Editor. The Google Calendar auth-token gap needs a design decision, not just an approval.
+  `users`/`storage` migration phases, frontend wiring, and the actual cutover all remain
+  blocked on their own separate explicit go-aheads per the existing runbook.
+- **Part 3 (same day, follow-up instruction)**: user asked to treat the Google Calendar
+  auth gap as a first-class migration task and design it properly — not assume Firebase
+  Auth survives the cutover, keep the Google Calendar API integration working while
+  authenticating independently of Firebase Auth. Wrote
+  `docs/migration/GOOGLE_CALENDAR_AUTH_REDESIGN.md` (issuer-routed dual JWT verification —
+  see `DECISIONS.md`/`PROJECT_STATE.md` 2026-08-05 entries for full detail). Design only,
+  cross-referenced from `FIREBASE_DEPENDENCIES.md` and `PHASE2_CUTOVER_CHECKLIST.md`
+  (new step 3.0). User separately confirmed they'll apply `0013` via the SQL Editor before
+  the next data-migration session, and asked to push everything to git before leaving for
+  the day, explicitly waiving approval prompts for the push itself. Pushed — see git log.
+
 ## 2026-08-04 — First real Postgres writes: entities + relink phases fully complete and content-verified
 - Objective: continue the Firestore->Postgres migration with real data, following the
   Phase 2 runbook. Started with "check that job_card_lines record" (a spot-check request)

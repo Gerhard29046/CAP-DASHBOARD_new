@@ -1,5 +1,83 @@
 # Decisions
 
+## 2026-08-05 — Google Calendar authentication redesign: issuer-routed dual verification, design-only
+- Decision: recommend redesigning `functions/lib/auth.js`'s `requireUser()` to branch on
+  the bearer token's `iss` (issuer) claim — Firebase ID tokens keep using the existing
+  `admin.auth().verifyIdToken()` + Firestore `users/{uid}` read path unchanged; Supabase
+  JWTs get a new path (`supabase.auth.getUser(token)` to verify, then a service-role
+  Postgres query for `role`/`effective_permissions`/`is_active`), returning the identical
+  `{ uid, role, effectivePermissions }` shape so no call site in `functions/index.js`
+  changes. Full design in `docs/migration/GOOGLE_CALENDAR_AUTH_REDESIGN.md`.
+- Reason: explicit user instruction — treat this as a first-class migration task, do not
+  assume Firebase Auth remains available after the Supabase cutover, keep using the Google
+  Calendar API while authenticating independently of Firebase Auth. The dual-issuer
+  approach specifically (rather than a hard swap) was chosen so the frontend's
+  `VITE_AUTH_BACKEND` flag flip and a Cloud Functions redeploy never have to be coordinated
+  as one atomic event — each can happen independently, in either order, which matches how
+  every other flag-gated step in the existing Phase 2 runbook is designed to work.
+  `supabase.auth.getUser(token)` was chosen over local JWKS/`jose` verification specifically
+  to avoid new key-management/rotation code for a latency cost judged acceptable (these
+  functions already round-trip to Google's Calendar API under a 20s client timeout).
+- Affected (design only, nothing implemented yet): `docs/migration/
+  GOOGLE_CALENDAR_AUTH_REDESIGN.md` (new). Cross-referenced from
+  `docs/migration/FIREBASE_DEPENDENCIES.md` and `PHASE2_CUTOVER_CHECKLIST.md` (new
+  prerequisite step 3.0, gating step 3.1's `SupabaseAuthProvider` wiring). No changes to
+  `functions/` or `frontend/` code this session — implementation is listed as its own
+  ordered, approval-tagged step list in the design doc, not done here.
+- Consequences: a new Firebase Secret (`SUPABASE_SERVICE_ROLE_KEY`) and a new
+  `functions/` dependency (`@supabase/supabase-js`) will be needed at implementation time.
+  The design doc recommends rotating the service_role key before using it in this new
+  server-side dependency, since `KNOWN_ISSUES.md` already flags it was pasted into a chat
+  transcript once during Phase 0.
+- Reversal condition: if the Auth cutover is abandoned entirely, this design (and its
+  eventual implementation) has no cost to revert — the Firebase-issuer branch stays the
+  only one ever actually used, and the Supabase branch is simply unreached dead code until
+  removed.
+
+## 2026-08-05 — Fixed the deferred knowledge_* sub-collection schema gap and a second, deeper storage-copy bug
+- Decision: closed the schema gap flagged-but-deferred on 2026-08-04 (`knowledge_notes`/
+  `knowledge_service_codes`/`knowledge_media`/`knowledge_documents` columns didn't match
+  real Firestore field names) via `supabase/migrations/
+  0013_knowledge_subcollections_real_fields.sql` and matching `entityMappings.mjs` updates,
+  rather than continuing to defer it. While fixing it, found a second, independent bug in
+  the same area: `migrate-firestore-to-postgres.mjs`'s Phase D (storage copy) read the same
+  wrong field name directly off raw Firestore docs (bypassing the mapper entirely, so the
+  schema fix alone would not have caught it), and even with the name corrected would still
+  have failed — the real field is a Firebase Storage *download URL*, not a bare object path
+  the Admin SDK can use directly.
+- Reason: this session's instructions prioritized "build and verify remaining Supabase
+  service-layer functionality" and "continue improving tests and verification scripts."
+  The original defer-it decision (2026-08-04) was conditioned on re-checking before
+  assuming it was still safe — re-checked (still 0 real docs in all four collections,
+  confirmed via the live `verify` phase run 2026-08-04) and fixing now, before either the
+  `users`/`storage` migration phases or any real content addition, is strictly safer than
+  fixing it later under time pressure once real data exists.
+- Affected: `supabase/migrations/0013_knowledge_subcollections_real_fields.sql` (new),
+  `supabase/scripts/lib/entityMappings.mjs` (4 mapper entries corrected),
+  `supabase/scripts/lib/entityMappings.test.mjs` (stale test fixed, 3 new tests added, 12/12
+  pass), `supabase/scripts/lib/firebaseStorageUrl.mjs` (new, unit-tested, 6/6 pass),
+  `supabase/scripts/migrate-firestore-to-postgres.mjs` (Phase D rewritten to use the new
+  helper and to re-point each migrated row's Postgres `file_url` to a fresh Supabase signed
+  URL after copy, matching the private-bucket signed-URL precedent already established in
+  `supabaseApiClient.js`), `frontend/src/api/supabaseApiClient.js` (reveal handler and a
+  stale header comment corrected to `service_code`).
+- Verified: `supabase`: `node --check` on all 4 changed/new script files, `npm test` 18/18
+  (was 12, +6 new). `frontend`: `npm run lint`/`typecheck`/`test`/`build` all clean.
+  Migration file itself re-reviewed for safety (uses `rename column`, not drop+add, and
+  every affected table confirmed at 0 real rows via the most recent live `verify` run before
+  writing it) — not applied to the real project yet, needs the user via the SQL Editor like
+  every prior migration.
+- Consequences: `0013` is a column-rename migration. Safe to apply any time before real rows
+  exist in these four tables (still true as of 2026-08-05) — becomes a real, careful
+  data-affecting change once they don't. The Phase D storage-copy fix has only been unit-
+  tested in isolation (the URL-parsing logic); it has never run against a real Firebase
+  Storage file, since no real documents exist in either source collection to test against.
+- Reversal condition: none expected for the schema correction (closes a real gap). The
+  Phase D signed-URL re-pointing carries the same known limitation already documented for
+  `supabaseApiClient.js`'s upload path — a 7-day signed URL expires and is not
+  auto-refreshed; whoever builds a real reader for these tables should re-sign on read
+  rather than rely on the stored URL indefinitely.
+
 ## 2026-08-03 — Verified `0006`'s actual state live instead of trusting the error message, then made it idempotent
 - Decision: when the user reported `0006` erroring with "column ... already exists," did
   not assume from the error text alone what state the database was in. Instead ran

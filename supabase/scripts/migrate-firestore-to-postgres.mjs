@@ -44,10 +44,12 @@
 //                  auth.admin.createUser), then update the auto-created public.users
 //                  profile row with role/effective_permissions/is_active/preferences and
 //                  legacy_firebase_uid, then re-link knowledge_notes.created_by.
-//   D. storage   - copy files referenced by knowledge_media/knowledge_documents
-//                  storage_path fields from Firebase Storage to the matching Supabase
-//                  bucket. Best-effort; logs and continues on individual file failures
-//                  rather than aborting the whole migration.
+//   D. storage   - copy files referenced by knowledge_media/knowledge_documents file_url
+//                  fields (real Firestore field, fixed 2026-08-05 -- see
+//                  scripts/lib/firebaseStorageUrl.mjs) from Firebase Storage to the
+//                  matching Supabase bucket, then re-point each row's Postgres file_url to
+//                  a fresh Supabase signed URL. Best-effort; logs and continues on
+//                  individual file failures rather than aborting the whole migration.
 //   E. verify    - read-only: compares Firestore doc counts against Postgres row counts
 //                  per collection/table and prints a match/mismatch report. No writes.
 //
@@ -64,6 +66,7 @@ import { dirname, join } from "node:path";
 import { createClient } from "@supabase/supabase-js";
 import admin from "firebase-admin";
 import { ENTITY_COLLECTIONS, stripLegacyMarkers } from "./lib/entityMappings.mjs";
+import { extractFirebaseStoragePath } from "./lib/firebaseStorageUrl.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -290,6 +293,17 @@ async function runUsersPhase() {
 // ---------------------------------------------------------------------------
 // Phase D: storage (best-effort file copy)
 // ---------------------------------------------------------------------------
+// FIXED 2026-08-05 (see docs/ai-memory/KNOWN_ISSUES.md): this phase previously read a
+// nonexistent `storage_path` Firestore field -- the real field, confirmed via
+// frontend/src/pages/KnowledgeMachineDetail.jsx, is `file_url`, a full Firebase Storage
+// download URL (from getDownloadURL()), not a bare object path. The Firebase Admin SDK's
+// bucket().file(path) needs the raw decoded object path, so extractFirebaseStoragePath()
+// (scripts/lib/firebaseStorageUrl.mjs, unit-tested) pulls that out of the URL first.
+// Also new: after a successful copy, the corresponding Postgres row's `file_url` column
+// (currently still holding the stale Firebase download URL from Phase A's entity import)
+// is updated to a fresh Supabase signed URL for the newly-copied object, matching the
+// getSignedUrl() pattern already used by frontend/src/api/supabaseApiClient.js for these
+// same private buckets (0004_storage_buckets.sql creates them with public: false).
 async function copyStorageFile(firebasePath, bucket, supabasePath) {
   const file = admin.storage().bucket().file(firebasePath);
   const [exists] = await file.exists();
@@ -307,22 +321,40 @@ async function copyStorageFile(firebasePath, bucket, supabasePath) {
 async function runStoragePhase() {
   console.log("\n=== Phase D: storage ===");
   const sources = [
-    { collection: "knowledge_media", bucket: "photos" },
-    { collection: "knowledge_documents", bucket: "documents" },
+    { collection: "knowledge_media", table: "knowledge_media", bucket: "photos" },
+    { collection: "knowledge_documents", table: "knowledge_documents", bucket: "documents" },
   ];
 
-  for (const { collection, bucket } of sources) {
+  for (const { collection, table, bucket } of sources) {
     const snapshot = await firestore.collection(collection).get();
     console.log(`\n${collection} -> bucket "${bucket}": ${snapshot.size} docs`);
-    let copied = 0, skipped = 0;
+    let copied = 0, skipped = 0, relinkedUrl = 0;
     for (const doc of snapshot.docs) {
-      const path = doc.data().storage_path;
-      if (!path) { skipped++; continue; }
-      if (!APPLY) { console.log(`  (dry run) would copy ${path} -> ${bucket}/${path}`); continue; }
+      const fileUrl = doc.data().file_url;
+      const path = extractFirebaseStoragePath(fileUrl);
+      if (!path) {
+        console.log(`  SKIP (no file_url, or not a recognizable Firebase Storage download URL): ${doc.id}`);
+        skipped++;
+        continue;
+      }
+      if (!APPLY) { console.log(`  (dry run) would copy ${path} -> ${bucket}/${path}, then re-point Postgres file_url via legacy_firestore_id=${doc.id}`); continue; }
       const ok = await copyStorageFile(path, bucket, path);
-      if (ok) copied++; else skipped++;
+      if (!ok) { skipped++; continue; }
+      copied++;
+      // 7-day expiry matches supabaseApiClient.js's UploadFile signed-url precedent. Known
+      // limitation carried over from that same code: this expires and is not re-signed
+      // automatically -- whoever wires a real reader for this table should re-sign on read
+      // rather than rely on a long-lived stored URL. Not solved here, same as there.
+      const { data: signedData, error: signError } = await supabase.storage.from(bucket)
+        .createSignedUrl(path, 60 * 60 * 24 * 7);
+      if (signError) { console.error(`  ERROR creating signed URL for ${path}:`, signError.message); continue; }
+      const { error: updateError } = await supabase.from(table)
+        .update({ file_url: signedData.signedUrl })
+        .eq("legacy_firestore_id", doc.id);
+      if (updateError) console.error(`  ERROR updating ${table}.file_url for legacy ${doc.id}:`, updateError.message);
+      else relinkedUrl++;
     }
-    if (APPLY) console.log(`  copied ${copied}, skipped ${skipped}`);
+    if (APPLY) console.log(`  copied ${copied}, skipped ${skipped}, Postgres file_url re-pointed for ${relinkedUrl}`);
   }
   console.log("\n  NOT covered by this phase: profile-images, invoices, attachments buckets --");
   console.log("  no current Firestore field/collection was identified that references files");

@@ -66,19 +66,44 @@
   needs the user to apply them via the SQL Editor before any real `--apply` of the
   migration script.
 
-## `knowledge_notes`/`knowledge_media`/`knowledge_documents`/`knowledge_service_codes` likely have the same class of schema gap — NOT fixed, no data at risk yet (2026-08-04)
-- Found as a side effect of investigating `knowledge_machines` (`KnowledgeMachineDetail.jsx`
-  renders all four sub-collections together): real code uses `content` on notes (schema has
-  `body`), stores an uploaded `file_url` (the full download URL `UploadFile` returns) on
-  media/documents rather than a `storage_path`, plus an `original_filename` the schema
-  doesn't capture at all, and `knowledge_service_codes` has a `function_name` field with no
-  schema column.
-- **Not fixed this session** — deliberately deferred, since the live dry run confirmed all
-  four collections currently have **zero real documents** (only ever seen at 0 in every dry
-  run so far), so there is no data-loss risk today, unlike the collections above that do
-  have real data. Must be fixed before any real content is added to the knowledge base
-  through these four sub-tables, or before a real `--apply` if that ever changes. Re-check
-  Firestore doc counts for these four before assuming this is still safe to defer.
+## `knowledge_notes`/`knowledge_media`/`knowledge_documents`/`knowledge_service_codes` schema gap — FIXED 2026-08-05, NOT yet applied
+- Found 2026-08-04 as a side effect of investigating `knowledge_machines`
+  (`KnowledgeMachineDetail.jsx` renders all four sub-collections together): real code uses
+  `content` on notes (schema had `body`), stores an uploaded `file_url` (the full download
+  URL `UploadFile` returns) on media/documents rather than a `storage_path`, plus an
+  `original_filename` the schema didn't capture at all, and `knowledge_service_codes` has a
+  `function_name` field with no schema column, plus a `service_code` field the reveal
+  endpoint reads that the schema had named `code` instead.
+- Deferred at the time since all four collections had zero real documents in every dry run
+  so far — no data-loss risk, but confirmed still worth fixing before real content is ever
+  added or before any real `--apply` touches these tables.
+- **Fixed 2026-08-05**: `supabase/migrations/0013_knowledge_subcollections_real_fields.sql`
+  (column renames: `body`→`content`, `code`→`service_code`, `storage_path`→`file_url` on
+  both media/documents; new columns: `note_type`, `function_name`, `original_filename`,
+  `title` on media). `supabase/scripts/lib/entityMappings.mjs`'s mapper updated to match
+  (12/12 unit tests pass, was 8). `frontend/src/api/supabaseApiClient.js`'s
+  `knowledge-service-codes/:id/reveal` handler updated from `record.code` to
+  `record.service_code` to match. Verified: `frontend` lint/typecheck/test all clean;
+  `supabase` `node --check` + `npm test` clean.
+- **`0013` has NOT been applied to the real `CAPDATABASE` project yet** — needs the user to
+  run it via the SQL Editor, same as every prior migration. Safe to run any time before real
+  content exists in these four tables (still true as of 2026-08-05); becomes a real
+  data-affecting rename once they hold real rows.
+- **Second, deeper bug found and fixed in the same pass**: `supabase/scripts/
+  migrate-firestore-to-postgres.mjs`'s Phase D (storage copy) independently read the same
+  wrong `storage_path` field name directly off the raw Firestore document (not through the
+  entityMappings.mjs mapper, so the schema fix alone would not have caught it), and even
+  with the field name corrected, a bare rename would still not have worked — the real field
+  is a full Firebase Storage *download URL*, not a bare object path, and the Firebase Admin
+  SDK's `bucket().file(path)` needs the raw decoded object path. Fixed via a new
+  zero-dependency, unit-tested helper `supabase/scripts/lib/firebaseStorageUrl.mjs`
+  (`extractFirebaseStoragePath()`, 6/6 tests) that parses the download-URL shape and
+  extracts+decodes the real object path. Phase D also now re-points each migrated row's
+  Postgres `file_url` to a fresh Supabase signed URL after a successful copy (previously it
+  copied the file but left Postgres pointing at the stale Firebase URL forever). Still
+  untested against a real download URL end-to-end (no real documents exist in either
+  collection to test against) — the unit tests cover the URL-parsing logic in isolation
+  only, not a live Firebase Storage read.
 
 ## `job_cards` missing `job_number`/`date_received` columns — FIXED, applied and verified live (2026-08-04)
 - Found via a live dry-run spot-check: `0001_initial_schema.sql` never gave `job_cards`

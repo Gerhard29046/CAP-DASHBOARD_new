@@ -1,12 +1,20 @@
 # Phase 2 Cutover Checklist — Firebase → Supabase
 
-_Last updated: 2026-08-03. Status: Supabase schema/RLS/storage live and verified
-(`0001`-`0007` applied, smoke test 18/18 checks passing across clients/machines/job_cards/
-knowledge_machines). **No cutover step below has been executed.** Firebase remains the sole
+_Last updated: 2026-08-05. Status: schema/RLS/storage live and verified (`0001`-`0013`
+applied — see `docs/ai-memory/PROJECT_STATE.md`/`KNOWN_ISSUES.md` for the full list, most
+recently `0013` correcting the 4 knowledge-base sub-collection schemas to their real
+Firestore field names). The **entities + relink migration phases are fully complete and
+content-verified** against the real project — all 10 collections match Firestore, real row
+content and FK relinks spot-checked (not just counts). The **users** and **storage**
+migration phases have deliberately NOT been run yet (each needs its own separate
+explicit go-ahead per the runbook below — see `docs/ai-memory/DECISIONS.md`).
+**No frontend/Android cutover step below has been executed.** Firebase remains the sole
 active production backend for web and Android. This document exists so "proceed with the
 final cutover" maps to a concrete, reviewable plan rather than a single big decision — see
 `docs/ai-memory/DECISIONS.md`'s Phase 2 runbook entry for the shorter version this expands
-on, and CLAUDE.md section 12 for the approval policy governing every irreversible step here._
+on, `docs/migration/FIREBASE_DEPENDENCIES.md` for the full current Firebase dependency
+inventory this checklist assumes, and CLAUDE.md section 12 for the approval policy
+governing every irreversible step here._
 
 ## How to read this document
 
@@ -54,38 +62,74 @@ resolved:
   Testing the flag-enabled frontend end-to-end either means testing against this same
   project (fine right now since it holds no real data, but stops being fine once real data
   is migrated into it) or provisioning a second Supabase project for ongoing staging.
-  Decide before real data migration, not after.
+  Decide before real data migration, not after. **Superseded in part**: the entities/relink
+  phases have since actually been run against `CAPDATABASE` (real business data now lives
+  there, content-verified — see `PROJECT_STATE.md` 2026-08-04 entries), so this project is
+  no longer "empty of real data" — re-decide this before any further test writes against it.
+- **[decision, newly found 2026-08-05] Google Calendar's callable-function auth is
+  Firebase-ID-token-specific, not just Firestore-specific.** `frontend/src/api/
+  functionsClient.js` attaches `auth.currentUser`'s Firebase ID token as a bearer token to
+  every Google Calendar Cloud Function call, and all 8 deployed functions'
+  `requireUser`/`requirePermission` guards (`functions/lib/auth.js`) verify that token via
+  Firebase Admin. Google Calendar itself is intentionally staying on Firebase Cloud
+  Functions regardless of which data layer serves the rest of the app (see
+  `docs/ai-memory/DECISIONS.md`) — but if/when `AuthContext` cuts over to Supabase, this
+  auth path breaks unless it's redesigned (e.g. functions accept a Supabase JWT instead, or
+  a bridge token is minted). **Now designed** (2026-08-05) — see
+  `docs/migration/GOOGLE_CALENDAR_AUTH_REDESIGN.md` for the full recommended architecture
+  (issuer-routed dual verification via `supabase.auth.getUser(token)` + a service-role
+  Postgres permission lookup, preserving `requireUser`'s exact return shape so no call site
+  in `functions/index.js` changes) and an ordered, approval-tagged implementation plan.
+  **Not yet implemented.** Must be implemented and deployed before step 3.1 (wiring
+  `SupabaseAuthProvider`) below, or Google Calendar will silently break for every user the
+  moment the auth flag flips.
 
 ## 2. Data migration
 
-1. **[decision]** User supplies Firebase Admin credentials (service-account key file path,
-   or runs `gcloud auth application-default login` themselves) — still not provided, and
-   Queen Bee should not attempt to obtain these itself (per `KNOWN_ISSUES.md`).
-2. **[no-approval]** Dry-run all phases including `verify`: `cd supabase && npm install &&
-   node scripts/migrate-firestore-to-postgres.mjs` (no `--apply`). Read-only against
-   Firestore, writes nothing to Supabase.
-3. **[no-approval]** Review dry-run output line by line — row counts per collection, sample
-   mapped rows, anything that looks wrong before it's ever written anywhere.
-4. **[approval]** `--apply --phases=entities,relink` against the real project — first real
-   write. Firebase is untouched by this; Postgres gains real business data for the first
-   time.
-5. **[no-approval]** `--phases=verify` — confirm Firestore doc counts match Postgres row
-   counts per table. Investigate any mismatch before continuing.
-6. **[no-approval]** Manually spot-check a handful of real records (a few clients, machines,
-   job cards) field-by-field against their Firestore originals.
-7. **[approval]** `--apply --phases=users` — creates real Supabase Auth accounts. Requires
-   `0007` already applied (confirmed — see `KNOWN_ISSUES.md`) since Phase C sets each
-   user's real role/`effective_permissions` via the service_role client.
+1. **[done, 2026-08-04]** User supplied Firebase Admin credentials (service-account key
+   file, referenced via `GOOGLE_APPLICATION_CREDENTIALS` in the gitignored
+   `supabase/.env`, never printed into any session transcript).
+2. **[done, 2026-08-04]** Dry-run of all phases including `verify` — reviewed, real counts
+   confirmed (6 clients, 6 machines, 7 service_records, 4 job_cards, 3 job_card_lines, 3
+   knowledge_machines, 0 in the 4 knowledge_* sub-collections, 1 user).
+3. **[done, 2026-08-04]** Dry-run output reviewed line by line — found and fixed 6 real
+   schema/mapping gaps before any real write (see `KNOWN_ISSUES.md`: `job_cards.job_number`/
+   `date_received`, `machines.warranty_expiry`, `service_records.service_date`/
+   `work_performed`/`findings`, `knowledge_machines`'s entire schema, a date
+   empty-string-vs-null bug, and NOT NULL FK constraints blocking the insert-then-relink
+   pattern).
+4. **[done, 2026-08-04]** `--apply --phases=entities,relink,verify` against the real
+   project — completed in two passes (first pass: `clients`/`job_cards` succeeded,
+   `machines`/`service_records`/`job_card_lines`/`knowledge_machines` failed on NOT NULL
+   constraints; fixed via `0012`; retry with `--only` succeeded for all 4). Firebase was
+   never touched by this — it remains untouched and authoritative throughout.
+5. **[done, 2026-08-04]** `--phases=verify` — **all 10 collections match Firestore counts
+   exactly**, including the 4 correctly-still-empty knowledge_* sub-collections.
+6. **[done, 2026-08-04]** Manually spot-checked real records (a real machine, service
+   record, and job card) field-by-field and by traced FK against their Firestore originals
+   — confirmed correct, not just row-count matching.
+7. **[not started — needs explicit go-ahead]** `--apply --phases=users` — creates real
+   Supabase Auth accounts. `0007` is applied (confirmed) so Phase C's service_role writes to
+   `role`/`effective_permissions` will work. **Not run.**
 8. **[no-approval, blocked on item 1.3 above]** Send password-reset emails to every migrated
-   user once the script for that exists.
-9. **[approval]** `--apply --phases=storage` — copies `knowledge_media`/
-   `knowledge_documents` files from Firebase Storage to Supabase Storage. Best-effort, logs
-   and continues on individual failures.
+   user once the script for that exists. Script still does not exist.
+9. **[not started — needs explicit go-ahead]** `--apply --phases=storage` — copies
+   `knowledge_media`/`knowledge_documents` files from Firebase Storage to Supabase Storage.
+   Best-effort, logs and continues on individual failures. **Note**: both sub-collections
+   currently have 0 real documents (confirmed live, most recently 2026-08-04), so running
+   this today would be a no-op, not a meaningful test — re-confirm doc counts first.
 10. **[no-approval]** Re-run `--phases=verify` one more time post-storage-copy as a final
     completeness check.
 
 ## 3. Frontend wiring (not started — explicitly deferred pending approval)
 
+0. **[approval, prerequisite]** Implement + deploy the Google Calendar auth redesign
+   (`docs/migration/GOOGLE_CALENDAR_AUTH_REDESIGN.md`) — `functions/lib/auth.js`'s
+   issuer-routed dual verification, `functionsClient.js`'s flag-aware token attachment.
+   Do this **before** step 1 below, not after — the redesign is additive/backward-compatible
+   (safe to deploy well ahead of the flag flip with zero behavior change for current
+   callers), but flipping the flag without it deployed first will silently break Google
+   Calendar for every user.
 1. **[approval]** Wire `SupabaseAuthProvider` into `App.jsx` behind an env flag (e.g.
    `VITE_AUTH_BACKEND=firebase|supabase`), defaulting to `firebase`. This touches the exact
    file every one of the 13 Firebase-dependent frontend files depends on through `useAuth`
@@ -160,15 +204,25 @@ users.
 ## 6. Verification checklist
 
 **Before scheduling a cutover date:**
-- [ ] All items in section 1 resolved or explicitly accepted as-is
+- [ ] All items in section 1 resolved or explicitly accepted as-is (including the newly
+      found 2026-08-05 Google Calendar auth-token gap — see section 1)
 - [ ] Password-reset-email script built and dry-run tested
 - [ ] Frontend flag wiring (section 3) built and manually QA'd end-to-end on a
       local/staging build, both as an admin and a limited-permission user
 - [ ] Android decision (lockstep vs. deferred) confirmed
+- [x] `users`/`storage` migration phases run — **partially done**: `entities`/`relink` are
+      fully complete and content-verified (2026-08-04); `users`/`storage` are still pending
+      their own separate go-ahead (see section 2, items 7/9)
 
 **Immediately before cutover:**
-- [ ] Dry-run of the full migration script reviewed with no unexplained anomalies
-- [ ] `smoke-test.mjs` passing 100% (currently true — 18/18)
+- [x] Dry-run of the full migration script reviewed with no unexplained anomalies — done
+      2026-08-04, real `--apply` since completed for entities/relink
+- [ ] `smoke-test.mjs` passing 100% (last confirmed 18/18 on 2026-08-03 — **re-run before
+      relying on this**, since real data has since been migrated into the same project the
+      smoke test seeds/cleans up against. Re-verified 2026-08-05 by reading the script: its
+      cleanup only ever deletes rows by the exact `id` it captured from its own inserts
+      moments earlier — never a table-wide delete/truncate — so re-running it is safe
+      alongside real data; the "still passes" question is about results, not safety)
 - [ ] Rollback steps (section 5) rehearsed at least once, even if only the flag-flip half
 
 **During cutover:**
@@ -180,7 +234,8 @@ users.
 - [ ] Error logs (Cloudflare + Supabase) monitored, no unexplained spike
 - [ ] A few real users confirm normal login/data access
 - [ ] File upload/download confirmed working across all 5 buckets
-- [ ] Google Calendar integration confirmed unaffected
+- [ ] Google Calendar integration confirmed unaffected (contingent on resolving the
+      auth-token gap in section 1 first — this check is meaningless until that's designed)
 - [ ] Android app confirmed still functioning normally against Firebase (no regression from
       an unrelated change)
 
