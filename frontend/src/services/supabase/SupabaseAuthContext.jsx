@@ -32,7 +32,14 @@ function supabaseAuthMessage(error) {
   }
 }
 
-export const SupabaseAuthProvider = ({ children }) => {
+// Extracted (2026-08-06, Phase 3 prep) so the same state logic can be consumed either by
+// this file's own standalone SupabaseAuthProvider/SupabaseAuthContext (unchanged, kept for
+// any standalone/test use), or by SupabaseAuthBridge.jsx, which writes this same value into
+// the shared AuthContext from frontend/src/lib/AuthContext.jsx instead -- so useAuth()
+// keeps working unchanged for every existing consumer regardless of which backend is
+// active. See docs/migration/GOOGLE_CALENDAR_AUTH_REDESIGN.md section 3 / PHASE2_CUTOVER_
+// CHECKLIST.md section 3.1.
+export function useSupabaseAuthState() {
   const [user, setUser] = useState(null);
   const [isLoadingAuth, setIsLoadingAuth] = useState(true);
   const [authError, setAuthError] = useState(null);
@@ -110,30 +117,32 @@ export const SupabaseAuthProvider = ({ children }) => {
   const hasAnyPermission = (keys) => keys.some(hasPermission);
   const hasAllPermissions = (keys) => keys.every(hasPermission);
 
-  return (
-    <SupabaseAuthContext.Provider value={{
-      user,
-      isAuthenticated: Boolean(user),
-      isLoadingAuth,
-      isLoadingPublicSettings: false,
-      authError,
-      appPublicSettings: null,
-      authChecked: !isLoadingAuth,
-      login,
-      logout,
-      requestPasswordReset,
-      navigateToLogin: () => { window.location.href = "/login"; },
-      checkUserAuth,
-      refreshCurrentUser: checkUserAuth,
-      hasPermission,
-      hasAnyPermission,
-      hasAllPermissions,
-      checkAppState: async () => {},
-    }}>
-      {children}
-    </SupabaseAuthContext.Provider>
-  );
-};
+  return {
+    user,
+    isAuthenticated: Boolean(user),
+    isLoadingAuth,
+    isLoadingPublicSettings: false,
+    authError,
+    appPublicSettings: null,
+    authChecked: !isLoadingAuth,
+    login,
+    logout,
+    requestPasswordReset,
+    navigateToLogin: () => { window.location.href = "/login"; },
+    checkUserAuth,
+    refreshCurrentUser: checkUserAuth,
+    hasPermission,
+    hasAnyPermission,
+    hasAllPermissions,
+    checkAppState: async () => {},
+  };
+}
+
+export const SupabaseAuthProvider = ({ children }) => (
+  <SupabaseAuthContext.Provider value={useSupabaseAuthState()}>
+    {children}
+  </SupabaseAuthContext.Provider>
+);
 
 export const useSupabaseAuth = () => {
   const context = useContext(SupabaseAuthContext);

@@ -2,10 +2,33 @@ import { auth } from "@/lib/firebase";
 
 const FUNCTIONS_BASE_URL = import.meta.env.VITE_FUNCTIONS_BASE_URL;
 const REQUEST_TIMEOUT_MS = 20000;
+const AUTH_BACKEND = import.meta.env.VITE_AUTH_BACKEND === "supabase" ? "supabase" : "firebase";
+
+// Google Calendar's Cloud Functions stay on Firebase regardless of which backend serves
+// the rest of the app (see docs/migration/GOOGLE_CALENDAR_AUTH_REDESIGN.md) -- what changes
+// here is only WHICH bearer token gets attached, matching whichever session is actually
+// live. `functions/lib/auth.js`'s issuer-routed dual verification (2026-08-06) accepts
+// either token shape server-side, so this and the Functions deploy can move independently.
+// Dynamic import so the default (firebase) branch never evaluates
+// services/supabase/client.js -- same reasoning as apiClient.js/AuthContext.jsx.
+async function getBearerToken() {
+  if (AUTH_BACKEND === "supabase") {
+    const { supabase } = await import("@/services/supabase/client");
+    const { data } = await supabase.auth.getSession();
+    const token = data.session?.access_token;
+    if (!token) throw Object.assign(new Error("Unauthenticated"), { status: 401 });
+    return token;
+  }
+  if (!auth.currentUser) {
+    throw Object.assign(new Error("Unauthenticated"), { status: 401 });
+  }
+  return auth.currentUser.getIdToken();
+}
 
 /**
  * Calls a deployed Firebase Cloud Function (2nd gen, `onRequest`) by name,
- * attaching the current user's Firebase ID token as a bearer token.
+ * attaching whichever backend's bearer token is currently active (Firebase ID token, or a
+ * Supabase access token if VITE_AUTH_BACKEND=supabase -- see getBearerToken() above).
  *
  * Throws a plain Error with a safe, human-readable message on any failure -
  * never surfaces a raw stack trace or parse failure to callers.
@@ -16,11 +39,8 @@ export async function callFunction(name, { method = "GET", searchParams, body } 
       "VITE_FUNCTIONS_BASE_URL is not configured. Set it in the frontend environment to reach Cloud Functions.",
     );
   }
-  if (!auth.currentUser) {
-    throw Object.assign(new Error("Unauthenticated"), { status: 401 });
-  }
 
-  const idToken = await auth.currentUser.getIdToken();
+  const idToken = await getBearerToken();
   const query = searchParams ? `?${searchParams.toString()}` : "";
   const url = `${FUNCTIONS_BASE_URL}/${name}${query}`;
 

@@ -92,9 +92,51 @@
     before `PHASE2_CUTOVER_CHECKLIST.md` step 3.1 (`SupabaseAuthProvider` wiring). Nothing
     implemented in `functions/`/`frontend/` yet — implementation + deploy are separate,
     still-gated next steps.
-  - Next: implement + deploy the Google Calendar auth redesign (needs its own approval for
-    the Functions deploy); user applies `0013` via the SQL Editor; then the same
-    `users`/`storage` phase go-aheads as before, still blocked pending explicit approval.
+  - **Done (2026-08-06): `users` and `storage` migration phases both run and verified —
+    Phase 2 (data migration) is now fully complete.** User confirmed `0013` applied (live
+    column probe confirmed). Ran `--apply --phases=users`: the 1 real Firestore user
+    migrated to a real Supabase Auth account + profile row, content-verified (role/
+    permissions/preferences/active-flag all match Firestore exactly). Ran `--apply
+    --phases=storage`: confirmed genuine no-op (0 real files exist in either source
+    collection). Full independent verification: `verify` phase all-match, zero FK orphans
+    across every relationship (machines/job_cards/service_records/job_card_lines), exactly
+    1 user profile. Investigated `service_records.photos`/`job_cards.arrival_photos` (real
+    UI fields, no Postgres columns, not in the mapper) — confirmed zero real data in either
+    field (traced to a pre-existing, unrelated frontend bug where uploaded photos are never
+    actually saved to the record) so no data was lost; flagged, not fixed, out of migration
+    scope. See PROJECT_STATE.md 2026-08-06 entry for full detail.
+  - **Done (2026-08-06): Google Calendar auth redesign implemented + frontend flag wiring
+    built — both unit/build-verified, neither deployed nor live.** `functions/lib/
+    supabaseAuth.js` (new) + `functions/lib/auth.js`'s issuer-routed `requireUser()` —
+    76/76 `functions` tests pass (was 63), including tests that prove the actual routing
+    (not just each branch in isolation). `VITE_AUTH_BACKEND` flag wired into
+    `AuthContext.jsx`/`apiClient.js`/`functionsClient.js` with zero changes needed to any
+    of the ~13+21 consumer files; two real bugs found via testing real builds (not just
+    writing code) and fixed: a top-level-await/esbuild-target incompatibility, and a
+    module-import-time crash risk in `services/supabase/client.js` (now a lazy Proxy).
+    Verified via two real production builds (`VITE_AUTH_BACKEND=firebase` confirmed via
+    bundle inspection to contain zero Supabase code at all; `=supabase` confirmed to build
+    successfully). See PROJECT_STATE.md 2026-08-06 entry for full detail.
+  - **Done (2026-08-06, same day): password-reset/login-migration flow built + a real bug
+    fixed.** `supabase/scripts/send-password-reset-emails.mjs` (new, dry-run by default,
+    live dry-run verified — found the 1 real migrated user correctly). Found+fixed a real
+    bug in `frontend/src/pages/ResetPassword.jsx`: it only recognized Firebase's
+    `oobCode`/`token` query param, not Supabase's session-based (URL-hash) recovery flow —
+    would have shown "Invalid reset link" for every real Supabase reset email. See
+    PROJECT_STATE.md's 2026-08-06 entry for full detail.
+  - **Done (2026-08-06): key rotated + verified, real password-reset email sent, Functions
+    deployed + a real bug found and fixed via live testing + redeployed and re-verified.**
+    See PROJECT_STATE.md's 2026-08-06 entries for full detail. The Google Calendar auth
+    redesign is genuinely live now — both issuer branches confirmed working against the
+    real deployed functions via multiple live HTTP probes and direct log inspection, not
+    just trusting "it is done."
+  - Next: (1) confirm Supabase Auth's redirect-URL allowlist includes a local test target
+    before re-sending the password-reset email pointed at it (the first real send pointed
+    at the still-Firebase-default live production URL, not completable — treat as expired);
+    (2) full manual QA with `VITE_AUTH_BACKEND=supabase` in a local build, now that the
+    Functions side is confirmed working; (3) the actual cutover — flipping the flag in real
+    production config. Each still needs its own separate explicit approval. Firebase
+    remains the sole live production backend throughout.
 - Android "Connection and Sync Status" feature (per `.claude/agents/android-ui-bee.md`
   and `integration-sync-bee.md`):
   - Done: `StatusRepository`, `ConnectionStatus` enum, and connection-state derivation

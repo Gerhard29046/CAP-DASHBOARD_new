@@ -22,6 +22,7 @@ import { auth, db, storage } from "@/lib/firebase";
 import { relatedRecords } from "@/lib/records";
 import { callFunction } from "@/api/functionsClient";
 import { optimizeImageForUpload } from "@/lib/imageOptimize";
+import { supabaseApiClient } from "@/api/supabaseApiClient";
 
 const endpointMap = {
   Client: "clients",
@@ -345,7 +346,7 @@ async function request(path, options = {}) {
   throw Object.assign(new Error("Unsupported Firebase operation."), { status: 405 });
 }
 
-export const apiClient = {
+const firebaseApiClient = {
   request,
   entities: {
     Client: clientEntity,
@@ -377,3 +378,19 @@ export const apiClient = {
     resetPassword: async ({ resetToken, newPassword }) => confirmPasswordReset(auth, resetToken, newPassword),
   },
 };
+
+// Phase 3 (2026-08-06): route to whichever backend VITE_AUTH_BACKEND selects. Uses the SAME
+// flag as frontend/src/lib/AuthContext.jsx -- a session and its data layer must always agree
+// on which backend they're pointed at, since the two are never valid to mix (a Supabase
+// session has no Firebase ID token for Firestore calls, and vice versa). Defaults to
+// "firebase" -- unchanged production behavior unless this build-time env var is explicitly
+// set to "supabase". A static import is safe here (unlike a top-level `await import()`,
+// which esbuild's configured target doesn't support -- tried and reverted, see git history)
+// because services/supabase/client.js's env-var fail-fast is itself lazy (deferred to first
+// real Supabase call, not import time) -- so statically pulling in supabaseApiClient.js
+// never risks crashing the default "firebase" backend even if Supabase env vars are ever
+// missing in some environment. Every one of the 21 files that `import { apiClient } from
+// "@/api/apiClient"` needs zero changes -- this is the only file that changes.
+export const apiClient = import.meta.env.VITE_AUTH_BACKEND === "supabase"
+  ? supabaseApiClient
+  : firebaseApiClient;

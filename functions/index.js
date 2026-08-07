@@ -11,11 +11,17 @@ const {
   frontendSuccessUrl,
   frontendErrorUrl,
 } = require("./lib/googleOAuthClient");
+const { SUPABASE_SERVICE_ROLE_KEY } = require("./lib/supabaseAuth");
 const store = require("./lib/googleCalendarStore");
 const googleCalendar = require("./lib/googleCalendarService");
 
 const REGION = "africa-south1";
-const SECRETS = [GOOGLE_CALENDAR_CLIENT_ID, GOOGLE_CALENDAR_CLIENT_SECRET];
+// SUPABASE_SERVICE_ROLE_KEY added 2026-08-06 (see docs/migration/
+// GOOGLE_CALENDAR_AUTH_REDESIGN.md) -- bound to every function via the same shared SECRETS
+// array as the Google Calendar secrets, including googleCalendarCallback (which doesn't
+// call requireUser and so never actually needs it) purely for consistency with the
+// existing uniform-binding pattern; an unused bound secret is harmless.
+const SECRETS = [GOOGLE_CALENDAR_CLIENT_ID, GOOGLE_CALENDAR_CLIENT_SECRET, SUPABASE_SERVICE_ROLE_KEY];
 
 setGlobalOptions({ region: REGION });
 

@@ -1,5 +1,186 @@
 # Known Issues
 
+## Local dev couldn't load at all with VITE_AUTH_BACKEND=supabase — frontend/.env had no Firebase config, and firebase.js's eager fail-fast blocks the whole app regardless of backend (2026-08-06, fixed)
+- Started manual QA (Phase 3 step 3, per user's ordered validation plan): local dev server
+  (`VITE_AUTH_BACKEND=supabase npm run dev -- --port 5173`), sent a fresh password-reset
+  email pointed at it. User clicked the link and got a **blank white page**, not even the
+  app's own "Invalid reset link" fallback.
+- **Root cause, confirmed via the browser console (user reported the exact error, not
+  guessed)**: `Uncaught Error: Missing Firebase configuration: apiKey, authDomain,
+  projectId, storageBucket, messagingSenderId, appId` at `firebase.js:20`.
+  `frontend/.env` (local dev) never had `VITE_FIREBASE_*` values at all (a pre-existing,
+  previously-harmless gap — see the "frontend/.env still does not exist" entry below,
+  originally about `npm run dev` not running at all). It became a hard blocker specifically
+  because of this session's Phase 3 flag wiring: `frontend/src/lib/AuthContext.jsx` (and
+  `apiClient.js`/`functionsClient.js`) still statically/unconditionally import from
+  `@/lib/firebase` at module scope regardless of `VITE_AUTH_BACKEND`, and `firebase.js`
+  itself throws **eagerly at import time** if its env vars are missing (the same class of
+  bug already found+fixed for Supabase's `client.js` earlier this session, via a lazy
+  Proxy) — but `firebase.js` itself was never made lazy, so the crash happens before React
+  can render anything at all, with no error boundary to catch it (blank white page, not a
+  graceful fallback).
+- **Fixed pragmatically, no code changes**: added the same real, public-safe Firebase web
+  config already committed in `frontend/.env.production` (not a secret — same posture as
+  the Firebase project's own public client config, protected by `firestore.rules`/Storage
+  rules, not by hiding these values) to local `frontend/.env`. Restarted the dev server
+  (Vite reads `.env` at startup only, not live) to pick it up — confirmed responding again.
+- **Design asymmetry worth remembering, not fixed this round** (deliberately, per the
+  user's "fix only issues directly related to the Supabase migration, do not implement new
+  features" instruction — this is a defensive robustness improvement, not required for the
+  migration itself to work correctly once `frontend/.env`/`.env.production` both have real
+  values for both backends, which they now do): unlike `services/supabase/client.js`
+  (lazy Proxy, added earlier this session), `frontend/src/lib/firebase.js` still fails
+  fast at import time regardless of which backend is actually selected. This is low-risk in
+  practice (both `.env` and `.env.production` now have real values for both backends), but
+  if a future environment ever has Supabase config but not Firebase config, the app would
+  still hard-crash instead of gracefully running Supabase-only. Revisit if that scenario
+  becomes real.
+- **Real-world flow gap, not a bug**: the reset email's link only resolves on whichever
+  machine runs the `localhost:5173` dev server. User's email account is on a different
+  computer than the dev server — resolved by having the user open/check the email via a
+  browser on the dev-server machine itself, not by changing any config.
+- **Status at end of day 2026-08-06**: dev server running (Firebase config now present,
+  confirmed loads), a fresh password-reset email sent and accepted (2nd resend, first one's
+  token was never consumed since the app crashed before Supabase's client ever touched the
+  URL hash — likely still technically valid but superseded by the resend). User stepping
+  away, will click the link and continue QA tomorrow. Nothing beyond this env fix was
+  changed — no application code touched this entry.
+
+## Real bug found in the FIRST live deploy of the Google Calendar auth redesign — RESOLVED, redeployed and verified (2026-08-06)
+- User deployed `functions/lib/auth.js`/`supabaseAuth.js` for the first time
+  (`firebase deploy --only functions`, after the `SUPABASE_SERVICE_ROLE_KEY` secret and GCP
+  billing blockers were both resolved). Queen Bee verified the live deploy with a real
+  request rather than trusting "it is done": sent a bearer token with a real Supabase
+  issuer claim (fake signature) to the live `googleCalendarStatus` URL — got a raw `500`
+  instead of the expected `401`.
+- **Root cause, confirmed via live Cloud Functions logs**: `@supabase/supabase-js`'s
+  `createClient()` unconditionally constructs an internal Realtime client requiring a
+  global `WebSocket` constructor. Node 22+ has this natively; Cloud Functions' pinned
+  runtime is Node 20 (`functions/package.json`'s `engines`), which doesn't. Not caught by
+  local testing because the local dev machine runs Node 24 (confirmed via `node --version`)
+  — a real, easy-to-miss environment mismatch between local testing and the actual
+  deployed runtime.
+- **Confirmed zero impact on real production traffic**: `getServiceRoleClient()` (the
+  function that hits this bug) is only ever called from `verifySupabaseUser()`, which is
+  only reached when a token's issuer actually matches Supabase's — real users authenticate
+  with Firebase ID tokens today, which take the completely unchanged original code path and
+  never reach this bug. Only found because Queen Bee deliberately crafted a Supabase-shaped
+  test token to verify the new branch was actually live.
+- **Fixed**: `functions/lib/supabaseAuth.js` now polyfills `globalThis.WebSocket` with the
+  `ws` package (new direct dependency, `functions/package.json`) before `createClient()` is
+  ever called, guarded so it's a no-op on any Node version that already has a native
+  `WebSocket` (e.g. local dev). Verified: `functions` lint clean, `npm test` 76/76
+  (unchanged pass count — this fix doesn't change any of the already-mocked test paths,
+  only real un-mocked `createClient()` calls, which local tests happen to succeed at
+  regardless of the polyfill since local Node already has native WebSocket).
+- **Redeployed and verified live, RESOLVED (2026-08-06).** User redeployed. Re-ran the same
+  live probe: now correctly returns `401 {"message":"Unauthorized"}` instead of `500`.
+  Additionally verified 3 more real live requests against the deployed function to confirm
+  no regression: missing Authorization header (401, unchanged), a garbage non-JWT token
+  routed through the still-unchanged Firebase branch (401, unchanged), and a CORS preflight
+  OPTIONS request (204, unchanged). Checked live Cloud Functions logs directly: both the
+  Supabase-branch failure (`__isAuthError: true, status: 401`) and the Firebase-branch
+  failure (`FirebaseAuthError: Decoding Firebase ID token failed`) are handled cleanly by
+  `guarded()`'s catch block — no unhandled exceptions, no crashes. The Google Calendar auth
+  redesign is now genuinely live and working for both issuer branches, though only the
+  Firebase branch has any real traffic yet (no client authenticates via Supabase in
+  production — `VITE_AUTH_BACKEND` still defaults to `firebase` everywhere).
+
+## Firebase Secret Manager billing error — RESOLVED (2026-08-06)
+- First attempt at `functions:secrets:set SUPABASE_SERVICE_ROLE_KEY` failed with a billing-
+  not-enabled error, unexpectedly (existing Google Calendar secrets already worked in the
+  same project). User retried and it succeeded — likely transient/propagation delay rather
+  than a real billing gap, since no billing change was reported. Secret confirmed created
+  (`Created a new secret version projects/100946498038/secrets/SUPABASE_SERVICE_ROLE_KEY/versions/1`)
+  and confirmed bound correctly to all 8 functions via the live deploy's Cloud Functions
+  logs (`secretEnvironmentVariables` includes it alongside the two Google Calendar secrets).
+
+## Supabase Auth "Redirect URLs" allowlist status is unknown — needs the user to check the dashboard (2026-08-06)
+- `supabase/scripts/send-password-reset-emails.mjs --apply` was run for real
+  (`admin@connoisseurauto.co.za`) with `redirectTo` pointed at the live production URL —
+  but the live production frontend doesn't have the Supabase-aware `ResetPassword.jsx` fix
+  deployed, and even if it did, `VITE_AUTH_BACKEND` defaults to `firebase` there, so the
+  link isn't actually completable right now regardless (see the entry below). That first
+  send should be treated as expired/unusable by the time real QA happens.
+- Started a local dev server (`VITE_AUTH_BACKEND=supabase npm run dev -- --port 5173`,
+  confirmed responding, `/reset-password` route resolves) as a real test target for a
+  re-sent email. **Before re-sending with `--redirect-to=http://localhost:5173/reset-password`**,
+  confirm that URL (or `http://localhost:5173/*`) is in Supabase's Auth → URL Configuration
+  → Redirect URLs allowlist for this project — Queen Bee cannot check or edit this itself
+  (Dashboard-only, no Management API token available). If it's not listed, Supabase may
+  silently redirect elsewhere or reject the link rather than erroring at send time, so this
+  needs confirming before assuming a re-sent email will actually work.
+
+## Live production password-reset link (sent 2026-08-06) is not currently completable
+- The one real password-reset email already sent (`admin@connoisseurauto.co.za`, via
+  `send-password-reset-emails.mjs --apply`) points at
+  `https://capdashboard.gerhardvanwijk.workers.dev/reset-password` — the live, currently-
+  deployed production frontend, which does NOT have today's `ResetPassword.jsx` fix
+  (nothing was deployed to Cloudflare this session) and whose `VITE_AUTH_BACKEND` correctly
+  still defaults to `firebase` regardless. Clicking that link will very likely show
+  "Invalid reset link." Supabase recovery links are time-limited (~1hr default) and likely
+  already expired by the time this is revisited — plan to re-send once a real test target
+  (local dev, confirmed redirect-allowlisted) is ready, not to reuse this one.
+
+## `SUPABASE_SERVICE_ROLE_KEY` rotation — DONE, verified working (2026-08-06)
+- User rotated the key via the Supabase Dashboard and updated `supabase/.env` directly
+  themselves (recommended path — avoided re-pasting the secret into chat, per the earlier
+  "Supabase migration secrets exposed" incident below).
+- **Verified the new key live, not just assumed**: `migrate-firestore-to-postgres.mjs
+  --phases=verify` (read-only, all 10 collections still match) and a full
+  `smoke-test.mjs` run — **18/18 checks pass** with the new key, including Auth Admin API
+  user creation, service_role RLS-bypass writes, both triggers, storage-bucket checks, and
+  full cleanup (all seeded rows + the test user deleted afterward, no residue). This proves
+  the new key has full working service-role capability, not just basic connectivity.
+- No other file in the repo holds the raw key (Cloud Functions aren't deployed yet, so
+  there's no stale Secret Manager copy to worry about either) — `supabase/.env` was the only
+  place needing an update, and it's done.
+
+## Google Calendar Cloud Functions auth redesign is implemented but not deployed (2026-08-06)
+- `functions/lib/auth.js`'s `requireUser()` now supports both Firebase ID tokens (unchanged
+  path) and Supabase JWTs (new, via `functions/lib/supabaseAuth.js`) — written, unit-tested
+  (76/76 `functions` tests pass), `node --check`/lint clean. **Not deployed.** Firebase
+  Cloud Functions still only run the pre-2026-08-06 code until `firebase deploy --only
+  functions` is explicitly approved and run — see PROJECT_STATE.md's 2026-08-06 entry.
+
+## Frontend `VITE_AUTH_BACKEND` flag exists in code but has never been live-QA'd end-to-end (2026-08-06)
+- `AuthContext.jsx`/`apiClient.js`/`functionsClient.js`/`ResetPassword.jsx` all now branch
+  on `VITE_AUTH_BACKEND`, verified via unit tests and real production builds (one per flag
+  value) — but no one has actually run the app in a browser with the flag set to
+  `supabase` and clicked through real pages. Currently blocked, in order: (1) key rotation
+  (see entry above), (2) `send-password-reset-emails.mjs --apply` actually run + the email
+  confirmed received + a real password set (the 1 migrated Supabase Auth user has no
+  usable password yet — script is built and dry-run verified, not yet sent for real), (3)
+  the undeployed Cloud Functions auth redesign (Google Calendar would 401 under a Supabase
+  session until deployed). Do this live QA pass before ever considering the actual cutover
+  (`PHASE2_CUTOVER_CHECKLIST.md` section 4).
+
+## `service_records.photos` / `job_cards.arrival_photos` have no Postgres columns — confirmed no data loss, not fixed (2026-08-06)
+- Real UI fields (`MachineDetail.jsx`, `ServiceRecords.jsx`, `JobCardDetail.jsx` all read
+  them) with no Postgres column and no entry in `entityMappings.mjs`'s mapper — found while
+  reviewing storage-phase coverage during the users/storage migration run.
+- **Confirmed no data loss**: live Firestore query found zero real `service_records`/
+  `job_cards` docs with either field populated. Root cause traced: `frontend/src/
+  components/LogServiceModal.jsx` uploads photos into local component state and displays
+  them for review, but its `ServiceRecord.create()` payload never actually includes
+  `photos` — the upload feature has never worked end-to-end, a pre-existing frontend bug
+  unrelated to the Supabase migration. `job_cards.arrival_photos` is read-only dead code
+  with no writer anywhere (`BookIn.jsx` writes photo URLs into `technician_notes` as text
+  instead, not into a dedicated field).
+- Not fixed — out of migration scope (fixing the upload feature itself is a `frontend/`-only
+  bug fix, not part of Firebase->Supabase data migration). If asked to fix the upload
+  feature later, remember to add matching Postgres columns + mapper entries first so the
+  fix doesn't immediately create a new migration gap.
+
+## Password-reset-email script for migrated Supabase Auth users still doesn't exist (2026-08-06, carried over)
+- The `users` migration phase ran 2026-08-06: 1 real user (`admin@connoisseurauto.co.za`)
+  now has a real Supabase Auth account, but with no usable password (Firebase password
+  hashes can't be imported via `auth.admin.createUser`). No script exists yet to trigger a
+  recovery email (e.g. `supabase.auth.admin.generateLink({ type: 'recovery', ... })` per
+  user). Not blocking anything right now since Supabase isn't the live backend for any
+  client yet, but must exist and be tested before any real cutover — see
+  `docs/migration/PHASE2_CUTOVER_CHECKLIST.md` section 1.
+
 ## Supabase migration tooling won't work from a new machine without recreating local secrets (2026-08-04)
 - `supabase/.env` (Supabase URL/anon/service_role keys + `GOOGLE_APPLICATION_CREDENTIALS`
   path) is gitignored by design and does not travel via `git clone`/`git pull`. The

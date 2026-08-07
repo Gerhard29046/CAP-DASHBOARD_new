@@ -1,9 +1,32 @@
-import React, { createContext, useContext, useEffect, useState } from "react";
+import React, { createContext, useContext, useEffect, useState, Suspense, lazy } from "react";
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from "firebase/auth";
 import { doc, getDoc, getDocs, limit, query, where, collection } from "firebase/firestore";
 import { auth, authPersistenceReady, db } from "@/lib/firebase";
 
 const AuthContext = createContext();
+
+// Phase 3 (2026-08-06): which auth backend is active. Defaults to "firebase" -- Firebase
+// remains the live production path unless this build-time env var is explicitly set to
+// "supabase". See docs/migration/PHASE2_CUTOVER_CHECKLIST.md section 3.1.
+const AUTH_BACKEND = import.meta.env.VITE_AUTH_BACKEND === "supabase" ? "supabase" : "firebase";
+
+// Only constructed (and its factory only ever invoked by React, on first render of the
+// supabase branch) when AUTH_BACKEND is actually "supabase" -- the dynamic import() this
+// wraps, and everything it transitively pulls in (including services/supabase/client.js,
+// which fail-fasts if Supabase env vars are missing), is NEVER evaluated in the default
+// (Firebase) production build. This is deliberate: it protects production from crashing
+// just because Supabase env vars aren't configured yet, even though the flag defaults off.
+const LazySupabaseAuthBridge = AUTH_BACKEND === "supabase"
+  ? lazy(() => import("@/services/supabase/SupabaseAuthBridge"))
+  : null;
+
+function AuthBackendLoadingFallback() {
+  return (
+    <div className="fixed inset-0 flex items-center justify-center bg-background">
+      <div className="w-8 h-8 border-4 border-secondary border-t-primary rounded-full animate-spin"></div>
+    </div>
+  );
+}
 
 function normalizeProfile(snapshot, firebaseUser) {
   const data = snapshot.data();
@@ -56,7 +79,9 @@ function firebaseMessage(error) {
   }
 }
 
-export const AuthProvider = ({ children }) => {
+// Unchanged Firebase implementation, only renamed (was exported directly as AuthProvider)
+// so the exported AuthProvider below can route to it explicitly.
+const FirebaseAuthProviderImpl = ({ children }) => {
   const [user, setUser] = useState(null);
   const [isLoadingAuth, setIsLoadingAuth] = useState(true);
   const [authError, setAuthError] = useState(null);
@@ -154,6 +179,20 @@ export const AuthProvider = ({ children }) => {
       {children}
     </AuthContext.Provider>
   );
+};
+
+// Public entry point every consumer already imports (frontend/src/App.jsx + 12 other
+// files). Routes to whichever backend AUTH_BACKEND selects, but both branches write into
+// the SAME `AuthContext` above, so useAuth() below is 100% unchanged regardless of backend.
+export const AuthProvider = ({ children }) => {
+  if (AUTH_BACKEND === "supabase" && LazySupabaseAuthBridge) {
+    return (
+      <Suspense fallback={<AuthBackendLoadingFallback />}>
+        <LazySupabaseAuthBridge context={AuthContext}>{children}</LazySupabaseAuthBridge>
+      </Suspense>
+    );
+  }
+  return <FirebaseAuthProviderImpl>{children}</FirebaseAuthProviderImpl>;
 };
 
 export const useAuth = () => {

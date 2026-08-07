@@ -1,5 +1,261 @@
 # Session Log
 
+## 2026-08-06 (cont. 6) — Phase 3 QA started per user's ordered plan; step 2 mid-flight, blocked on user for tomorrow
+- Objective: user gave an explicit 5-step validation plan (verify redirect URLs → confirm
+  password-reset flow end-to-end → full manual QA with the flag on locally → fix
+  migration-related bugs only, redeploy/retest as needed → final migration report with a
+  go/no-go recommendation). Explicitly: no new features, no production cutover, no
+  production config changes without separate approval.
+- **Step 1**: told the user exactly what's needed and why, having actually checked the code
+  rather than assumed — confirmed `Register.jsx` calls a `.auth.register()` method that
+  doesn't exist on either `apiClient.js` or `supabaseApiClient.js` (pre-existing, broken
+  under both backends, not migration-related, flagged for QA reporting not fixing), so the
+  only real redirect-URL need is `http://localhost:5173/reset-password` for password reset.
+  User confirmed it's in the Supabase Auth allowlist.
+- **Step 2, in progress**: sent the real reset email pointed at the local dev server.
+  User reported a **blank white page** — not the app's own "Invalid reset link" fallback,
+  something crashing before React could render at all. Asked for the exact browser console
+  error rather than guessing (no browser tool access this session) — user provided it:
+  `Missing Firebase configuration` from `firebase.js:20`. Root cause: local `frontend/.env`
+  never had `VITE_FIREBASE_*` values (pre-existing, previously harmless), and
+  `firebase.js` fails fast at import time regardless of `VITE_AUTH_BACKEND` — unlike
+  Supabase's `client.js`, which was made lazy earlier this session specifically to avoid
+  this exact class of crash. Fixed pragmatically (added the same real, public-safe Firebase
+  web config already committed in `.env.production` to local `.env`, no code changes) and
+  restarted the dev server. Confirmed loading again via curl.
+- User then clarified their email account is on a different computer than the dev server —
+  resent the email a second time so they can open it via a browser on the dev-server
+  machine itself once they're back. **User is stepping away until tomorrow** — did not
+  push further, no risk in leaving state as-is (nothing production-facing touched).
+- Files changed: `frontend/.env` only (gitignored, local-only — added Firebase dev config).
+  No application code changed this entry. `docs/ai-memory/*.md` updated.
+- Cleaned up 2 more stray `.claude/` tooling-cache directories (recurring pattern).
+- State left for tomorrow: local dev server running at `http://localhost:5173` with
+  `VITE_AUTH_BACKEND=supabase` and now-correct Firebase config; a fresh, unclicked
+  password-reset email sent to `admin@connoisseurauto.co.za`. Next: user clicks the link,
+  reports what they see; continue step 2 (set new password, confirm login works), then
+  steps 3-5 of their plan. Nothing live, nothing in production changed.
+
+## 2026-08-06 (cont. 5) — Functions deployed, real bug found+fixed via live testing, redeployed and re-verified
+- Objective: user resolved the GCP billing hiccup themselves and set the
+  `SUPABASE_SERVICE_ROLE_KEY` secret. Said "fix everything dude" earlier and "it is done"
+  after each deploy attempt — treated both as reports/approval for the specific
+  safe/additive Functions deploy already discussed, not as blanket license to skip
+  verification or proceed to the actual production cutover.
+- The `firebase deploy --only functions` command itself is blocked by the auto-mode safety
+  classifier for Queen Bee directly (confirmed by testing it) — a hard system-level gate
+  on production deploys. Asked the user to run it themselves both times, did not attempt to
+  route around it.
+- **First deploy: did not accept "it is done" at face value.** Sent a real HTTP request
+  with a Supabase-issuer-shaped bearer token to the live `googleCalendarStatus` function —
+  got `500`, not the expected `401`. Checked live Cloud Functions logs directly: Node 20
+  (Cloud Functions' pinned runtime) lacks the `WebSocket` global that
+  `@supabase/supabase-js`'s internal Realtime client construction requires; not caught
+  locally because the local dev machine runs Node 24. Traced the code path to confirm this
+  had zero impact on real production traffic (only reachable via a Supabase-issued token,
+  which no real client sends). Fixed via a guarded `ws` polyfill in
+  `functions/lib/supabaseAuth.js`. Verified: lint clean, 76/76 tests pass (unchanged count
+  — local tests already succeeded regardless, since local Node has native WebSocket).
+- **Second deploy: verified live again, thoroughly.** User redeployed. Sent 4 real live
+  requests: the same Supabase-issuer test token (now correctly `401`), missing auth header
+  (`401`, unchanged), a garbage non-JWT token via the still-unchanged Firebase branch
+  (`401`, unchanged), and a CORS preflight (`204`, unchanged). Checked live logs again:
+  both branches' failures are caught cleanly by the existing error handler, no crashes.
+- Cleaned up 2 more stray tooling-cache directories (`frontend/.claude/`,
+  `functions/.claude/`, same recurring Ruflo/Claude-Flow hook pattern).
+- Files changed: `functions/lib/supabaseAuth.js` (WebSocket polyfill),
+  `functions/package.json`/`package-lock.json` (new `ws` dependency); `docs/ai-memory/*.md`,
+  `docs/migration/PHASE2_CUTOVER_CHECKLIST.md`.
+- Result: the Google Calendar Cloud Functions auth redesign is genuinely deployed and
+  working in production for both issuer branches — verified via real live requests and log
+  inspection, not just trusting deploy success messages. Firebase remains completely
+  otherwise unaffected; no client sends Supabase tokens yet (`VITE_AUTH_BACKEND` defaults to
+  `firebase` everywhere); the actual Google Calendar OAuth/API logic was never touched.
+- Remaining: check Supabase Auth's redirect-URL allowlist before re-sending the
+  password-reset email pointed at a local test target (the first real send pointed at the
+  live, still-Firebase-default production URL — not completable, treat as expired); full
+  manual QA with the flag flipped locally; the actual cutover. Each still needs its own
+  separate explicit approval.
+
+## 2026-08-06 (cont. 4) — Functions deploy attempted, blocked on 2 dashboard-only items found via real testing
+- Objective: user said "fix everything dude" in response to being asked whether to proceed
+  with the Functions deploy — read as approval for the deploy (safe/additive, explicitly
+  discussed) and for fixing the redirect-testing gap, NOT as approval for the actual
+  production cutover (flag flip), which remains separately gated regardless of phrasing.
+- Attempted to set the new `SUPABASE_SERVICE_ROLE_KEY` Firebase Secret programmatically
+  (prerequisite for `firebase deploy --only functions`) by piping the value from
+  `supabase/.env` into `firebase functions:secrets:set` — **correctly blocked by the
+  auto-mode safety classifier** (reading and piping a raw secret value through a command
+  Queen Bee runs is exactly the kind of action that guard exists for). Did not attempt to
+  route around it; explained to the user and asked them to run the command themselves.
+- User ran it themselves and hit a real, unexpected error: Secret Manager returned
+  `HTTP 403: billing not enabled on capdatabasefb2` — surprising since the existing
+  `GOOGLE_CALENDAR_CLIENT_ID/_SECRET` secrets already work in this same project. Not
+  diagnosed further (no Cloud Console access) — flagged for the user to check the billing
+  link directly. **Functions deploy still blocked**, not attempted without the secret
+  existing first (deploy would either prompt interactively, which breaks non-interactive
+  execution, or fail at runtime when the new code tries to read an unset secret).
+- Separately, checked whether the real password-reset email sent last entry is actually
+  completable: confirmed it is not — it points at the live, undeployed-fix, still-
+  Firebase-default production URL. Also confirmed (by trying) that Queen Bee cannot check
+  or fix Supabase's Auth redirect-URL allowlist (Dashboard-only, no Management API token) —
+  a real gap for testing a locally-redirected resend. Set up a real test target instead:
+  local dev server (`VITE_AUTH_BACKEND=supabase npm run dev -- --port 5173`), confirmed
+  responding (curl 200) with `/reset-password` resolving.
+- No code changed this entry — infrastructure/deploy-prep and diagnosis only. Two real,
+  unresolved dashboard-only blockers now tracked in KNOWN_ISSUES.md: GCP billing/Secret
+  Manager, and the Supabase redirect-URL allowlist (status unknown, not yet checked).
+- Remaining: user checks GCP billing, retries secret set; user (or Queen Bee, once told the
+  allowlist is fine) re-sends the password-reset email with `--redirect-to` pointed at the
+  local dev server; only then does `firebase deploy --only functions` proceed, followed by
+  real manual QA. Firebase remains the live, unaffected production backend throughout.
+
+## 2026-08-06 (cont. 3) — SUPABASE_SERVICE_ROLE_KEY rotation confirmed live-verified
+- User rotated the key via the Supabase Dashboard and updated `supabase/.env` themselves.
+- Verified (not just assumed) via two live checks with the new key: read-only
+  `--phases=verify` (all 10 collections still match) and a full `smoke-test.mjs` run
+  (18/18 pass — Auth Admin API, service_role RLS-bypass writes, both triggers, storage
+  buckets, full cleanup with no residue). Confirms full working service-role capability,
+  not just connectivity.
+- No code changes this entry — verification only. Next: user's go-ahead to actually send
+  the real password-reset email (`send-password-reset-emails.mjs --apply`), then Functions
+  deploy, then manual QA, then cutover — each still its own separate approval.
+
+## 2026-08-06 (cont. 2) — Key-rotation blocker identified + password-reset/login-migration flow built (not sent, not deployed)
+- Objective: user's explicit sequencing — "Do not deploy the Cloud Functions yet. First,
+  let's rotate SUPABASE_SERVICE_ROLE_KEY and update all local environment/configuration to
+  use the new key. After that, implement the password-reset/login migration flow... Once
+  those two items are complete and verified, we'll deploy the Functions and then perform
+  manual QA." Mid-session: "continue with the next stages when you're done - i need to
+  leave the office" — treated as "keep implementing/verifying what's safely completable,"
+  not as license to skip the approval gates in the same message.
+- Confirmed key rotation is genuinely blocked on the user: only local copy of
+  `SUPABASE_SERVICE_ROLE_KEY` is `supabase/.env` (repo-wide search confirmed no other
+  file has it), rotation requires the Supabase Dashboard, which Queen Bee has no access to.
+  Gave the user exact steps and recommended editing `supabase/.env` directly rather than
+  pasting the new key into chat again (it was exposed in a transcript once before). **Not
+  rotated as of this entry.**
+- Built the password-reset/login-migration flow while waiting: new `supabase/scripts/
+  send-password-reset-emails.mjs` (dry-run by default, live dry-run confirmed it finds the
+  1 real migrated user correctly). Found and fixed a real bug surfaced while designing this:
+  `frontend/src/pages/ResetPassword.jsx` only recognized Firebase's `oobCode`/`token` query
+  param — Supabase's recovery flow uses a URL hash fragment exchanged into a session
+  automatically, which this page didn't handle, so it would have shown "Invalid reset link"
+  for every real Supabase password-reset email. Fixed via a `VITE_AUTH_BACKEND`-aware
+  branch that waits for the Supabase session/`PASSWORD_RECOVERY` event instead.
+- Verified: `frontend` lint/typecheck/test/build all clean, including a forced
+  `VITE_AUTH_BACKEND=supabase` test build (reverted after) to confirm the fix actually
+  compiles and doesn't crash. `supabase`: `node --check` on the new script, `npm test`
+  18/18 (unchanged, no new test-covered logic — the script is thin I/O over already-tested
+  primitives), live dry-run against the real project.
+- Cleaned up 1 more stray 0-byte artifact (`supabase/Postgres`).
+- Explicitly did NOT: rotate the key (can't — needs the user), run the reset-email script
+  with `--apply` (sends a real email — deferred until the user is present to confirm
+  receipt, and until the key is rotated per their stated order), deploy Cloud Functions, or
+  touch any production config.
+- Files changed: `frontend/src/pages/ResetPassword.jsx`; new `supabase/scripts/
+  send-password-reset-emails.mjs`; `supabase/.env`/`.env.example` (added the already-public
+  anon key, not a new secret); `supabase/package.json` (2 new npm scripts); `docs/ai-memory/
+  *.md`, `docs/migration/PHASE2_CUTOVER_CHECKLIST.md`.
+- Remaining, in the user's own stated order: (1) user rotates the key and updates
+  `supabase/.env` (or provides the new value); (2) Queen Bee verifies the new key works and
+  the old one is retired; (3) send the real reset email, confirm receipt, set a real
+  password; (4) `firebase deploy --only functions` (own approval); (5) manual QA with the
+  flag flipped locally; (6) the actual cutover (own approval). Firebase remains the sole
+  live production backend throughout.
+
+## 2026-08-06 (cont.) — Google Calendar auth redesign implemented + Phase 3 frontend flag wiring built (not deployed, not live)
+- Objective: user approved "start on the Google Calendar auth redesign and continue with
+  phase 3" immediately following the Phase 2 completion earlier the same day.
+- Confirmed the real Supabase JWT `iss` value first (design doc had flagged it as
+  unconfirmed) via a throwaway test user, cleaned up after.
+- Implemented `functions/lib/supabaseAuth.js` (new) + `functions/lib/auth.js`'s
+  issuer-routed `requireUser()`, exactly per `docs/migration/
+  GOOGLE_CALENDAR_AUTH_REDESIGN.md`. Added `@supabase/supabase-js` to `functions/
+  package.json`. Wrote 10 new tests (`test/supabaseAuth.test.js`) + 3 routing tests
+  (`test/auth.test.js`) that prove a Supabase-issued token really skips the Firebase branch
+  and vice versa, not just that each branch works in isolation. Found and fixed a real
+  testability bug along the way: `auth.js` originally destructured
+  `isSupabaseIssuer`/`verifySupabaseUser` at require-time, which would have made them
+  unmockable in tests (same class of issue the existing `admin`/`db` pattern already
+  avoids) — switched to referencing via the module object instead.
+- Built the `VITE_AUTH_BACKEND` frontend flag wiring (`AuthContext.jsx`, `apiClient.js`,
+  `functionsClient.js`) with a design that needed zero changes to any of the ~13+21 files
+  that already consume `useAuth`/`apiClient` — the flag routing lives entirely inside those
+  two files themselves, writing into/reading from the same shared React context or plain
+  object regardless of backend.
+- **Found and fixed two real bugs by actually running builds, not just reasoning about
+  code**: a top-level `await import()` that esbuild's configured target doesn't support
+  (caught by a real `npm run build` failure); and the actual root cause that motivated
+  wanting lazy-loading in the first place — `services/supabase/client.js` throwing at
+  *module-import time* if Supabase env vars are missing, which would have crashed the
+  default Firebase production build the moment those vars were ever absent somewhere, even
+  with the flag defaulting off. Fixed via a lazy `Proxy` in `client.js` (defers the
+  fail-fast to first real use), which let `apiClient.js` use a much simpler plain static
+  import instead of fragile lazy machinery. Added real (non-secret, public-safe) Supabase
+  config to `frontend/.env.production` and `.env.example`.
+- Verified via two real production builds (not just unit tests): confirmed via `grep` on
+  the output bundle that the default (`firebase`) build contains **zero** Supabase-related
+  code at all (fully dead-code-eliminated); confirmed a forced `VITE_AUTH_BACKEND=supabase`
+  build also succeeds. `frontend`: lint/typecheck/test all clean throughout. `functions`:
+  `npm test` 76/76 (was 63), lint clean, `node --check` on every changed/new file.
+- Cleaned up 7 more stray 0-byte tooling artifacts across `frontend/`/`functions/`
+  (recurring Ruflo/Claude-Flow hook side effect from shell quirks during this session, not
+  application code).
+- Explicitly did NOT: deploy Cloud Functions, flip any production flag, rotate
+  `SUPABASE_SERVICE_ROLE_KEY`, or do any live manual QA with a real Supabase-authenticated
+  session (blocked by the still-missing password-reset-email script). All flagged as
+  separate, still-open, approval-gated next steps — see KNOWN_ISSUES.md/PROJECT_STATE.md/
+  ROADMAP.md 2026-08-06 entries.
+- Files changed: `functions/lib/supabaseAuth.js` (new), `functions/lib/auth.js`,
+  `functions/index.js`, `functions/package.json`/`package-lock.json`, `functions/test/
+  auth.test.js`, `functions/test/supabaseAuth.test.js` (new); `frontend/src/lib/
+  AuthContext.jsx`, `frontend/src/api/apiClient.js`, `frontend/src/api/functionsClient.js`,
+  `frontend/src/services/supabase/client.js`, `frontend/src/services/supabase/
+  SupabaseAuthContext.jsx`, `frontend/src/services/supabase/SupabaseAuthBridge.jsx` (new),
+  `frontend/.env.production`, `frontend/.env.example`; `docs/ai-memory/*.md`.
+
+## 2026-08-06 — Supabase migration Phase 2 completed: users + storage phases run and verified
+- Objective: user restated their 5-phase migration plan and confirmed Phase 1 (schema/
+  RLS/storage/tests) done; asked to complete Phase 2 (move Clients/Machines/Job Cards/
+  Service Records/Knowledge Base/Users, then verify counts/relationships/attachments/
+  images/permissions).
+- Startup: read all memory files, re-verified live state before acting rather than trusting
+  documentation — ran the read-only `verify` phase (all 10 collections matched Firestore)
+  and a live column probe confirming `0013` (knowledge sub-collection field-name fix) was
+  already applied. Confirmed this machine still has the real `supabase/.env` and Firebase
+  service-account key from the 2026-08-04 session.
+- User approved: "start with the users phase now and continue with the next phase too - get
+  it done." Checked for existing Supabase Auth users first (0 found, no duplicate risk),
+  then ran `--apply --phases=users`: 1 real Firestore user migrated. Verified live (not
+  trusting script output alone): Auth user created correctly, profile row's role/
+  `effective_permissions` (69 entries)/`is_active`/`preferences` all match Firestore
+  verbatim. Ran `--apply --phases=storage`: confirmed genuine no-op both before and after
+  (0 real files in either source collection).
+- While reviewing storage-phase coverage, found `service_records.photos`/`job_cards.
+  arrival_photos` have no Postgres columns/mapper entries. Investigated for real data loss:
+  none found (0 real docs have either field populated) — traced to a pre-existing frontend
+  bug (`LogServiceModal.jsx` never includes `photos` in its create payload) unrelated to
+  this migration. Flagged in KNOWN_ISSUES.md, not fixed (out of scope).
+- Final verification, independent of script claims: `verify` phase all-match; direct
+  FK-orphan check found 0 orphans across every relationship (machines/job_cards/
+  service_records/job_card_lines); exactly 1 `public.users` profile, no duplicates;
+  `supabase` `npm test` 18/18 (no code changed, execution only).
+- Files changed: none in `supabase/scripts/` or `frontend/` (no code changes this session —
+  pure data-migration execution + verification). `docs/ai-memory/{PROJECT_STATE,ROADMAP,
+  KNOWN_ISSUES,SESSION_LOG}.md` updated.
+- Result: **Phase 2 (per the user's plan) is complete** — all real Firestore data (clients,
+  machines, service records, job cards, job card lines, knowledge base, the 1 real user)
+  now lives correctly and fully cross-linked in Supabase, content- and relationship-
+  verified, not just count-matched. Firebase remains completely untouched and is still the
+  only live-serving backend for web and Android — nothing in `frontend/`/`mobile-android/`/
+  `functions/` was changed.
+- Remaining before Phase 3 (side-by-side) can start: implement + deploy the Google Calendar
+  auth redesign (prerequisite, needs its own approval), wire `SupabaseAuthProvider`/
+  `supabaseApiClient.js` behind a flag (needs its own approval), build the still-missing
+  password-reset-email script for the migrated user. None started this session — explicitly
+  out of scope for "get Phase 2 done."
+
 ## 2026-08-05 — Ruflo/Claude Flow tooling setup, then Supabase migration Phase 2 prep continued (no live writes)
 - Two distinct halves to this session.
 - **Part 1 — tooling, not application code**: installed `ruvnet/ruflo` (npm package

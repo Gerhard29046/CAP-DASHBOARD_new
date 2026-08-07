@@ -2,6 +2,12 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { admin, db } = require("../lib/firebaseAdmin");
 const { requireUser, hasPermission, hasAnyPermission, requirePermission } = require("../lib/auth");
+const supabaseAuth = require("../lib/supabaseAuth");
+
+function fakeJwt(payload) {
+  const encode = (obj) => Buffer.from(JSON.stringify(obj)).toString("base64url");
+  return `${encode({ alg: "none" })}.${encode(payload)}.fake-signature`;
+}
 
 function fakeReq(headers) {
   return {
@@ -106,6 +112,56 @@ test("requireUser: active user resolves with uid, role, and effectivePermissions
     uid: "user-2",
     role: "technician",
     effectivePermissions: ["calendar.google.view"],
+  });
+});
+
+// --- requireUser: issuer-routed dual verification (added 2026-08-06, see
+// docs/migration/GOOGLE_CALENDAR_AUTH_REDESIGN.md) ---
+
+test("requireUser: a token with a Supabase issuer routes to the Supabase branch, not Firebase", async (t) => {
+  const authInstance = admin.auth();
+  const verifyIdTokenMock = t.mock.method(authInstance, "verifyIdToken", async () => {
+    throw new Error("should not be called for a Supabase-issued token");
+  });
+  t.mock.method(supabaseAuth, "isSupabaseIssuer", (iss) => iss === "https://cjvrquipmnoihksijful.supabase.co/auth/v1");
+  const token = fakeJwt({ iss: "https://cjvrquipmnoihksijful.supabase.co/auth/v1", sub: "supabase-uid-1" });
+  t.mock.method(supabaseAuth, "verifySupabaseUser", async (receivedToken) => {
+    assert.equal(receivedToken, token);
+    return { uid: "supabase-uid-1", role: "admin", effectivePermissions: ["calendar.google.view"] };
+  });
+
+  const user = await requireUser(fakeReq({ Authorization: `Bearer ${token}` }));
+  assert.deepEqual(user, { uid: "supabase-uid-1", role: "admin", effectivePermissions: ["calendar.google.view"] });
+  assert.equal(verifyIdTokenMock.mock.callCount(), 0);
+});
+
+test("requireUser: a token with a Firebase issuer (or no recognizable issuer) still uses the Firebase branch, unchanged", async (t) => {
+  const authInstance = admin.auth();
+  t.mock.method(authInstance, "verifyIdToken", async () => ({ uid: "firebase-uid-1" }));
+  t.mock.method(db, "collection", () => ({
+    doc: () => ({
+      get: async () => fakeSnapshot(true, { is_active: true, role: "technician", effective_permissions: [] }),
+    }),
+  }));
+  const verifySupabaseUserMock = t.mock.method(supabaseAuth, "verifySupabaseUser", async () => {
+    throw new Error("should not be called for a Firebase-issued token");
+  });
+
+  const token = fakeJwt({ iss: "https://securetoken.google.com/capdatabasefb2", sub: "firebase-uid-1" });
+  const user = await requireUser(fakeReq({ Authorization: `Bearer ${token}` }));
+  assert.deepEqual(user, { uid: "firebase-uid-1", role: "technician", effectivePermissions: [] });
+  assert.equal(verifySupabaseUserMock.mock.callCount(), 0);
+});
+
+test("requireUser: a malformed (non-JWT) bearer token falls through to the Firebase branch and gets a 401 from verifyIdToken, same as before this change", async (t) => {
+  const authInstance = admin.auth();
+  t.mock.method(authInstance, "verifyIdToken", async () => {
+    throw new Error("invalid token");
+  });
+
+  await assert.rejects(() => requireUser(fakeReq({ Authorization: "Bearer not-a-real-jwt" })), (error) => {
+    assert.equal(error.status, 401);
+    return true;
   });
 });
 

@@ -7,7 +7,9 @@
     "test": "node --test scripts/lib/*.test.mjs",
     "migrate:dry-run": "node scripts/migrate-firestore-to-postgres.mjs",
     "migrate:apply": "node scripts/migrate-firestore-to-postgres.mjs --apply",
-    "migrate:verify": "node scripts/migrate-firestore-to-postgres.mjs --phases=verify"
+    "migrate:verify": "node scripts/migrate-firestore-to-postgres.mjs --phases=verify",
+    "send-password-resets:dry-run": "node scripts/send-password-reset-emails.mjs",
+    "send-password-resets:apply": "node scripts/send-password-reset-emails.mjs --apply"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",

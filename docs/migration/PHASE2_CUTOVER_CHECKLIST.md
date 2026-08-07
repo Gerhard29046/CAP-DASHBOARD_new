@@ -1,13 +1,15 @@
 # Phase 2 Cutover Checklist — Firebase → Supabase
 
-_Last updated: 2026-08-05. Status: schema/RLS/storage live and verified (`0001`-`0013`
+_Last updated: 2026-08-06. Status: schema/RLS/storage live and verified (`0001`-`0013`
 applied — see `docs/ai-memory/PROJECT_STATE.md`/`KNOWN_ISSUES.md` for the full list, most
 recently `0013` correcting the 4 knowledge-base sub-collection schemas to their real
-Firestore field names). The **entities + relink migration phases are fully complete and
-content-verified** against the real project — all 10 collections match Firestore, real row
-content and FK relinks spot-checked (not just counts). The **users** and **storage**
-migration phases have deliberately NOT been run yet (each needs its own separate
-explicit go-ahead per the runbook below — see `docs/ai-memory/DECISIONS.md`).
+Firestore field names). **All data-migration phases (entities, relink, users, storage) are
+now fully complete and verified** against the real project — all 10 collections match
+Firestore, real row content and every FK relationship spot-checked with zero orphans (not
+just counts), the 1 real user has a working Supabase Auth account + profile row with
+content-verified role/permissions, and the storage phase is confirmed a genuine no-op (0
+real files exist anywhere to copy yet). See `docs/ai-memory/PROJECT_STATE.md`'s 2026-08-06
+entry for full detail.
 **No frontend/Android cutover step below has been executed.** Firebase remains the sole
 active production backend for web and Android. This document exists so "proceed with the
 final cutover" maps to a concrete, reviewable plan rather than a single big decision — see
@@ -108,41 +110,59 @@ resolved:
 6. **[done, 2026-08-04]** Manually spot-checked real records (a real machine, service
    record, and job card) field-by-field and by traced FK against their Firestore originals
    — confirmed correct, not just row-count matching.
-7. **[not started — needs explicit go-ahead]** `--apply --phases=users` — creates real
-   Supabase Auth accounts. `0007` is applied (confirmed) so Phase C's service_role writes to
-   `role`/`effective_permissions` will work. **Not run.**
-8. **[no-approval, blocked on item 1.3 above]** Send password-reset emails to every migrated
-   user once the script for that exists. Script still does not exist.
-9. **[not started — needs explicit go-ahead]** `--apply --phases=storage` — copies
-   `knowledge_media`/`knowledge_documents` files from Firebase Storage to Supabase Storage.
-   Best-effort, logs and continues on individual failures. **Note**: both sub-collections
-   currently have 0 real documents (confirmed live, most recently 2026-08-04), so running
-   this today would be a no-op, not a meaningful test — re-confirm doc counts first.
-10. **[no-approval]** Re-run `--phases=verify` one more time post-storage-copy as a final
-    completeness check.
+7. **[done, 2026-08-06]** `--apply --phases=users` — the 1 real Firestore user migrated to a
+   real Supabase Auth account. Content-verified live: profile row's `role`/
+   `effective_permissions` (69 entries)/`is_active`/`preferences` all match Firestore
+   verbatim.
+8. **[built + dry-run verified, key rotation prerequisite now done 2026-08-06, NOT sent
+   yet]** `supabase/scripts/send-password-reset-emails.mjs` — dry-run confirmed it correctly
+   finds the 1 real migrated user. The key-rotation blocker is resolved; still needs an
+   explicit go-ahead to actually `--apply` (sends a real email) — do this with the user
+   present to confirm receipt.
+9. **[done, 2026-08-06]** `--apply --phases=storage` — confirmed a genuine no-op both before
+   and after (0 real documents in `knowledge_media`/`knowledge_documents`).
+10. **[done, 2026-08-06]** Re-ran `--phases=verify` post-storage-copy — all 10 collections
+    still match. Also independently checked every FK relationship for orphans (machines/
+    job_cards/service_records/job_card_lines) — 0 orphans found across the board.
 
-## 3. Frontend wiring (not started — explicitly deferred pending approval)
+## 3. Frontend wiring
 
-0. **[approval, prerequisite]** Implement + deploy the Google Calendar auth redesign
-   (`docs/migration/GOOGLE_CALENDAR_AUTH_REDESIGN.md`) — `functions/lib/auth.js`'s
-   issuer-routed dual verification, `functionsClient.js`'s flag-aware token attachment.
-   Do this **before** step 1 below, not after — the redesign is additive/backward-compatible
-   (safe to deploy well ahead of the flag flip with zero behavior change for current
-   callers), but flipping the flag without it deployed first will silently break Google
-   Calendar for every user.
-1. **[approval]** Wire `SupabaseAuthProvider` into `App.jsx` behind an env flag (e.g.
-   `VITE_AUTH_BACKEND=firebase|supabase`), defaulting to `firebase`. This touches the exact
-   file every one of the 13 Firebase-dependent frontend files depends on through `useAuth`
-   — needs care and explicit sign-off even though the default keeps Firebase live.
-2. **[approval]** Wire `supabaseApiClient.js` behind the same or a parallel flag, replacing
-   `apiClient` imports across pages (13 files) — realistically a page-by-page or
-   route-by-route rollout, not one commit, given the blast radius CLAUDE.md flags for this
-   exact file set.
-3. **[no-approval, once flag exists]** With the flag flipped **only in a local/staging
+-1. **[done, 2026-08-06]** Rotated `SUPABASE_SERVICE_ROLE_KEY` in the Supabase Dashboard,
+   `supabase/.env` updated by the user directly. Verified working via a live `--phases=verify`
+   and a full `smoke-test.mjs` run (18/18 pass) — not just a connectivity check.
+0. **[DONE, deployed + live-verified 2026-08-06]** Google Calendar auth redesign
+   (`docs/migration/GOOGLE_CALENDAR_AUTH_REDESIGN.md`) — `functions/lib/supabaseAuth.js`
+   (new) + `functions/lib/auth.js`'s issuer-routed dual verification. Deployed via
+   `firebase deploy --only functions`. A real bug was found on the first deploy via live
+   testing (Node 20 runtime lacks the `WebSocket` global `@supabase/supabase-js` needs —
+   fixed with a `ws` polyfill) and confirmed fixed on redeploy via 4 separate live HTTP
+   probes against the real deployed function plus direct Cloud Functions log inspection —
+   see PROJECT_STATE.md's 2026-08-06 entry for full detail. Confirmed zero impact on real
+   Firebase-authenticated traffic throughout (the bug was only reachable via a
+   Supabase-issued token, which no real client sends yet).
+1. **[implemented + unit/build-verified 2026-08-06, NOT live]** `VITE_AUTH_BACKEND` flag
+   wired directly into `frontend/src/lib/AuthContext.jsx` (defaulting to `firebase`) —
+   turned out to need **zero changes** to any of the 13 Firebase-dependent frontend files,
+   since the flag routing lives entirely inside `AuthContext.jsx` itself (writes into the
+   same shared React context regardless of backend). Two real bugs found+fixed via testing
+   actual production builds — see PROJECT_STATE.md's 2026-08-06 entry. Verified via two
+   real `npm run build` runs (one per flag value); the default build was confirmed via
+   bundle inspection to contain zero Supabase-related code.
+2. **[implemented + unit/build-verified 2026-08-06, NOT live]** `apiClient.js` similarly
+   wired to the same flag — also needed **zero changes** to the 21 files that `import {
+   apiClient }`. `supabaseApiClient.js`'s pre-existing documented interface deviations
+   (role_permissions shape, `knowledge_service_codes.code`/`service_code` rename since
+   corrected by `0013`, session-based password reset, realtime re-query semantics) are
+   unchanged by this wiring — still need re-verification against real page behavior in
+   step 3 below.
+3. **[still not done — blocked]** With the flag flipped **only in a local/staging
    build**, manually click through every page: clients, machines, job cards, service
    records, knowledge base, user admin, calendar (service-record-derived events), file
    upload/download for each bucket, permission-gated UI (as both an admin and a
-   limited-permission test user).
+   limited-permission test user). **Currently blocked** by two other open items: the
+   missing password-reset-email script (the 1 migrated Supabase Auth user has no usable
+   password yet) and step 0 above not being deployed yet (Google Calendar would 401 under
+   a Supabase session until then).
 4. **[no-approval]** Resolve/re-verify the documented interface deviations in
    `supabaseApiClient.js` (role_permissions shape, `knowledge_service_codes.code` rename,
    session-based password reset, realtime re-query semantics) against actual page behavior
@@ -210,9 +230,10 @@ users.
 - [ ] Frontend flag wiring (section 3) built and manually QA'd end-to-end on a
       local/staging build, both as an admin and a limited-permission user
 - [ ] Android decision (lockstep vs. deferred) confirmed
-- [x] `users`/`storage` migration phases run — **partially done**: `entities`/`relink` are
-      fully complete and content-verified (2026-08-04); `users`/`storage` are still pending
-      their own separate go-ahead (see section 2, items 7/9)
+- [x] `users`/`storage` migration phases run — **fully done and verified (2026-08-06)**: all
+      four data-migration phases (entities/relink/users/storage) complete, content- and
+      relationship-verified, zero FK orphans, storage confirmed a genuine no-op (no real
+      files exist yet)
 
 **Immediately before cutover:**
 - [x] Dry-run of the full migration script reviewed with no unexplained anomalies — done
