@@ -1,5 +1,46 @@
 # Session Log
 
+## 2026-08-12 (cont.) — Google Calendar sync removed entirely (user: cost)
+- Objective: user said "i dont want to connect to google calender anymore. it cost me too
+  much money", then, after Queen Bee asked for scope, "make that the calender doesnt sync to
+  google. but keep a calender" — full removal of the sync feature, keep the in-app Calendar.
+- Gave the user the immediate stop-the-bleeding command (`firebase functions:delete ...`,
+  exact 8 function names + region/project) since Queen Bee can't run deploy/undeploy actions.
+- Investigated scope first: confirmed `functions/index.js` exports ONLY the 8 Google
+  Calendar functions (nothing else deployed from this repo), `functionsClient.js`/
+  `callFunction` are used only for Google Calendar, and `CalendarPage.jsx`'s "Upcoming
+  Services" rendering already works entirely from Firestore/Postgres data independent of
+  Google (confirmed by reading `calendarEvents()` in both `apiClient.js`/
+  `supabaseApiClient.js` before touching anything).
+- Removed: `SystemSettings.jsx` (deleted) + its `/settings` route/nav entry; `
+  functionsClient.js` (deleted); the Google branch + route dispatch from both `apiClient.js`
+  and `supabaseApiClient.js`; `CalendarPage.jsx`'s Google toggle/status/event-details UI
+  (kept the Upcoming Services calendar itself); all 8 Cloud Functions' exports
+  (`functions/index.js` now exports nothing, left a header comment with the exact
+  `functions:delete` command for whoever picks this up); `functions/lib/
+  googleCalendarService.js`/`googleCalendarStore.js`/`googleOAuthClient.js` + their test
+  files; `googleapis` from `functions/package.json` (ran `npm install` to update the
+  lockfile); `VITE_FUNCTIONS_BASE_URL` from `frontend/.env.production`/`.env.example`.
+  Rewrote `CLAUDE.md` section 7 to record the removal instead of describing dead
+  architecture as current.
+- Deliberately did NOT remove: `functions/lib/auth.js`/`supabaseAuth.js` (generic reusable
+  auth infra, not Google-specific), `calendar.google.*` permission keys, Laravel's Google
+  Calendar code, or the Google Calendar docs (all left as harmless/historical).
+- Verified: `frontend` lint/typecheck/test(2/2)/build all clean (build re-run twice, once
+  after the main removal and once after the env cleanup). `functions` lint clean, test suite
+  28/28 pass (down from before since 3 Google-specific test files were deleted alongside
+  their subjects — not silently broken/skipped).
+- Updated `docs/ai-memory/{PROJECT_STATE,DECISIONS,KNOWN_ISSUES,ROADMAP}.md` and
+  `CLAUDE.md` section 7.
+- **Not done, flagged for the user/next session**: (1) user must run `firebase
+  functions:delete ...` to actually stop billing on whatever's deployed right now — code
+  removal alone doesn't undeploy anything; (2) the stored Firestore `system_integrations/
+  google_calendar` OAuth connection wasn't explicitly revoked; (3) Android's
+  `GoogleCalendarRepository` read-only consumer wasn't touched — belongs to `android-ui-bee`/
+  `integration-sync-bee`, not delegated yet this session.
+- Did NOT commit this work yet as of writing this entry — see git status before assuming it
+  landed.
+
 ## 2026-08-12 — Memory catch-up: reconstructed 5 days of undocumented work, merged stray agent memory, updated ai-memory docs, ran verification
 - Objective: user said "1 then continue with everything" in response to a proposed plan
   (consolidate+commit the backlog of uncommitted work, then continue with everything else —

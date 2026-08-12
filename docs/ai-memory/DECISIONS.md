@@ -1,5 +1,48 @@
 # Decisions
 
+## 2026-08-12 — Google Calendar sync removed entirely (cost)
+- Decision: remove the Google Calendar sync feature completely — web UI, `apiClient`/
+  `supabaseApiClient` integration, and all 8 Cloud Functions — while explicitly **keeping**
+  the CAP Dashboard's own in-app Calendar page (Upcoming Services, built from
+  `service_records`/`machines`/`clients` directly, never dependent on Google).
+- Reason: explicit user instruction — "i dont want to connect to google calender anymore.
+  it cost me too much money", then "make that the calender doesnt sync to google. but keep
+  a calender." This followed Queen Bee finding the live `googleCalendarStatus` function
+  returning raw platform-level 500/503 errors on every request pattern during unrelated
+  Supabase-migration QA — possibly already related to the user taking cost-cutting action on
+  the Google Cloud side before this conversation, though that was never confirmed.
+- Affected: `frontend/src/pages/SystemSettings.jsx` (deleted), `frontend/src/api/
+  functionsClient.js` (deleted), `frontend/src/api/apiClient.js`/`supabaseApiClient.js`
+  (Google branch removed from `calendarEvents()`, `/google-calendar/*` route dispatch
+  removed), `frontend/src/pages/CalendarPage.jsx` (Google toggle/status/event-details UI
+  removed, Upcoming Services UI kept), `frontend/src/components/AppLayout.jsx` + `App.jsx`
+  (`/settings` route and nav entry removed), `functions/index.js` (all 8 `googleCalendar*`
+  exports removed — file now exports nothing), `functions/lib/googleCalendarService.js`/
+  `googleCalendarStore.js`/`googleOAuthClient.js` (deleted) + their tests,
+  `functions/package.json` (`googleapis` dependency removed), `frontend/.env.production`/
+  `.env.example` (`VITE_FUNCTIONS_BASE_URL` removed), `CLAUDE.md` section 7 (marked
+  removed, historical record only).
+- Deliberately kept: `functions/lib/auth.js`/`supabaseAuth.js` (generic Cloud Functions auth
+  infrastructure, not Google-specific, unused/unbilled while nothing exports them — no cost
+  or security reason to remove); `calendar.google.*` permission keys in the permission
+  catalog/Firestore rules (unused, harmless, not worth the risk of touching the permission
+  model for a pure cleanup); Laravel's Google Calendar controllers/tests (already
+  documented dead code, out of scope); `docs/GOOGLE_CALENDAR_SETUP.md`/`docs/migration/
+  GOOGLE_CALENDAR_AUTH_REDESIGN.md` (historical record).
+- **Not done this session** (needs the user or a delegated worker bee): actually deleting
+  the deployed Cloud Functions from GCP (`firebase functions:delete ...` — deploy-adjacent
+  action Queen Bee can't run, exact command given to the user directly and in `functions/
+  index.js`'s header comment); revoking the stored OAuth connection in Firestore
+  `system_integrations/google_calendar`; removing the Android `GoogleCalendarRepository`
+  read-only consumer (belongs to `android-ui-bee`/`integration-sync-bee`).
+- Consequences: `/settings` and the Google Calendar section of the app no longer exist for
+  any user, regardless of permission. The in-app Calendar page (`/calendar`) is unaffected
+  and continues to work from Firestore/Postgres data directly.
+- Reversal condition: if Google Calendar sync is wanted again later, the removed code is
+  fully recoverable from git history at this commit's parent — this was a clean removal, not
+  a destructive data-loss action (no Firestore/Storage data was deleted by this change
+  itself).
+
 ## 2026-08-05 — Google Calendar authentication redesign: issuer-routed dual verification, design-only
 - Decision: recommend redesigning `functions/lib/auth.js`'s `requireUser()` to branch on
   the bearer token's `iss` (issuer) claim — Firebase ID tokens keep using the existing

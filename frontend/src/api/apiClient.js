@@ -20,7 +20,6 @@ import {
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import { auth, db, storage } from "@/lib/firebase";
 import { relatedRecords } from "@/lib/records";
-import { callFunction } from "@/api/functionsClient";
 import { optimizeImageForUpload } from "@/lib/imageOptimize";
 import { supabaseApiClient } from "@/api/supabaseApiClient";
 
@@ -166,15 +165,19 @@ function parseBody(options) {
   return typeof options.body === "string" ? JSON.parse(options.body) : options.body;
 }
 
+// Google Calendar sync was removed 2026-08-12 (user decision: Cloud Functions/Google API
+// cost was not justified) -- this now only ever builds the CAP Dashboard's own "Upcoming
+// Services" calendar from Firestore data directly. The `include_google`/`google_reason`
+// wire shape is kept so CalendarPage.jsx's request doesn't need a matching rewrite, but no
+// Google branch exists to populate it anymore.
 async function calendarEvents(searchParams) {
   const start = searchParams.get("start");
   const end = searchParams.get("end");
   const includeServices = searchParams.get("include_services") !== "0";
-  const includeGoogle = searchParams.get("include_google") === "1";
 
   let events = [];
   const warnings = [];
-  let googleReason = null;
+  const googleReason = null;
 
   if (includeServices) {
     const [services, machines, clients] = await Promise.all([
@@ -213,45 +216,7 @@ async function calendarEvents(searchParams) {
       });
   }
 
-  if (includeGoogle) {
-    try {
-      const googleParams = new URLSearchParams();
-      if (start) googleParams.set("start", start);
-      if (end) googleParams.set("end", end);
-      const googleResult = await callFunction("googleCalendarEvents", { searchParams: googleParams });
-      events = events.concat(googleResult?.events || []);
-      googleReason = googleResult?.reason || null;
-      if (Array.isArray(googleResult?.warnings)) warnings.push(...googleResult.warnings);
-    } catch (error) {
-      console.error("Failed to load Google Calendar events", error);
-      googleReason = "function_unavailable";
-    }
-  }
-
   return { events, warnings, google_reason: googleReason };
-}
-
-const googleCalendarFunctionMap = {
-  status: { GET: "googleCalendarStatus" },
-  connect: { GET: "googleCalendarConnect" },
-  calendars: { GET: "googleCalendarListCalendars", PUT: "googleCalendarSelectCalendars", POST: "googleCalendarSelectCalendars" },
-  display: { PATCH: "googleCalendarSetDisplayEnabled" },
-  disconnect: { DELETE: "googleCalendarDisconnect", POST: "googleCalendarDisconnect" },
-};
-
-async function googleCalendarRoute(action, method, options) {
-  const methodMap = googleCalendarFunctionMap[action];
-  const functionName = methodMap && methodMap[method];
-  if (!functionName) {
-    throw Object.assign(new Error(`Unsupported Google Calendar operation: ${method} ${action}`), { status: 405 });
-  }
-  if (functionName === "googleCalendarSelectCalendars") {
-    return callFunction(functionName, { method: "PUT", body: parseBody(options) });
-  }
-  if (functionName === "googleCalendarSetDisplayEnabled") {
-    return callFunction(functionName, { method: "PATCH", body: parseBody(options) });
-  }
-  return callFunction(functionName, { method: functionName === "googleCalendarDisconnect" ? "DELETE" : "GET" });
 }
 
 async function request(path, options = {}) {
@@ -262,7 +227,6 @@ async function request(path, options = {}) {
 
   if (segments[0] === "me") return apiClient.auth.me();
   if (segments[0] === "calendar" && segments[1] === "events") return calendarEvents(url.searchParams);
-  if (segments[0] === "google-calendar" && segments[1]) return googleCalendarRoute(segments[1], method, options);
   if (segments[0] === "knowledge-machines" && segments[1] && segments[2]) {
     const childCollections = {
       notes: "knowledge_notes",

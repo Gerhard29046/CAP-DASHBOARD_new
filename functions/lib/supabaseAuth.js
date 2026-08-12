@@ -15,17 +15,18 @@ if (typeof globalThis.WebSocket === "undefined") {
 }
 
 // Supabase branch of requireUser() (functions/lib/auth.js), added 2026-08-06 per
-// docs/migration/GOOGLE_CALENDAR_AUTH_REDESIGN.md. Verifies a Supabase-issued JWT
-// server-side via supabase.auth.getUser(token), then loads role/effective_permissions/
-// is_active from Postgres with a service-role client (RLS-bypassing by design -- this is
-// trusted server-side code, the same trust level Firebase Admin already had for the
-// Firestore branch). Returns the exact same { uid, role, effectivePermissions } shape
-// requireUser() already returns for the Firebase branch, so no call site in
-// functions/index.js needs to change.
+// docs/migration/GOOGLE_CALENDAR_AUTH_REDESIGN.md, originally for the Google Calendar
+// Cloud Functions (removed entirely 2026-08-12, see index.js). Left in place as generic,
+// reusable auth infrastructure for any future Cloud Function -- currently unused by any
+// export, not deployed, not billed. Verifies a Supabase-issued JWT server-side via
+// supabase.auth.getUser(token), then loads role/effective_permissions/is_active from
+// Postgres with a service-role client (RLS-bypassing by design -- this is trusted
+// server-side code, the same trust level Firebase Admin already had for the Firestore
+// branch). Returns the exact same { uid, role, effectivePermissions } shape requireUser()
+// already returns for the Firebase branch.
 
-// Not secret (the project URL is not sensitive), but defined as a param for consistency
-// with the existing GOOGLE_CALENDAR_CLIENT_ID/_SECRET pattern (functions/lib/
-// googleOAuthClient.js) and so it can be overridden per-environment without a code change.
+// Not secret (the project URL is not sensitive), but defined as a param so it can be
+// overridden per-environment without a code change.
 const SUPABASE_URL = defineString("SUPABASE_URL", {
   default: "https://cjvrquipmnoihksijful.supabase.co",
 });

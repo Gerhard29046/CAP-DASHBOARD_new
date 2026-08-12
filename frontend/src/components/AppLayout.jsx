@@ -15,7 +15,6 @@ import {
   Receipt,
   Library,
   CalendarDays,
-  Settings,
 } from "lucide-react";
 import { useAuth } from "@/lib/AuthContext";
 
@@ -30,7 +29,6 @@ const ALL_NAV_ITEMS = [
   { label: "Machine Knowledge Base", path: "/knowledge-base", icon: Library, permission: "knowledge_base.view" },
   { label: "Invoice Queue", path: "/invoice-queue", icon: Receipt, permission: "invoices.queue.view" },
   { label: "User Management", path: "/admin/users", icon: ShieldCheck, permission: "users.view" },
-  { label: "System Settings", path: "/settings", icon: Settings, anyPermission: ["calendar.google.view", "calendar.google.connect", "calendar.google.calendars.select", "calendar.google.disconnect"] },
 ];
 
 export default function AppLayout() {

@@ -1,5 +1,35 @@
 # Known Issues
 
+## Google Calendar sync removed 2026-08-12 — 3 follow-up actions still needed
+- See `docs/ai-memory/DECISIONS.md`'s 2026-08-12 entry for the full removal record. Web UI,
+  `apiClient`/`supabaseApiClient` integration, and all 8 Cloud Functions' code are removed.
+  **Still outstanding**:
+  1. **Delete the actually-deployed Cloud Functions from GCP** (code removal alone doesn't
+     stop billing for whatever's still deployed from before). Exact command (also in
+     `functions/index.js`'s header comment):
+     ```
+     firebase functions:delete googleCalendarStatus googleCalendarConnect \
+       googleCalendarCallback googleCalendarListCalendars googleCalendarSelectCalendars \
+       googleCalendarSetDisplayEnabled googleCalendarDisconnect googleCalendarEvents \
+       --region=africa-south1 --project=capdatabasefb2
+     ```
+     Must be run by the user (Queen Bee can't run deploy/undeploy actions).
+  2. **Revoke the stored OAuth connection** in Firestore `system_integrations/
+     google_calendar` — the code that read/wrote it is gone, but the stored tokens
+     themselves weren't explicitly deleted/revoked this session.
+  3. **Android's `GoogleCalendarRepository` read-only consumer** (`mobile-android/app/src/
+     main/java/za/co/connoisseurauto/capmobile/GoogleCalendarRepository.kt` +
+     `MainActivity.kt` reference) was NOT touched — it will just get connection errors now
+     that the Cloud Functions are gone (matches its existing error-handling design, not a
+     crash), but it's dead code that should be removed by `android-ui-bee`/
+     `integration-sync-bee` for cleanliness. Not delegated yet as of this entry.
+- The previously-tracked "Google Calendar Cloud Functions reject a genuinely valid Supabase
+  session with 401" bug (below, dated 2026-08-07) is now moot — the feature it affected no
+  longer exists. Left in this file as historical record, not removed, since the underlying
+  investigation (a real deployed-function 500/503 seen 2026-08-12, different from the
+  documented 401) is what prompted the user's removal decision and may be relevant context
+  if Google Calendar is ever reconsidered.
+
 ## Memory catch-up (2026-08-12): 2026-08-07 through 2026-08-11 work was never recorded here — reconstructed from agent memory + code comments, not a live session transcript
 - On 2026-08-12, found the working tree (branch `supabase-phase3-cutover-prep`) had ~5 days
   of uncommitted, unpushed work (23 files, ~1240 lines) that this file/`PROJECT_STATE.md`/

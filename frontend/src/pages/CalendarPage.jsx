@@ -8,102 +8,59 @@ import { RefreshCw, X } from "lucide-react";
 import { apiClient } from "@/api/apiClient";
 import { useAuth } from "@/lib/AuthContext";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 
-const GOOGLE_REASON_MESSAGES = {
-  not_connected: "Google Calendar is not connected.",
-  display_disabled: "Google Calendar events are currently hidden by an administrator.",
-  no_calendars_selected: "No Google calendars have been selected yet. An administrator can select calendars in System Settings.",
-  reauth_required: "Google Calendar must be reconnected by an administrator.",
-  connection_error: "Google Calendar is temporarily unavailable. Please try refreshing again shortly.",
-  function_unavailable: "Google Calendar is unavailable. Upcoming Services are still shown.",
-};
-
+// Google Calendar sync was removed 2026-08-12 (user decision: Cloud Functions/Google API
+// cost was not justified) -- this page now only ever shows the CAP Dashboard's own
+// "Upcoming Services" calendar, built from service_records/machines/clients directly (see
+// apiClient.js's calendarEvents()). See git history before this change for the removed
+// Google toggle/status/EventDetails branch.
 export default function CalendarPage() {
-  const { user, hasPermission } = useAuth();
+  const { hasPermission } = useAuth();
   const ref = useRef(null);
-  const canViewGoogle = hasPermission("calendar.google.view");
 
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [warnings, setWarnings] = useState([]);
-  const [googleReason, setGoogleReason] = useState(null);
   const [range, setRange] = useState(null);
-  const [services, setServices] = useState(true);
-  const [google, setGoogle] = useState(user?.preferences?.show_google_calendar ?? canViewGoogle);
-  const [googleStatus, setGoogleStatus] = useState(null);
   const [selected, setSelected] = useState(null);
-
-  useEffect(() => {
-    if (!canViewGoogle) return;
-    apiClient.request("/google-calendar/status")
-      .then(setGoogleStatus)
-      .catch(() => setGoogleStatus(null));
-  }, [canViewGoogle]);
-
-  const googleAvailable = Boolean(googleStatus?.connected && googleStatus?.display_enabled);
-  const googleUnavailableReason = !googleStatus
-    ? null
-    : !googleStatus.connected
-      ? "The Google Calendar integration is not connected."
-      : !googleStatus.display_enabled
-        ? "An administrator has hidden Google Calendar events for all users."
-        : googleStatus.status === "reauth_required"
-          ? "Google Calendar must be reconnected by an administrator."
-          : null;
-
-  const toggleGoogle = (value) => {
-    setGoogle(value);
-    if (user?.id) {
-      apiClient.request(`/users/${user.id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ preferences: { ...(user.preferences || {}), show_google_calendar: value } }),
-      }).catch(() => {});
-    }
-  };
 
   const load = useCallback(async () => {
     if (!range) return;
     setLoading(true);
     setError("");
     try {
-      const includeGoogle = google && canViewGoogle;
       const q = new URLSearchParams({
         start: range.startStr,
         end: range.endStr,
-        include_services: services ? "1" : "0",
-        include_google: includeGoogle ? "1" : "0",
+        include_services: "1",
       });
       const data = await apiClient.request(`/calendar/events?${q}`);
       setEvents(data.events || []);
       setWarnings(data.warnings || []);
-      setGoogleReason(includeGoogle ? data.google_reason || null : null);
     } catch (e) {
       setError(e.message);
       setEvents([]);
     } finally {
       setLoading(false);
     }
-  }, [range, services, google, canViewGoogle]);
+  }, [range]);
 
   useEffect(() => { load(); }, [load]);
 
-  const eventClass = (e) => e.event.extendedProps.sourceType === "google_calendar"
-    ? ["calendar-google"]
-    : e.event.extendedProps.status?.toLowerCase() === "completed"
-      ? ["calendar-completed"]
-      : new Date(e.event.start) < new Date().setHours(0, 0, 0, 0)
-        ? ["calendar-overdue"]
-        : ["calendar-service"];
+  const eventClass = (e) => e.event.extendedProps.status?.toLowerCase() === "completed"
+    ? ["calendar-completed"]
+    : new Date(e.event.start) < new Date().setHours(0, 0, 0, 0)
+      ? ["calendar-overdue"]
+      : ["calendar-service"];
 
   return (
     <div className="space-y-4 overflow-hidden">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold">Calendar</h1>
-          <p className="text-sm text-muted-foreground">Upcoming Services and read-only Google Calendar events.</p>
+          <p className="text-sm text-muted-foreground">Upcoming Services.</p>
         </div>
         <Button variant="outline" onClick={load} disabled={loading}>
           <RefreshCw className={`w-4 h-4 mr-2 ${loading ? "animate-spin" : ""}`} />
@@ -111,30 +68,7 @@ export default function CalendarPage() {
         </Button>
       </div>
 
-      <div className="flex flex-wrap gap-5 rounded-xl border bg-card p-3">
-        <label className="flex items-center gap-2 text-sm">
-          <Switch checked={services} onCheckedChange={setServices} />
-          Show Upcoming Services
-        </label>
-        {canViewGoogle && (
-          <label className="flex items-center gap-2 text-sm" title={googleUnavailableReason || undefined}>
-            <Switch
-              checked={google}
-              disabled={!googleAvailable && Boolean(googleStatus)}
-              onCheckedChange={toggleGoogle}
-            />
-            Show Google Calendar
-            {googleUnavailableReason && (
-              <span className="text-xs text-muted-foreground">({googleUnavailableReason})</span>
-            )}
-          </label>
-        )}
-      </div>
-
       {error && <div className="rounded-xl border border-destructive/40 bg-destructive/10 p-3 text-sm">{error}</div>}
-      {googleReason && GOOGLE_REASON_MESSAGES[googleReason] && (
-        <div className="rounded-xl border bg-muted p-3 text-sm">{GOOGLE_REASON_MESSAGES[googleReason]}</div>
-      )}
       {warnings.map((w) => <div key={w} className="rounded-xl border bg-muted p-3 text-sm">{w}</div>)}
 
       <div className="relative min-h-[650px] rounded-2xl border bg-card p-3 md:p-5">
@@ -172,7 +106,6 @@ function EventDetails({ event, canReschedule, close, refreshed }) {
   const p = event.extendedProps;
   const [date, setDate] = useState(event.startStr?.slice(0, 10) || "");
   const [busy, setBusy] = useState(false);
-  const google = p.sourceType === "google_calendar";
 
   const reschedule = async () => {
     setBusy(true);
@@ -195,40 +128,20 @@ function EventDetails({ event, canReschedule, close, refreshed }) {
           <button onClick={close}><X /></button>
         </div>
         <dl className="mt-5 grid grid-cols-[130px_1fr] gap-2 text-sm">
-          {google ? (
-            <>
-              <dt>Start</dt><dd>{event.start?.toLocaleString()}</dd>
-              <dt>End</dt><dd>{event.end?.toLocaleString()}</dd>
-              <dt>Calendar</dt><dd>{p.calendarName}</dd>
-              <dt>Location</dt><dd>{p.location || "—"}</dd>
-              <dt>Organiser</dt><dd>{p.organiser || "—"}</dd>
-              <dt>Description</dt><dd className="whitespace-pre-wrap">{p.description || "—"}</dd>
-            </>
-          ) : (
-            <>
-              <dt>Client</dt><dd>{p.clientName}</dd>
-              <dt>Machine</dt><dd>{[p.machineBrand, p.machineModel].filter(Boolean).join(" ")}</dd>
-              <dt>Serial Number</dt><dd>{p.serialNumber || "—"}</dd>
-              <dt>Refrigerant</dt><dd>{p.refrigerantType || "—"}</dd>
-              <dt>Technician</dt><dd>{p.technician || "—"}</dd>
-              <dt>Status</dt><dd>{p.status}</dd>
-              <dt>Notes</dt><dd>{p.notes || "—"}</dd>
-            </>
-          )}
+          <dt>Client</dt><dd>{p.clientName}</dd>
+          <dt>Machine</dt><dd>{[p.machineBrand, p.machineModel].filter(Boolean).join(" ")}</dd>
+          <dt>Serial Number</dt><dd>{p.serialNumber || "—"}</dd>
+          <dt>Refrigerant</dt><dd>{p.refrigerantType || "—"}</dd>
+          <dt>Technician</dt><dd>{p.technician || "—"}</dd>
+          <dt>Status</dt><dd>{p.status}</dd>
+          <dt>Notes</dt><dd>{p.notes || "—"}</dd>
         </dl>
         <div className="mt-5 flex flex-wrap gap-2">
-          {!google && (
-            <>
-              <Button asChild variant="outline"><a href={`/clients/${p.clientId}`}>View Client</a></Button>
-              <Button asChild variant="outline"><a href={`/machines/${p.machineId}`}>View Machine</a></Button>
-              <Button asChild variant="outline"><a href={`/service-records?record=${p.serviceRecordId}`}>View Service Record</a></Button>
-            </>
-          )}
-          {google && p.htmlLink && (
-            <Button asChild><a href={p.htmlLink} target="_blank" rel="noreferrer">Open in Google Calendar</a></Button>
-          )}
+          <Button asChild variant="outline"><a href={`/clients/${p.clientId}`}>View Client</a></Button>
+          <Button asChild variant="outline"><a href={`/machines/${p.machineId}`}>View Machine</a></Button>
+          <Button asChild variant="outline"><a href={`/service-records?record=${p.serviceRecordId}`}>View Service Record</a></Button>
         </div>
-        {!google && canReschedule && (
+        {canReschedule && (
           <div className="mt-5 flex gap-2">
             <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
             <Button onClick={reschedule} disabled={busy || !date}>Reschedule Service</Button>

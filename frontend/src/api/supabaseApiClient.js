@@ -7,7 +7,6 @@ import {
 import { getSignedUrl, uploadFile } from "@/services/supabase/storage";
 import { requestPasswordReset as supabaseRequestPasswordReset, updatePassword, signOut as supabaseSignOut, loadUserProfile } from "@/services/supabase/auth";
 import { optimizeImageForUpload } from "@/lib/imageOptimize";
-import { callFunction } from "@/api/functionsClient";
 
 // Supabase-backed drop-in replacement for frontend/src/api/apiClient.js, matching its
 // exported shape (request/entities/integrations/auth) so a future Phase 2 swap is close to
@@ -16,11 +15,10 @@ import { callFunction } from "@/api/functionsClient";
 // existing frontend/src/services/supabase/{client,database,entities,storage,auth}.js
 // scaffolding (Phase 0/1) -- see docs/ai-memory/DECISIONS.md for migration phase status.
 //
-// Google Calendar routes are deliberately NOT re-implemented here -- that integration is
-// Firebase Cloud Functions-based by design (see CLAUDE.md section 7 / DECISIONS.md
-// "Google Calendar moved from Laravel to Firebase Cloud Functions") and is out of scope
-// for this Firestore/Postgres migration regardless of which data layer the rest of the app
-// uses. Both this file and apiClient.js call the same `callFunction` for those routes.
+// Google Calendar sync was removed entirely 2026-08-12 (user decision: Cloud Functions/
+// Google API cost was not justified) -- neither this file nor apiClient.js call out to it
+// anymore. `calendarEvents()` below only ever builds the CAP Dashboard's own "Upcoming
+// Services" calendar from Supabase data directly.
 //
 // Known behavioral differences from apiClient.js, called out inline where they occur:
 //  - `roles/permissions` and `users/:id/permissions`: Postgres's `role_permissions` is a
@@ -120,11 +118,10 @@ async function calendarEvents(searchParams) {
   const start = searchParams.get("start");
   const end = searchParams.get("end");
   const includeServices = searchParams.get("include_services") !== "0";
-  const includeGoogle = searchParams.get("include_google") === "1";
 
   let events = [];
   const warnings = [];
-  let googleReason = null;
+  const googleReason = null;
 
   if (includeServices) {
     const [services, machines, clients] = await Promise.all([
@@ -163,45 +160,7 @@ async function calendarEvents(searchParams) {
       });
   }
 
-  if (includeGoogle) {
-    try {
-      const googleParams = new URLSearchParams();
-      if (start) googleParams.set("start", start);
-      if (end) googleParams.set("end", end);
-      const googleResult = await callFunction("googleCalendarEvents", { searchParams: googleParams });
-      events = events.concat(googleResult?.events || []);
-      googleReason = googleResult?.reason || null;
-      if (Array.isArray(googleResult?.warnings)) warnings.push(...googleResult.warnings);
-    } catch (error) {
-      console.error("Failed to load Google Calendar events", error);
-      googleReason = "function_unavailable";
-    }
-  }
-
   return { events, warnings, google_reason: googleReason };
-}
-
-const googleCalendarFunctionMap = {
-  status: { GET: "googleCalendarStatus" },
-  connect: { GET: "googleCalendarConnect" },
-  calendars: { GET: "googleCalendarListCalendars", PUT: "googleCalendarSelectCalendars", POST: "googleCalendarSelectCalendars" },
-  display: { PATCH: "googleCalendarSetDisplayEnabled" },
-  disconnect: { DELETE: "googleCalendarDisconnect", POST: "googleCalendarDisconnect" },
-};
-
-async function googleCalendarRoute(action, method, options) {
-  const methodMap = googleCalendarFunctionMap[action];
-  const functionName = methodMap && methodMap[method];
-  if (!functionName) {
-    throw Object.assign(new Error(`Unsupported Google Calendar operation: ${method} ${action}`), { status: 405 });
-  }
-  if (functionName === "googleCalendarSelectCalendars") {
-    return callFunction(functionName, { method: "PUT", body: parseBody(options) });
-  }
-  if (functionName === "googleCalendarSetDisplayEnabled") {
-    return callFunction(functionName, { method: "PATCH", body: parseBody(options) });
-  }
-  return callFunction(functionName, { method: functionName === "googleCalendarDisconnect" ? "DELETE" : "GET" });
 }
 
 async function request(path, options = {}) {
@@ -213,7 +172,6 @@ async function request(path, options = {}) {
 
   if (segments[0] === "me") return supabaseApiClient.auth.me();
   if (segments[0] === "calendar" && segments[1] === "events") return calendarEvents(url.searchParams);
-  if (segments[0] === "google-calendar" && segments[1]) return googleCalendarRoute(segments[1], method, options);
   if (segments[0] === "knowledge-machines" && segments[1] && segments[2]) {
     const childCollections = {
       notes: "knowledge_notes",

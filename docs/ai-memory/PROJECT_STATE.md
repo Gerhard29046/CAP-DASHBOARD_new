@@ -1,15 +1,21 @@
 # Project State
-_Last verified: 2026-08-12 (reconstructed catch-up, see entry immediately below — not a
-live-verified session). **Firebase -> Supabase Phase 2 (data migration) is fully complete.**
-**The Google Calendar Cloud Functions auth redesign is deployed, but a real bug was found
-2026-08-07: it rejects a genuinely valid Supabase session with 401** (only rejection paths
-were tested 2026-08-06; the first real positive-path test came 2026-08-07 and fails) — see
-KNOWN_ISSUES.md, unresolved. **Phase 3 scripted QA (2026-08-07) passed for the core
-auth/data/RLS layer** (throwaway-admin-test-user script-driven, since no browser tool was
-available), **but Calendar is blocked by the 401 bug above.** A real, pre-existing (not
-migration-caused) `AuthLayout.jsx` UI bug was found+fixed 2026-08-11 (auth pages rendered
-with no heading). A real migration gap (`permissions`/`role_permissions` never migrated, plus
-a column-name mismatch) was found+fixed via a new unapplied migration (`0014`) ~2026-08-11.
+_Last verified: 2026-08-12. **Google Calendar sync was removed entirely this session** (user
+decision: cost) — see the dated entry below and `docs/ai-memory/DECISIONS.md`. Web UI
+(`SystemSettings.jsx` deleted, `/settings` route/nav gone), `apiClient`/`supabaseApiClient`
+Google routes, and all 8 Cloud Functions' code are removed; the in-app Calendar page
+(Upcoming Services) is kept and unaffected. **Still needed**: the user must run `firebase
+functions:delete ...` to stop billing on whatever's still actually deployed (exact command
+in KNOWN_ISSUES.md), revoke the stored Firestore OAuth connection, and Android's
+`GoogleCalendarRepository` needs removing by `android-ui-bee`/`integration-sync-bee` (not
+done yet). The previously-tracked "Calendar rejects a valid Supabase session with 401" bug
+(2026-08-07) is now moot — the feature is gone — but is kept as historical record below.
+**Firebase -> Supabase Phase 2 (data migration) is fully complete**, separately from the
+above. **Phase 3 scripted QA (2026-08-07) passed for the core auth/data/RLS layer**
+(throwaway-admin-test-user script-driven, since no browser tool was available). A real,
+pre-existing (not migration-caused) `AuthLayout.jsx` UI bug was found+fixed 2026-08-11 (auth
+pages rendered with no heading). A real migration gap (`permissions`/`role_permissions`
+never migrated, plus a column-name mismatch) was found+fixed via a new unapplied migration
+(`0014`) ~2026-08-11.
 **~23 files / ~1240 lines of this work sat uncommitted in the working tree** on branch
 `supabase-phase3-cutover-prep` until 2026-08-12. **Nothing is live** — `VITE_AUTH_BACKEND`
 still defaults to `firebase` everywhere in every committed/production config. Password-reset
@@ -18,6 +24,41 @@ not blocking); a real admin password WAS set directly via `qa-set-admin-password
 2026-08-11 as a workaround (see KNOWN_ISSUES.md/agent memory
 `project_supabase_password_reset_untested`). See SESSION_LOG.md for full narrative before
 continuing — the 2026-08-07/08-11 detail there is reconstructed, not first-hand verified._
+
+## Google Calendar sync removed entirely — cost decision (2026-08-12)
+- User: "i dont want to connect to google calender anymore. it cost me too much money", then
+  "make that the calender doesnt sync to google. but keep a calender." This came right after
+  Queen Bee found the live `googleCalendarStatus` function returning raw platform-level
+  500/503 errors (not clean app-level 401s) on every request pattern during unrelated
+  Supabase-migration QA — possibly related to cost-cutting action the user had already taken
+  on the Google Cloud side, never confirmed.
+- **Removed, verified via real builds/tests, not just written**: `frontend/src/pages/
+  SystemSettings.jsx` (deleted — sole purpose was Google Calendar UI), `/settings` route +
+  nav entry (`App.jsx`/`AppLayout.jsx`), `frontend/src/api/functionsClient.js` (deleted —
+  sole purpose was calling Google Calendar Cloud Functions), the Google branch of both
+  `apiClient.js`'s and `supabaseApiClient.js`'s `calendarEvents()` + their `/google-
+  calendar/*` route dispatch, `CalendarPage.jsx`'s Google toggle/status/event-details UI
+  (Upcoming-Services UI **kept** — it never depended on Google), all 8 `googleCalendar*`
+  Cloud Functions (`functions/index.js` now exports nothing), `functions/lib/
+  googleCalendarService.js`/`googleCalendarStore.js`/`googleOAuthClient.js` + their tests,
+  `googleapis` from `functions/package.json`, `VITE_FUNCTIONS_BASE_URL` from `frontend/
+  .env.production`/`.env.example`. `CLAUDE.md` section 7 rewritten to record the removal.
+- **Deliberately kept**: `functions/lib/auth.js`/`supabaseAuth.js` (generic, reusable Cloud
+  Functions auth infra, not Google-specific, unused/unbilled with nothing exporting them);
+  `calendar.google.*` permission keys (unused, harmless, not worth touching the permission
+  model for a pure cleanup); Laravel's Google Calendar code (already-documented dead code);
+  `docs/GOOGLE_CALENDAR_SETUP.md`/`GOOGLE_CALENDAR_AUTH_REDESIGN.md` (historical record).
+- **Verified**: `frontend` lint/typecheck/test (2/2)/build all clean after every edit;
+  `functions` lint clean, test suite 28/28 pass (3 Google-specific test files deleted
+  alongside their subjects, matching the removed code — not silently skipped).
+- **Not done this session** (see KNOWN_ISSUES.md for the exact follow-up list): the user
+  still needs to run `firebase functions:delete ...` to stop billing on whatever's actually
+  deployed right now (code removal alone doesn't undeploy anything); the stored Firestore
+  `system_integrations/google_calendar` OAuth connection wasn't explicitly revoked; Android's
+  `GoogleCalendarRepository` read-only consumer wasn't touched (belongs to `android-ui-bee`/
+  `integration-sync-bee`, not delegated yet).
+- This is a clean, git-recoverable removal, not a destructive data-loss action — no
+  Firestore/Storage data was deleted by this change itself.
 
 ## Firebase -> Supabase migration — memory catch-up: reconstructed 2026-08-07 through 2026-08-11 work, found+merged stray memory, found ~5 days of uncommitted work (2026-08-12)
 - **This entry is a reconstruction**, not a first-hand session account — `docs/ai-memory/`

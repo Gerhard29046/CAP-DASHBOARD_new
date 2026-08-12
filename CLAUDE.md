@@ -347,51 +347,44 @@ A change to Laravel authorization alone does not change active client behavior.
 
 ---
 
-# 7. Google Calendar architecture
+# 7. Google Calendar architecture — REMOVED 2026-08-12
 
-Google Calendar is not normal Firestore CRUD.
+**Google Calendar sync was removed entirely on 2026-08-12** (explicit user decision: the
+Cloud Functions + Google Calendar API cost was not justified). The rest of this section is
+kept as a historical record of what existed — do not treat any of it as current architecture
+without first verifying against the actual repository state, since this file can lag reality.
 
-The web settings page:
+What was removed:
 
-```text
-frontend/src/pages/SystemSettings.jsx
-```
+- `frontend/src/pages/SystemSettings.jsx` (deleted — its only purpose was Google Calendar
+  connect/disconnect/calendar-selection UI) and its `/settings` route/nav entry.
+- `frontend/src/api/functionsClient.js` (deleted — its only purpose was calling the Google
+  Calendar Cloud Functions).
+- The Google branch of `frontend/src/api/apiClient.js`/`supabaseApiClient.js`'s
+  `calendarEvents()`, and both files' `/google-calendar/*` route dispatch.
+- `frontend/src/pages/CalendarPage.jsx`'s Google toggle/status/event-details UI (the page
+  itself was **kept** — it still shows the CAP Dashboard's own "Upcoming Services" calendar,
+  built directly from `service_records`/`machines`/`clients`, which never depended on
+  Google).
+- All 8 `googleCalendar*` Cloud Functions (`functions/index.js` now exports nothing) and
+  `functions/lib/googleCalendarService.js`/`googleCalendarStore.js`/`googleOAuthClient.js`.
+  `functions/lib/auth.js`/`supabaseAuth.js` were **kept** (generic, reusable Cloud Functions
+  auth infrastructure, not Google-specific, unused/unbilled while nothing exports them).
+- The `googleapis` dependency from `functions/package.json`.
 
-calls Google Calendar routes through:
+**Not yet done as of 2026-08-12** (see `docs/ai-memory/KNOWN_ISSUES.md` for current status):
 
-```text
-frontend/src/api/apiClient.js
-```
-
-Those routes are handled by callable Firebase Cloud Functions under:
-
-```text
-functions/
-```
-
-Current characteristics:
-
-- Firebase Cloud Functions 2nd generation;
-- Node.js 20;
-- region `africa-south1`;
-- OAuth client secrets remain server-side;
-- OAuth tokens are stored in `system_integrations/google_calendar`;
-- callable functions are protected by `requireUser` and `requirePermission`;
-- the Android `GoogleCalendarRepository` consumes the same functions read-only.
-
-Laravel Google Calendar controllers and tests remain in the repository but are currently dead code unless a client is intentionally reconnected to them.
-
-Relevant documentation:
-
-```text
-docs/GOOGLE_CALENDAR_SETUP.md
-```
-
-Current known state:
-
-- implementation is code-complete;
-- Google Cloud OAuth credentials and deployment may still require manual completion;
-- do not report the integration as live until the real OAuth flow is verified.
+- Deleting the actually-deployed Cloud Functions from GCP (`firebase functions:delete ...`
+  — must be run by the user, see the exact command in `functions/index.js`'s header comment
+  or `KNOWN_ISSUES.md`).
+- Revoking the stored OAuth connection in Firestore `system_integrations/google_calendar`.
+- The Android `GoogleCalendarRepository` read-only consumer and any related UI —
+  Android-layer removal belongs to `android-ui-bee`/`integration-sync-bee`, not done in the
+  session that removed the web/Functions side.
+- `docs/GOOGLE_CALENDAR_SETUP.md`, `docs/migration/GOOGLE_CALENDAR_AUTH_REDESIGN.md`, and
+  Laravel's Google Calendar controllers/tests were left as historical record, not deleted.
+- The `calendar.google.*` permission keys were left in the permission catalog/Firestore
+  rules (now unused, harmless) — not stripped out.
 
 ---
 

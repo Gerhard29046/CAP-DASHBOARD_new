@@ -143,13 +143,26 @@
   - **Done (2026-08-12): memory catch-up.** ~5 days of the above work was found sitting
     uncommitted; consolidated a duplicate/misplaced agent-memory directory, wrote catch-up
     entries across `docs/ai-memory/`, re-verified and committed. See PROJECT_STATE.md.
-  - Next, in order: (1) root-cause and fix the Calendar 401-under-Supabase bug (needs the
-    user's Cloud Functions log access or a secret re-set + redeploy); (2) user applies `0014`
-    via the SQL Editor, then `migrate-permissions.mjs --apply`; (3) a real human clicks a
-    real password-reset email end-to-end (still deferred, still outstanding); (4) full manual
-    QA with `VITE_AUTH_BACKEND=supabase` in a local build once Calendar is fixed; (5) the
-    actual cutover — flipping the flag in real production config. Each still needs its own
-    separate explicit approval. Firebase remains the sole live production backend throughout.
+  - **Superseded (2026-08-12): Google Calendar sync was removed entirely** (user: cost) —
+    see the new top-level item below. The Calendar-401-under-Supabase bug is now moot; the
+    Google Calendar auth redesign in `functions/lib/supabaseAuth.js` still exists as generic
+    unused infra but is no longer relevant to the migration cutover checklist.
+  - Next, in order: (1) user applies `0014` via the SQL Editor, then `migrate-permissions.mjs
+    --apply`; (2) a real human clicks a real password-reset email end-to-end (still deferred,
+    still outstanding); (3) full manual QA with `VITE_AUTH_BACKEND=supabase` in a local
+    build; (4) the actual cutover — flipping the flag in real production config. Each still
+    needs its own separate explicit approval. Firebase remains the sole live production
+    backend throughout.
+- **Google Calendar sync removal (2026-08-12, user decision: cost)**:
+  - Done: web UI (`SystemSettings.jsx` + `/settings` route/nav deleted), `apiClient.js`/
+    `supabaseApiClient.js` Google routes, `CalendarPage.jsx`'s Google UI (Upcoming Services
+    kept), all 8 Cloud Functions' code (`functions/index.js` now exports nothing),
+    Google-specific `functions/lib/*`/tests, the `googleapis` dependency. Verified via real
+    frontend/functions lint/typecheck/test/build.
+  - Not done: user running `firebase functions:delete ...` to actually stop billing on
+    whatever's deployed right now; revoking the stored Firestore OAuth connection; Android's
+    `GoogleCalendarRepository` removal (needs `android-ui-bee`/`integration-sync-bee`
+    delegation, not done yet). See KNOWN_ISSUES.md for the exact follow-up list.
 - Android "Connection and Sync Status" feature (per `.claude/agents/android-ui-bee.md`
   and `integration-sync-bee.md`):
   - Done: `StatusRepository`, `ConnectionStatus` enum, and connection-state derivation
@@ -163,9 +176,9 @@
     just not yet named that way.
 
 ## Blocked
-- Google Calendar going fully live: blocked on manual Google Cloud OAuth client
-  creation/consent-screen configuration per `docs/GOOGLE_CALENDAR_SETUP.md` — the code
-  is complete but real-world OAuth has not been verified.
+- ~~Google Calendar going fully live~~ — **moot as of 2026-08-12: Google Calendar sync was
+  removed entirely** (user decision: cost). See the dated entry above and
+  `docs/ai-memory/DECISIONS.md`.
 
 ## Completed (verified in code, not just claimed)
 - Firebase-direct Firestore CRUD for web and Android (clients, machines, service
