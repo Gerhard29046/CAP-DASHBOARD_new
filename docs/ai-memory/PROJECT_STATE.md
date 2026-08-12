@@ -1,18 +1,71 @@
 # Project State
-_Last verified: 2026-08-06 (end of day). **Firebase -> Supabase Phase 2 (data migration) is
-fully complete.** **The Google Calendar Cloud Functions auth redesign is deployed and
-live-verified** (both issuer branches confirmed working against the real deployed
-functions). **Phase 3 QA is in progress, per the user's explicit 5-step validation plan
-(2026-08-06): step 1 (redirect URL) confirmed by the user; step 2 (password-reset
-end-to-end test) is mid-flight** — a real blank-white-page bug was found and fixed
-(missing local Firebase env config crashing the app before it could render, unrelated to
-Supabase itself but blocking the ability to test it), a fresh reset email has been sent,
-and the user will click it and continue tomorrow. **Nothing is live** — `VITE_AUTH_BACKEND`
-still defaults to `firebase` everywhere in every committed/production config; only a local
-dev server (this session's, not guaranteed to survive to the next session) has the flag
-set. Do not assume QA steps 2-5 are complete — pick up from the "Local dev couldn't load...
-(2026-08-06, fixed)" entry in KNOWN_ISSUES.md. See SESSION_LOG.md for the full session
-narrative before continuing._
+_Last verified: 2026-08-12 (reconstructed catch-up, see entry immediately below — not a
+live-verified session). **Firebase -> Supabase Phase 2 (data migration) is fully complete.**
+**The Google Calendar Cloud Functions auth redesign is deployed, but a real bug was found
+2026-08-07: it rejects a genuinely valid Supabase session with 401** (only rejection paths
+were tested 2026-08-06; the first real positive-path test came 2026-08-07 and fails) — see
+KNOWN_ISSUES.md, unresolved. **Phase 3 scripted QA (2026-08-07) passed for the core
+auth/data/RLS layer** (throwaway-admin-test-user script-driven, since no browser tool was
+available), **but Calendar is blocked by the 401 bug above.** A real, pre-existing (not
+migration-caused) `AuthLayout.jsx` UI bug was found+fixed 2026-08-11 (auth pages rendered
+with no heading). A real migration gap (`permissions`/`role_permissions` never migrated, plus
+a column-name mismatch) was found+fixed via a new unapplied migration (`0014`) ~2026-08-11.
+**~23 files / ~1240 lines of this work sat uncommitted in the working tree** on branch
+`supabase-phase3-cutover-prep` until 2026-08-12. **Nothing is live** — `VITE_AUTH_BACKEND`
+still defaults to `firebase` everywhere in every committed/production config. Password-reset
+email flow has still never been physically clicked end-to-end by a real human (deferred,
+not blocking); a real admin password WAS set directly via `qa-set-admin-password.mjs`
+2026-08-11 as a workaround (see KNOWN_ISSUES.md/agent memory
+`project_supabase_password_reset_untested`). See SESSION_LOG.md for full narrative before
+continuing — the 2026-08-07/08-11 detail there is reconstructed, not first-hand verified._
+
+## Firebase -> Supabase migration — memory catch-up: reconstructed 2026-08-07 through 2026-08-11 work, found+merged stray memory, found ~5 days of uncommitted work (2026-08-12)
+- **This entry is a reconstruction**, not a first-hand session account — `docs/ai-memory/`
+  was never updated past 2026-08-06 despite real work continuing. Rebuilt from Queen Bee
+  agent memory (which had been kept current, but written to the wrong path — see below) and
+  dated code comments in the still-uncommitted files. Treat every claim here as needing
+  re-verification by whoever picks this up next, not as equivalent to a live-verified entry.
+- **Found a real process gap**: `frontend/.claude/agent-memory/queen-bee/` (a duplicate,
+  wrong-location copy of this project's Queen Bee memory, 4 real files dated 2026-08-07) had
+  never been merged into the canonical `.claude/agent-memory/queen-bee/` at the repo root —
+  same recurring Ruflo/Claude-Flow tooling-artifact pattern already flagged repeatedly in
+  memory, except this instance had real substantive content instead of 0-byte junk. Merged
+  2026-08-12. The leftover `frontend/.claude/`/`supabase/.claude/` directories (Ruflo
+  `proven-config.json` cache only, nothing else of value) could not be deleted — Queen Bee's
+  `git rm`/`rm -rf` attempts were both blocked by the auto-mode safety classifier as sensitive
+  `.claude`-directory deletions. Unstaged instead; **user should delete both manually**.
+- **2026-08-07 (reconstructed)**: first real positive-path test of the Google Calendar auth
+  redesign (a genuinely valid Supabase session, not a deliberately-malformed test token)
+  found it fails with 401 against the live deployed function — see KNOWN_ISSUES.md, not
+  fixed, root cause unconfirmed. Separately, scripted QA (no browser tool available in that
+  session) using a throwaway admin-equivalent Supabase Auth test user
+  (`supabase/scripts/qa-test-user.mjs` + `qa-clickthrough.mjs`, both untracked) found the
+  core auth/data/RLS layer works correctly end-to-end (all CRUD, permission-bypass check) —
+  only Calendar failed. A residual-data sweep found and cleaned an unexpected duplicate
+  leftover test user (`qa-cleanup-smoketest-residue.mjs`).
+- **~2026-08-11 (reconstructed from code comments)**: found+fixed a real, unrelated-to-
+  migration UI bug — `frontend/src/components/AuthLayout.jsx` silently dropped every
+  caller's `icon`/`title`/`subtitle`/`footer` prop since the file's creation (2026-07-14),
+  rendering every auth page as a near-empty white card. Also found+fixed a real migration
+  gap: `permissions`/`role_permissions` were never in the migration script's entity mappings
+  at all (0 rows live) and had a column-name mismatch (`label` vs the real `name`, missing
+  `group`) vs. what `UserAdmin.jsx` actually reads — new `supabase/migrations/
+  0014_permissions_name_and_group.sql` (NOT yet applied) + new
+  `supabase/scripts/migrate-permissions.mjs`. Also: a real password was set directly for the
+  migrated admin account via `qa-set-admin-password.mjs` (explicit user approval per its own
+  code comment), verified via a real `signInWithPassword` call — a workaround for the
+  still-unclicked password-reset-email flow, not a replacement for testing that flow for
+  real. A recovery-link generator (`qa-generate-recovery-link.mjs`) was also added to hand
+  back a real recovery link directly (bypassing email delivery) for the same reason.
+- **2026-08-12**: found all of the above sitting uncommitted (~23 files, ~1240 lines) on
+  branch `supabase-phase3-cutover-prep`, with `.mcp.json`/`.claude/settings.json` tooling
+  config changes (Supabase MCP server, statusline) mixed in. Consolidated memory, wrote this
+  catch-up entry and matching `KNOWN_ISSUES.md`/`SESSION_LOG.md`/`ROADMAP.md` entries, then
+  ran fresh verification (see the next dated entry) before committing.
+- **Not done this pass**: did not attempt to fix the Calendar 401 bug (needs Cloud Functions
+  log access Queen Bee doesn't have) or apply `0014` (needs the user via the SQL Editor) or
+  send/click a real password-reset email. Firebase remains the sole live production backend
+  throughout; nothing in this catch-up pass touched production.
 
 ## Firebase -> Supabase migration — Google Calendar auth redesign deployed live, real bug found+fixed via live testing (2026-08-06)
 - Following key rotation (below) and "fix everything dude" (read as approval for the

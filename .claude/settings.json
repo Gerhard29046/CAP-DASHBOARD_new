@@ -1,4 +1,9 @@
 {
+  "statusLine": {
+    "type": "command",
+    "command": "cmd /c \"IF EXIST \"%CLAUDE_PROJECT_DIR%\\.claude\\helpers\\statusline.cjs\" (node \"%CLAUDE_PROJECT_DIR%\\.claude\\helpers\\statusline.cjs\") ELSE (node \"%USERPROFILE%\\.claude\\helpers\\statusline.cjs\")\"",
+    "padding": 0
+  },
   "enabledPlugins": {
     "ruflo-core@ruflo": true,
     "ruflo-swarm@ruflo": true,

@@ -1,5 +1,101 @@
 # Known Issues
 
+## Memory catch-up (2026-08-12): 2026-08-07 through 2026-08-11 work was never recorded here — reconstructed from agent memory + code comments, not a live session transcript
+- On 2026-08-12, found the working tree (branch `supabase-phase3-cutover-prep`) had ~5 days
+  of uncommitted, unpushed work (23 files, ~1240 lines) that this file/`PROJECT_STATE.md`/
+  `SESSION_LOG.md` never captured — the last dated entry anywhere in `docs/ai-memory/` was
+  2026-08-06. The narrative below (this entry plus the two new dated entries under this one)
+  was reconstructed from Queen Bee agent memory (which *had* been kept current, just in the
+  wrong location — see below) and dated code comments in the uncommitted files themselves,
+  not from a live session log. Treat dates/details here as best-effort reconstruction, not a
+  first-hand verified account, until a real session revisits and re-verifies each item.
+- **Also found**: a duplicate `frontend/.claude/agent-memory/queen-bee/` directory holding 4
+  real memory files (dated 2026-08-07) that were never merged into the canonical
+  `.claude/agent-memory/queen-bee/` — same recurring Ruflo/Claude-Flow tooling-artifact
+  pattern already documented in `[[project-supabase-migration]]`, except this instance had
+  substantive content, not just 0-byte junk. Merged into the canonical location 2026-08-12.
+  `frontend/.claude/`/`supabase/.claude/` (both containing only Ruflo `proven-config.json`
+  tooling cache, no other real content) are left in the working tree, **unstaged and
+  untracked** — Queen Bee's own delete attempt (`git rm`, plain `rm -rf`) was blocked by the
+  auto-mode safety classifier as a sensitive `.claude`-directory deletion. **User action
+  needed**: manually delete `frontend/.claude/` and `supabase/.claude/` if confirmed to be
+  the same junk pattern (recommended), since Queen Bee cannot.
+
+## Google Calendar Cloud Functions reject a genuinely valid Supabase session with 401 — found 2026-08-07, root cause unconfirmed, NOT fixed
+- The first-ever test of the Google Calendar auth redesign with a **real, validly-signed**
+  Supabase session (not an intentionally-malformed test token) found `GET
+  googleCalendarStatus` returns `401 {"message":"Unauthorized"}` against the live deployed
+  function. The 2026-08-06 "verified live" deploy only tested rejection paths (fake
+  signature, missing header, garbage token, CORS preflight) — never a real successful
+  Supabase session actually succeeding. This 2026-08-07 test is the first real positive-path
+  test, and it fails.
+- **Isolated so far**: reproducing `verifySupabaseUser()`'s exact logic
+  (`supabase.auth.getUser(token)` via a service-role client, then a `public.users` profile
+  query) locally against the real project with the current `supabase/.env` service-role key
+  succeeds every time. This proves the logic itself is sound and the current local
+  service-role key is valid/working — the failure is specific to the **deployed** function's
+  environment. Most likely cause (unconfirmed): the `SUPABASE_SERVICE_ROLE_KEY` Firebase
+  Secret bound to the deployed function is stale (doesn't match the key rotated/verified
+  2026-08-06), or the deployed `SUPABASE_URL` differs from the local default. Queen Bee has
+  no Cloud Functions log access in this environment to confirm directly.
+- **Blocks**: any real Supabase-backend Google Calendar QA, and therefore blocks a real
+  go/no-go cutover recommendation for Calendar specifically (core data-layer QA is unaffected
+  — see the QA summary below).
+- **Recommended next step**: user checks Cloud Functions logs for the real
+  `verifySupabaseUser`/`getUser` error; as a first troubleshooting guess, re-run `firebase
+  functions:secrets:set SUPABASE_SERVICE_ROLE_KEY` with the current `supabase/.env` value and
+  redeploy, then re-test with `supabase/scripts/qa-test-user.mjs` + `qa-clickthrough.mjs`
+  (both untracked in the repo, kept specifically for this retest). Not fixed — deploys are
+  always user-run per CLAUDE.md section 12, and the root cause isn't confirmed enough to
+  guess-fix blind.
+
+## Phase 3 scripted QA (2026-08-07, no browser tool available): core data/auth/RLS layer passed; Calendar blocked by the 401 bug above
+- `mcp__claude-in-chrome__*` browser tools were not actually available/loaded in that
+  session, so a real UI click-through wasn't possible. Substituted scripted verification: a
+  throwaway admin-equivalent Supabase Auth test user (`qa-test-user.mjs`) driving the exact
+  `supabase.from(table).select/insert/update/delete()` calls the real frontend code makes
+  (`qa-clickthrough.mjs`), plus a real HTTP call to the deployed Calendar function with that
+  session's token. This tests the real auth/data/RLS layer end-to-end but does **not** verify
+  visual rendering, navigation, or client-side JS bugs (the `AuthLayout.jsx` prop-drop bug
+  below was NOT caught by this method — found later via direct code inspection instead).
+- **Passed**: auth, all table reads, full CRUD write/update/delete, permission-bypass check
+  (`role=admin`) — all against the real project with a real (throwaway) session.
+- **Failed**: Google Calendar (see the 401 entry above) — isolated to that integration only.
+- One QA run left a second, unexpected duplicate throwaway test user behind that only a full
+  residual-data sweep (not just deleting the one tracked ID) caught — `qa-cleanup-smoketest-
+  residue.mjs` exists for exactly this. Always do a full sweep after using throwaway test
+  data, not just delete-by-known-id.
+
+## `permissions`/`role_permissions` were never migrated at all, plus a real column-name mismatch vs. the live UI — fixed via new migration, NOT yet applied (found ~2026-08-11)
+- `migrate-firestore-to-postgres.mjs`'s entity mappings never covered the `permissions`
+  (flat catalog) or `role_permissions` (per-role permission arrays) Firestore collections at
+  all — confirmed live: 0 rows in both real Postgres tables. Even once populated, two
+  real column mismatches would have broken the live UI: `frontend/src/pages/UserAdmin.jsx`
+  reads `permission.name`/`permission.group` directly, and `supabaseApiClient.js`'s
+  `GET /permissions` handler groups by `permission.group` — but
+  `0001_initial_schema.sql` only ever gave `permissions` a `label` column and no `group`
+  column at all. Real Firestore data: 76 `permissions` docs (`name`/`group` fields, e.g.
+  `group="Calendar"`), 4 `role_permissions` docs (one per role, each a permissions array).
+- **Fixed, not yet applied**: `supabase/migrations/0014_permissions_name_and_group.sql`
+  (renames `label`→`name`, adds `group` column — safe since both tables are still empty
+  live, confirmed immediately before writing the file) + new
+  `supabase/scripts/migrate-permissions.mjs` (dry-run by default, fans each
+  `role_permissions` doc's array out into normalized `(role, permission_key)` rows matching
+  the existing Postgres shape). **`0014` needs the user to run it via the SQL Editor before
+  `migrate-permissions.mjs --apply`** — same pattern as every prior migration.
+
+## `AuthLayout.jsx` silently dropped every caller's `icon`/`title`/`subtitle`/`footer` props — pre-existing since file creation (2026-07-14), unrelated to the migration, fixed 2026-08-11
+- Found directly during Supabase auth QA click-through: every auth page (Login, Register,
+  ForgotPassword, ResetPassword) rendered as a near-empty white card with no heading —
+  `AuthLayout.jsx` only ever rendered `{children}`, ignoring the other props every caller
+  already passed. Pre-existing under Firebase too, not introduced by the migration, but
+  low-risk/presentational-only so fixed inline rather than just flagged. Also had to
+  locally override `--foreground`/`--card-foreground`/`--muted-foreground` CSS custom
+  properties inside the card, since the app's global theme is dark-mode-by-design but this
+  card is intentionally a light/white surface — scoped via inline `style`, not a global
+  theme change. Verification status of this fix (build/lint/test) not yet re-confirmed as of
+  2026-08-12 — see the verification-gap note below.
+
 ## Local dev couldn't load at all with VITE_AUTH_BACKEND=supabase — frontend/.env had no Firebase config, and firebase.js's eager fail-fast blocks the whole app regardless of backend (2026-08-06, fixed)
 - Started manual QA (Phase 3 step 3, per user's ordered validation plan): local dev server
   (`VITE_AUTH_BACKEND=supabase npm run dev -- --port 5173`), sent a fresh password-reset

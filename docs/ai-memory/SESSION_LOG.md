@@ -1,5 +1,39 @@
 # Session Log
 
+## 2026-08-12 — Memory catch-up: reconstructed 5 days of undocumented work, merged stray agent memory, updated ai-memory docs, ran verification
+- Objective: user said "1 then continue with everything" in response to a proposed plan
+  (consolidate+commit the backlog of uncommitted work, then continue with everything else —
+  chasing the Calendar 401 bug, general Phase 3 follow-up).
+- **Found**: branch `supabase-phase3-cutover-prep` had ~23 files / ~1240 lines of real,
+  build-relevant work sitting uncommitted since sessions this file never recorded
+  (2026-08-07 through ~2026-08-11) — `docs/ai-memory/` was stale at 2026-08-06. Also found a
+  duplicate `frontend/.claude/agent-memory/queen-bee/` directory (4 real memory files, never
+  merged into the canonical root location) plus `frontend/.claude/`/`supabase/.claude/`
+  Ruflo tooling-cache junk (`proven-config.json` etc., same recurring pattern as before).
+- **Reconstructed the missing narrative** from the found agent-memory files and dated code
+  comments in the uncommitted files (not from a live transcript — explicitly flagged as
+  reconstruction, not first-hand-verified, in every doc touched): a real unresolved Google
+  Calendar Cloud Functions bug (rejects a genuinely valid Supabase session with 401, found
+  2026-08-07), scripted Phase 3 QA that passed for the core data/auth/RLS layer, a real
+  pre-existing `AuthLayout.jsx` UI bug (fixed), a real `permissions`/`role_permissions`
+  migration gap (fixed via new unapplied `0014` migration), and a direct admin-password-set
+  workaround for the still-untested password-reset-email flow.
+- **Merged** the 4 stray memory files into `.claude/agent-memory/queen-bee/`, updated its
+  `MEMORY.md` index. Attempted to delete `frontend/.claude/`/`supabase/.claude/` (junk-only
+  content) via `git rm` and plain `rm -rf` — **both blocked by the auto-mode safety
+  classifier** as sensitive `.claude`-directory deletions; did not attempt to route around
+  it. Unstaged those two directories instead so they won't be committed, and flagged them in
+  KNOWN_ISSUES.md for the user to delete manually.
+- Updated `docs/ai-memory/PROJECT_STATE.md` (new header + a full reconstructed catch-up
+  entry), `KNOWN_ISSUES.md` (5 new entries: memory-catch-up note, Calendar 401 bug, QA
+  summary, permissions migration gap, `AuthLayout.jsx` bug), and `ROADMAP.md` (reconstructed
+  progress entries + a revised ordered "Next" list).
+- Verification: see the next log entry for actual command output — this entry covers the
+  documentation/memory reconciliation only.
+- Did NOT: fix the Calendar 401 bug, apply `0014`, send/click a password-reset email, delete
+  the stray `.claude/` junk dirs (blocked), or push anything. Firebase remains the sole live
+  production backend; nothing production-facing was touched.
+
 ## 2026-08-06 (cont. 6) — Phase 3 QA started per user's ordered plan; step 2 mid-flight, blocked on user for tomorrow
 - Objective: user gave an explicit 5-step validation plan (verify redirect URLs → confirm
   password-reset flow end-to-end → full manual QA with the flag on locally → fix

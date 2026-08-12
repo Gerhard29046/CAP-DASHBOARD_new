@@ -50,6 +50,22 @@
       },
       "optional": true,
       "requiresAuth": true
+    },
+    "supabase": {
+      "command": "cmd",
+      "args": [
+        "/c",
+        "npx",
+        "-y",
+        "@supabase/mcp-server-supabase@latest",
+        "--project-ref=cjvrquipmnoihksijful",
+        "--read-only"
+      ],
+      "env": {
+        "SUPABASE_ACCESS_TOKEN": "${SUPABASE_ACCESS_TOKEN}"
+      },
+      "optional": true,
+      "requiresAuth": true
     }
   }
 }

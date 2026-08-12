@@ -1,2 +1,6 @@
 - [User language preference](user_language_preference.md) — favorite lang is TypeScript, but repo's frontend is intentionally plain JS/JSX; don't convert files.
 - [Supabase migration status](project_supabase_migration.md) — phased, live-app migration; check current phase before assuming Firebase was removed or Supabase is wired in.
+- [Supabase password-reset flow untested](project_supabase_password_reset_untested.md) — never physically clicked by the user; deferred, not blocking, must be flagged before any go/no-go call.
+- [Commit uncommitted work promptly](feedback_commit_uncommitted_work_promptly.md) — proactively suggest committing verified units of migration work mid-session, don't wait for end-of-day.
+- [Google Calendar 401 bug with valid Supabase session](project_supabase_calendar_401_bug.md) — real deployed function rejects a genuinely valid token, root cause unconfirmed, not fixed, blocks Calendar QA under Supabase.
+- [No browser tool available — use scripted QA instead](feedback_qa_scripted_verification.md) — this project's session has no working browser automation; use throwaway-test-user + direct Supabase-call scripts (qa-test-user.mjs / qa-clickthrough.mjs) instead, and always do a full residual-data sweep after.

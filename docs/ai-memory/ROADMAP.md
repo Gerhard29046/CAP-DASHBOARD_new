@@ -130,13 +130,26 @@
     redesign is genuinely live now — both issuer branches confirmed working against the
     real deployed functions via multiple live HTTP probes and direct log inspection, not
     just trusting "it is done."
-  - Next: (1) confirm Supabase Auth's redirect-URL allowlist includes a local test target
-    before re-sending the password-reset email pointed at it (the first real send pointed
-    at the still-Firebase-default live production URL, not completable — treat as expired);
-    (2) full manual QA with `VITE_AUTH_BACKEND=supabase` in a local build, now that the
-    Functions side is confirmed working; (3) the actual cutover — flipping the flag in real
-    production config. Each still needs its own separate explicit approval. Firebase
-    remains the sole live production backend throughout.
+  - **Done (2026-08-07, reconstructed — see PROJECT_STATE.md catch-up entry): scripted Phase
+    3 QA ran.** Core auth/data/RLS layer passed end-to-end (throwaway admin test user,
+    script-driven since no browser tool was available). **Found a real, unresolved bug**:
+    Google Calendar Cloud Functions reject a genuinely valid Supabase session with 401 (only
+    rejection paths were tested 2026-08-06) — see KNOWN_ISSUES.md, blocks Calendar QA.
+  - **Done (~2026-08-11, reconstructed): found+fixed a pre-existing `AuthLayout.jsx` UI bug**
+    (unrelated to migration, dropped every auth page's heading) and a **real migration gap**
+    (`permissions`/`role_permissions` never migrated + column mismatch — new `0014`
+    migration, NOT yet applied). Set a real password directly for the migrated admin account
+    as a workaround for the still-unclicked password-reset-email flow.
+  - **Done (2026-08-12): memory catch-up.** ~5 days of the above work was found sitting
+    uncommitted; consolidated a duplicate/misplaced agent-memory directory, wrote catch-up
+    entries across `docs/ai-memory/`, re-verified and committed. See PROJECT_STATE.md.
+  - Next, in order: (1) root-cause and fix the Calendar 401-under-Supabase bug (needs the
+    user's Cloud Functions log access or a secret re-set + redeploy); (2) user applies `0014`
+    via the SQL Editor, then `migrate-permissions.mjs --apply`; (3) a real human clicks a
+    real password-reset email end-to-end (still deferred, still outstanding); (4) full manual
+    QA with `VITE_AUTH_BACKEND=supabase` in a local build once Calendar is fixed; (5) the
+    actual cutover — flipping the flag in real production config. Each still needs its own
+    separate explicit approval. Firebase remains the sole live production backend throughout.
 - Android "Connection and Sync Status" feature (per `.claude/agents/android-ui-bee.md`
   and `integration-sync-bee.md`):
   - Done: `StatusRepository`, `ConnectionStatus` enum, and connection-state derivation
