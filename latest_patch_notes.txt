@@ -1,0 +1,121 @@
+CAP DASHBOARD — LATEST PATCH NOTES
+====================================
+Last updated: 2026-08-13
+Deployed to: https://capdashboard.gerhardvanwijk.workers.dev
+Pushed to GitHub: origin/main (commit e43daae)
+
+This file is updated after each work session so you can see what changed,
+what was actually tested (not just written), and what still needs your
+action. "Deployed" means it's live on the website above. "Applied" (for
+migrations) means it needs to be run in the Supabase SQL Editor.
+
+====================================
+STILL NEEDS YOUR ACTION
+====================================
+
+1. Run these migrations in the Supabase SQL Editor (in this order), all
+   confirmed to ONLY do what's described, nothing else:
+
+   supabase/migrations/0020_service_and_job_card_photos.sql
+     -> Adds service_records.photos + job_cards.arrival_photos.
+        Without this, uploaded photos on Log Service / Book In won't save.
+
+   supabase/migrations/0021_job_card_settings_statuses_and_line_types.sql
+     -> Makes "Job Statuses" and "Service/Line Item Types" editable in
+        Settings > Job Cards. Safe no-op until you actually edit them.
+
+   supabase/migrations/0022_job_cards_machine_type.sql
+     -> Adds job_cards.machine_type so the "Machine Type" field on Book In
+        actually saves (it was being silently discarded before).
+
+2. The Dashboard sticky-notes Cloud Function is still not deployed (GCP
+   billing was disabled on that project). Customer-linked notes are coded
+   and tested at the database level, but can't be confirmed working
+   end-to-end until you re-enable billing and redeploy Cloud Functions.
+
+3. When you're ready to test the real customer import: go to Settings >
+   Data Management > Import Customers and upload your Pastel Excel export.
+   Nothing has been imported yet — the importer is built and tested against
+   made-up data only.
+
+====================================
+WHAT'S LIVE ON THE WEBSITE NOW
+====================================
+
+BUG FIXES (things that were broken and now work):
+- Adding a product/service to a Job Card now actually shows up after you
+  refresh the page or reopen it. (It was saving to the database correctly
+  before, but the page wasn't re-reading it back — now fixed.)
+- The Jobs list page: clicking a job now reliably opens it. Before, on most
+  normal desktop screen sizes, clicking did nothing visible.
+- The Jobs list page no longer shows "Unknown Client" / "Unknown Machine"
+  for real jobs with real data — that was a display bug, not bad data.
+- Notes linked to a customer from the Dashboard now show up on that
+  customer's own page (they were being saved but never displayed there).
+- You can now edit an existing product/service line on a Job Card, not just
+  add or delete one.
+- The "Machine Type" field on the Add/Edit Machine form now actually saves
+  (it existed on screen but was silently ignored before).
+- Photo uploads on Log Service and Book In now actually save to the record
+  (pending migration 0020 above — the code is fixed, needs the database
+  column).
+
+NEW FEATURES:
+- Settings page (visible to Administrators only): Job Card configuration
+  (job numbering prefix, default status, default quantities, which
+  statuses/line types are available), and a Products & Services catalogue
+  you can manage yourself (add/edit/archive products and services with
+  prices) — these now feed directly into the "Add Line" picker on Job
+  Cards.
+- Customer Import tool (Settings > Data Management) — upload an Excel file
+  from Pastel, map the columns, preview what will be imported, see
+  duplicates flagged, then confirm. Built to be reusable for future
+  imports, not a one-time script.
+
+DASHBOARD:
+- Greeting now says "Good morning / afternoon / evening, [your real name]"
+  based on the time of day, with the current date and time shown
+  underneath, updating live while the page is open.
+
+CALENDAR:
+- Fixed: the calendar now correctly switches between month view and list
+  view when you resize the browser window or rotate your device (it used
+  to only check this once when the page first loaded).
+
+LOGIN PAGE:
+- Reduced a large empty gap that appeared above the login form on mobile
+  phones.
+
+====================================
+WHAT WAS TESTED (not just written)
+====================================
+- Every code change: automated checks (lint, type-check, build) — all
+  clean.
+- Job Card product/service add-edit-delete-refresh cycle: tested directly
+  against the live database with throwaway test data — 13/13 checks
+  passed, including confirming that editing a catalogue item's price later
+  does NOT change the price already charged on old job cards.
+- Jobs page fix: tested directly against the live database — 7/7 checks
+  passed.
+- Settings permissions: tested that an Administrator can access Settings
+  and a Technician cannot — working correctly both ways.
+- Customer importer: built a test spreadsheet matching real-world
+  scenarios (duplicate rows, missing data, similarly-named companies) and
+  ran it through the actual import logic — found and fixed two real gaps
+  in duplicate detection before you ever see the real file.
+- All test data was created and then fully deleted — nothing left behind
+  in the real database.
+
+====================================
+NOT YET DONE / IN PROGRESS
+====================================
+- Android app: confirmed it still builds correctly and hasn't been broken
+  by any web changes. A visual redesign to match the new web look is
+  currently in progress (not yet finished or committed).
+- A full page-by-page mobile-phone-screen review is partially done — the
+  problems found so far have been fixed, but not every single page has
+  been individually checked yet.
+- No changes have been made to the actual Android app's connection to
+  Firebase — it remains exactly as it was.
+
+====================================
