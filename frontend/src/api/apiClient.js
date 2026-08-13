@@ -31,6 +31,7 @@ const endpointMap = {
   JobCardLine: "job_card_lines",
   Site: "sites",
   User: "users",
+  DashboardNote: "dashboard_notes",
 };
 
 const routeCollections = {
@@ -320,6 +321,11 @@ const firebaseApiClient = {
     JobCardLine: makeEntity("JobCardLine"),
     Site: makeEntity("Site"),
     User: makeEntity("User"),
+    // Personal dashboard sticky notes (2026-08-13, explicit user request). Scoped to the
+    // signed-in user's own notes via `created_by` -- firestore.rules enforces this
+    // server-side (dashboard_notes match block), the client-side `.filter({ created_by })`
+    // call in Dashboard.jsx is a query optimization, not the security boundary.
+    DashboardNote: makeEntity("DashboardNote"),
   },
   integrations: {
     Core: {

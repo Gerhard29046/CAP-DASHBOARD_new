@@ -273,6 +273,10 @@ export const supabaseApiClient = {
     JobCardLine: makeEntity("job_card_lines"),
     Site: makeEntity("sites"),
     User: makeEntity("users"),
+    // Mirrors apiClient.js's Firebase DashboardNote entity + the new
+    // supabase/migrations/0017_dashboard_notes.sql table (not yet applied) -- kept in
+    // parity even though this backend is dormant (VITE_AUTH_BACKEND=firebase).
+    DashboardNote: makeEntity("dashboard_notes"),
   },
   integrations: {
     Core: {

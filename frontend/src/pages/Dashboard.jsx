@@ -8,6 +8,7 @@ import EmptyState from "@/components/EmptyState";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import LogServiceModal from "@/components/LogServiceModal";
+import StickyNotes from "@/components/StickyNotes";
 import moment from "moment";
 
 function greeting() {
@@ -201,6 +202,10 @@ export default function Dashboard() {
             </div>
           )}
         </section>
+      </div>
+
+      <div className="mt-4 lg:mt-6">
+        <StickyNotes />
       </div>
     </div>
   );

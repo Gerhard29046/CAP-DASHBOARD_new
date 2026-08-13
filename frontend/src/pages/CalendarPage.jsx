@@ -4,11 +4,14 @@ import dayGridPlugin from "@fullcalendar/daygrid";
 import timeGridPlugin from "@fullcalendar/timegrid";
 import listPlugin from "@fullcalendar/list";
 import interactionPlugin from "@fullcalendar/interaction";
-import { RefreshCw, X } from "lucide-react";
+import { RefreshCw, X, Building2, Wrench, User2, Droplets, StickyNote, Calendar as CalendarIcon } from "lucide-react";
 import { apiClient } from "@/api/apiClient";
 import { useAuth } from "@/lib/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import PageHeader from "@/components/PageHeader";
 
 // Google Calendar sync was removed 2026-08-12 (user decision: Cloud Functions/Google API
 // cost was not justified) -- this page now only ever shows the CAP Dashboard's own
@@ -56,22 +59,30 @@ export default function CalendarPage() {
       : ["calendar-service"];
 
   return (
-    <div className="space-y-4 overflow-hidden">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold">Calendar</h1>
-          <p className="text-sm text-muted-foreground">Upcoming Services.</p>
+    <div className="max-w-6xl mx-auto space-y-4">
+      <PageHeader
+        title="Calendar"
+        subtitle="Upcoming services, derived from your service records."
+        action={
+          <Button variant="outline" onClick={load} disabled={loading} className="gap-2">
+            <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+            {loading ? "Loading…" : "Refresh"}
+          </Button>
+        }
+      />
+
+      {error && (
+        <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-2.5 text-sm text-destructive">
+          {error}
         </div>
-        <Button variant="outline" onClick={load} disabled={loading}>
-          <RefreshCw className={`w-4 h-4 mr-2 ${loading ? "animate-spin" : ""}`} />
-          {loading ? "Loading…" : "Refresh Calendar"}
-        </Button>
-      </div>
+      )}
+      {warnings.map((w) => (
+        <div key={w} className="rounded-lg border border-border bg-muted px-4 py-2.5 text-sm text-muted-foreground">
+          {w}
+        </div>
+      ))}
 
-      {error && <div className="rounded-xl border border-destructive/40 bg-destructive/10 p-3 text-sm">{error}</div>}
-      {warnings.map((w) => <div key={w} className="rounded-xl border bg-muted p-3 text-sm">{w}</div>)}
-
-      <div className="relative min-h-[650px] rounded-2xl border bg-card p-3 md:p-5">
+      <div className="relative min-h-[650px] rounded-xl border border-border bg-card p-3 md:p-5 animate-fade-in">
         <FullCalendar
           ref={ref}
           plugins={[dayGridPlugin, timeGridPlugin, listPlugin, interactionPlugin]}
@@ -102,6 +113,19 @@ export default function CalendarPage() {
   );
 }
 
+function DetailRow({ icon: Icon, label, value }) {
+  if (!value) return null;
+  return (
+    <div className="flex items-start gap-3 py-2.5 border-b border-border last:border-0">
+      <Icon className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />
+      <div className="min-w-0">
+        <p className="text-xs text-muted-foreground">{label}</p>
+        <p className="text-sm text-foreground mt-0.5">{value}</p>
+      </div>
+    </div>
+  );
+}
+
 function EventDetails({ event, canReschedule, close, refreshed }) {
   const p = event.extendedProps;
   const [date, setDate] = useState(event.startStr?.slice(0, 10) || "");
@@ -121,30 +145,45 @@ function EventDetails({ event, canReschedule, close, refreshed }) {
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4" onClick={close}>
-      <div className="w-full max-w-lg rounded-2xl border bg-card p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-        <div className="flex justify-between gap-3">
-          <h2 className="text-xl font-bold">{event.title}</h2>
-          <button onClick={close}><X /></button>
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4 animate-fade-in" onClick={close}>
+      <div
+        className="w-full max-w-lg rounded-xl border border-border bg-card p-5 sm:p-6 shadow-2xl animate-slide-up"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-3 mb-4">
+          <div>
+            <h2 className="text-lg font-heading font-bold text-foreground">{event.title}</h2>
+            {p.status && <Badge variant="neutral" className="mt-2">{p.status}</Badge>}
+          </div>
+          <button onClick={close} className="text-muted-foreground hover:text-foreground transition-colors">
+            <X className="w-5 h-5" />
+          </button>
         </div>
-        <dl className="mt-5 grid grid-cols-[130px_1fr] gap-2 text-sm">
-          <dt>Client</dt><dd>{p.clientName}</dd>
-          <dt>Machine</dt><dd>{[p.machineBrand, p.machineModel].filter(Boolean).join(" ")}</dd>
-          <dt>Serial Number</dt><dd>{p.serialNumber || "—"}</dd>
-          <dt>Refrigerant</dt><dd>{p.refrigerantType || "—"}</dd>
-          <dt>Technician</dt><dd>{p.technician || "—"}</dd>
-          <dt>Status</dt><dd>{p.status}</dd>
-          <dt>Notes</dt><dd>{p.notes || "—"}</dd>
-        </dl>
+
+        <div className="border-t border-border">
+          <DetailRow icon={Building2} label="Client" value={p.clientName} />
+          <DetailRow icon={Wrench} label="Machine" value={[p.machineBrand, p.machineModel].filter(Boolean).join(" ") || null} />
+          <DetailRow icon={CalendarIcon} label="Serial Number" value={p.serialNumber} />
+          <DetailRow icon={Droplets} label="Refrigerant" value={p.refrigerantType} />
+          <DetailRow icon={User2} label="Technician" value={p.technician} />
+          <DetailRow icon={StickyNote} label="Notes" value={p.notes} />
+        </div>
+
         <div className="mt-5 flex flex-wrap gap-2">
-          <Button asChild variant="outline"><a href={`/clients/${p.clientId}`}>View Client</a></Button>
-          <Button asChild variant="outline"><a href={`/machines/${p.machineId}`}>View Machine</a></Button>
-          <Button asChild variant="outline"><a href={`/service-records?record=${p.serviceRecordId}`}>View Service Record</a></Button>
+          <Button asChild variant="outline" size="sm"><a href={`/clients/${p.clientId}`}>View Client</a></Button>
+          <Button asChild variant="outline" size="sm"><a href={`/machines/${p.machineId}`}>View Machine</a></Button>
+          <Button asChild variant="outline" size="sm"><a href={`/service-records?record=${p.serviceRecordId}`}>View Service Record</a></Button>
         </div>
+
         {canReschedule && (
-          <div className="mt-5 flex gap-2">
-            <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-            <Button onClick={reschedule} disabled={busy || !date}>Reschedule Service</Button>
+          <div className="mt-5 pt-4 border-t border-border">
+            <Label className="text-xs text-muted-foreground">Reschedule</Label>
+            <div className="flex gap-2 mt-1.5">
+              <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="h-10" />
+              <Button onClick={reschedule} disabled={busy || !date} className="shrink-0">
+                {busy ? "Saving…" : "Reschedule"}
+              </Button>
+            </div>
           </div>
         )}
       </div>

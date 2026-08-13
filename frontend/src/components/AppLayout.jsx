@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Outlet, Link, useLocation } from "react-router-dom";
 import {
   LayoutDashboard,
@@ -17,6 +17,12 @@ import {
   CalendarDays,
 } from "lucide-react";
 import { useAuth } from "@/lib/AuthContext";
+import { apiClient } from "@/api/apiClient";
+
+// Job card statuses that mean "billable but not yet invoiced" -- must match
+// InvoiceQueue.jsx's own `billable`/`pending` filter exactly (see that page's
+// load()) so the navbar badge and the page's own count never disagree.
+const PENDING_INVOICE_STATUSES = ["Completed", "Ready to Invoice", "Ready for Invoice"];
 
 const ALL_NAV_ITEMS = [
   { label: "Dashboard", path: "/", icon: LayoutDashboard, permission: "dashboard.view" },
@@ -27,12 +33,13 @@ const ALL_NAV_ITEMS = [
   { label: "Book In", path: "/book-in", icon: ClipboardList, permission: "job_cards.create" },
   { label: "Jobs", path: "/jobs", icon: ClipboardList, permission: "job_cards.view" },
   { label: "Machine Knowledge Base", path: "/knowledge-base", icon: Library, permission: "knowledge_base.view" },
-  { label: "Invoice Queue", path: "/invoice-queue", icon: Receipt, permission: "invoices.queue.view" },
+  { label: "Invoice Queue", path: "/invoice-queue", icon: Receipt, permission: "invoices.queue.view", badgeKey: "pendingInvoices" },
   { label: "User Management", path: "/admin/users", icon: ShieldCheck, permission: "users.view" },
 ];
 
 export default function AppLayout() {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [pendingInvoices, setPendingInvoices] = useState(0);
   const location = useLocation();
   const { user, logout, hasPermission, hasAnyPermission } = useAuth();
 
@@ -41,6 +48,22 @@ export default function AppLayout() {
 
   const navItems = ALL_NAV_ITEMS.filter((item) =>
     item.anyPermission ? hasAnyPermission(item.anyPermission) : hasPermission(item.permission));
+
+  const canViewInvoiceQueue = hasPermission("invoices.queue.view");
+
+  useEffect(() => {
+    if (!canViewInvoiceQueue) { setPendingInvoices(0); return; }
+    let active = true;
+    apiClient.entities.JobCard.list()
+      .then((jobCards) => {
+        if (!active) return;
+        setPendingInvoices((jobCards || []).filter((jc) => PENDING_INVOICE_STATUSES.includes(jc.status)).length);
+      })
+      .catch((e) => console.error("Failed to load pending invoice count:", e));
+    return () => { active = false; };
+  }, [canViewInvoiceQueue, location.pathname]);
+
+  const badgeCounts = { pendingInvoices };
 
   const handleLogout = () => {
     logout();
@@ -81,6 +104,7 @@ export default function AppLayout() {
             {navItems.map((item) => {
               const Icon = item.icon;
               const active = location.pathname === item.path;
+              const count = item.badgeKey ? badgeCounts[item.badgeKey] : 0;
 
               return (
                 <Link
@@ -94,7 +118,12 @@ export default function AppLayout() {
                   }`}
                 >
                   <Icon className="w-5 h-5" />
-                  {item.label}
+                  <span className="flex-1">{item.label}</span>
+                  {count > 0 && (
+                    <span className="min-w-[20px] h-5 px-1.5 rounded-full bg-primary text-primary-foreground text-[11px] font-semibold flex items-center justify-center shrink-0">
+                      {count > 99 ? "99+" : count}
+                    </span>
+                  )}
                 </Link>
               );
             })}
@@ -128,6 +157,7 @@ export default function AppLayout() {
             {navItems.map((item) => {
               const Icon = item.icon;
               const active = location.pathname === item.path;
+              const count = item.badgeKey ? badgeCounts[item.badgeKey] : 0;
 
               return (
                 <Link
@@ -140,7 +170,12 @@ export default function AppLayout() {
                   }`}
                 >
                   <Icon className="w-5 h-5" />
-                  {item.label}
+                  <span className="flex-1">{item.label}</span>
+                  {count > 0 && (
+                    <span className="min-w-[20px] h-5 px-1.5 rounded-full bg-primary text-primary-foreground text-[11px] font-semibold flex items-center justify-center shrink-0">
+                      {count > 99 ? "99+" : count}
+                    </span>
+                  )}
                 </Link>
               );
             })}

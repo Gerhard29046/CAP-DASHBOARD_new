@@ -130,6 +130,15 @@ service cloud.firestore {
       allow write: if hasPermission('invoices.edit');
     }
 
+    // Personal dashboard sticky notes (2026-08-13). Own-notes-only, like Windows Sticky
+    // Notes -- any active signed-in user may create/read/update/delete ONLY notes where
+    // created_by is their own uid. No admin bypass needed (these are personal scratch
+    // notes, not business records other roles need to review/audit).
+    match /dashboard_notes/{noteId} {
+      allow create: if hasActiveProfile() && request.resource.data.created_by == request.auth.uid;
+      allow read, update, delete: if hasActiveProfile() && resource.data.created_by == request.auth.uid;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }
