@@ -8,10 +8,11 @@ import moment from "moment";
 
 // Dashboard sticky notes -- GLOBAL (every signed-in user sees every note), explicit user
 // request 2026-08-13 + follow-up correction. Only the note's creator or an admin may edit
-// or delete it -- enforced server-side by the dashboardNotes Cloud Function (see
-// functions/lib/dashboardNotes.js), not just hidden in this UI. Data lives in Supabase per
-// explicit instruction, reached via a Cloud Function since the live app authenticates with
-// Firebase and has no Supabase session (see dashboardNotesClient.js for the full reason).
+// or delete it -- enforced server-side by Postgres RLS directly (see
+// supabase/migrations/0023_dashboard_notes_direct_rls.sql), not just hidden in this UI
+// (`canManage` below only controls whether the edit/delete affordances are shown). Data
+// lives in Supabase, read/written directly via dashboardNotesClient.js -- no separate
+// backend service, same as every other entity in this app.
 //
 // A note may optionally be linked to a client (client_id is a real, live Firestore client
 // ID) -- shown as a colored label on the note, per follow-up user request.

@@ -26,6 +26,11 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.compose.rememberNavController
 import dagger.hilt.android.AndroidEntryPoint
 import dagger.hilt.android.lifecycle.HiltViewModel
 import com.CAPDATABASE.capdatabase.ui.components.CapBackRow
@@ -57,6 +62,7 @@ import com.CAPDATABASE.capdatabase.ui.components.StatusTone
 import com.CAPDATABASE.capdatabase.ui.navigation.CapAppScaffold
 import com.CAPDATABASE.capdatabase.ui.navigation.CapBottomNavigation
 import com.CAPDATABASE.capdatabase.ui.navigation.CapNavDestination
+import com.CAPDATABASE.capdatabase.ui.navigation.CapNavRoute
 import com.CAPDATABASE.capdatabase.ui.navigation.CapTopAppBar
 import com.CAPDATABASE.capdatabase.ui.theme.CapSuccessGreen
 import com.CAPDATABASE.capdatabase.ui.theme.CapTheme
@@ -363,11 +369,63 @@ private fun bottomNavDestinations(user: CapUser): List<CapNavDestination> = buil
     add(CapNavDestination("More", "More", Icons.Outlined.MoreHoriz))
 }
 
+/**
+ * Adapter between this app's existing screen-label strings (unchanged since before Phase B --
+ * still what `destinations`/`permissionFor`/`MoreScreen`/every `onNavigate("SomeLabel")` call
+ * site throughout this file use) and the space-free [CapNavRoute] ids Navigation-Compose's
+ * `NavController`/`NavHost` require. Only [AdaptiveShell] (the NavHost wiring itself) needs to
+ * know this translation exists -- every screen composable, permission check, and title still
+ * works purely in terms of labels, exactly as before.
+ */
+private fun routeIdForLabel(label: String): String = when (label) {
+    "Dashboard" -> CapNavRoute.Home.route
+    "Clients" -> CapNavRoute.Clients.route
+    "Machines" -> CapNavRoute.Machines.route
+    "Services" -> CapNavRoute.Services.route
+    "Jobs" -> CapNavRoute.Jobs.route
+    "Calendar" -> CapNavRoute.Calendar.route
+    "Knowledge Base" -> CapNavRoute.KnowledgeBase.route
+    "Invoices" -> CapNavRoute.Invoices.route
+    "Users" -> CapNavRoute.Users.route
+    "Status" -> CapNavRoute.Status.route
+    "More" -> CapNavRoute.More.route
+    "Account" -> CapNavRoute.Account.route
+    "LogNewService" -> CapNavRoute.LogNewService.route
+    "BookIn" -> CapNavRoute.BookIn.route
+    else -> CapNavRoute.Home.route
+}
+
+private fun labelForRouteId(routeId: String?): String = when (routeId) {
+    CapNavRoute.Home.route -> "Dashboard"
+    CapNavRoute.Clients.route -> "Clients"
+    CapNavRoute.Machines.route -> "Machines"
+    CapNavRoute.Services.route -> "Services"
+    CapNavRoute.Jobs.route -> "Jobs"
+    CapNavRoute.Calendar.route -> "Calendar"
+    CapNavRoute.KnowledgeBase.route -> "Knowledge Base"
+    CapNavRoute.Invoices.route -> "Invoices"
+    CapNavRoute.Users.route -> "Users"
+    CapNavRoute.Status.route -> "Status"
+    CapNavRoute.More.route -> "More"
+    CapNavRoute.Account.route -> "Account"
+    CapNavRoute.LogNewService.route -> "LogNewService"
+    CapNavRoute.BookIn.route -> "BookIn"
+    else -> "Dashboard"
+}
+
+/** The 4 bottom-nav tabs get the standard Google-recommended save/restore back-stack treatment
+ *  (each tab keeps its own state when switching away and back). Every other destination
+ *  (drill-ins from Dashboard/More) is a normal push so the system back button returns to
+ *  wherever the user actually came from -- real behavior this app never had before Phase B. */
+private val bottomNavLabels = setOf("Dashboard", "Clients", "Jobs", "More")
+
 @Composable
 fun AdaptiveShell(vm: MainViewModel) {
     val user = vm.state.user ?: return
     val status by vm.status.collectAsState()
-    var selected by remember { mutableStateOf("Dashboard") }
+    val navController = rememberNavController()
+    val backStackEntry by navController.currentBackStackEntryAsState()
+    val selected = labelForRouteId(backStackEntry?.destination?.route)
     val snackbar = remember { SnackbarHostState() }
     val bottomDestinations = remember(user) { bottomNavDestinations(user) }
 
@@ -382,6 +440,16 @@ fun AdaptiveShell(vm: MainViewModel) {
         else -> destinations.firstOrNull { it.label == selected }?.label ?: selected
     }
 
+    val navigate: (String) -> Unit = { label ->
+        navController.navigate(routeIdForLabel(label)) {
+            launchSingleTop = true
+            if (label in bottomNavLabels) {
+                popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                restoreState = true
+            }
+        }
+    }
+
     CapAppScaffold(
         topBar = {
             CapTopAppBar(
@@ -390,12 +458,27 @@ fun AdaptiveShell(vm: MainViewModel) {
             )
         },
         bottomBar = {
-            CapBottomNavigation(bottomDestinations, selected, onSelect = { selected = it })
+            CapBottomNavigation(bottomDestinations, selected, onSelect = navigate)
         },
         snackbarHostState = snackbar
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding).padding(horizontal = Spacing.md, vertical = Spacing.sm)) {
-            ScreenContent(selected, vm, user) { selected = it }
+            NavHost(navController = navController, startDestination = CapNavRoute.Home.route) {
+                composable(CapNavRoute.Home.route) { ScreenContent("Dashboard", vm, user, navigate) }
+                composable(CapNavRoute.Clients.route) { ScreenContent("Clients", vm, user, navigate) }
+                composable(CapNavRoute.Machines.route) { ScreenContent("Machines", vm, user, navigate) }
+                composable(CapNavRoute.Services.route) { ScreenContent("Services", vm, user, navigate) }
+                composable(CapNavRoute.Jobs.route) { ScreenContent("Jobs", vm, user, navigate) }
+                composable(CapNavRoute.Calendar.route) { ScreenContent("Calendar", vm, user, navigate) }
+                composable(CapNavRoute.KnowledgeBase.route) { ScreenContent("Knowledge Base", vm, user, navigate) }
+                composable(CapNavRoute.Invoices.route) { ScreenContent("Invoices", vm, user, navigate) }
+                composable(CapNavRoute.Users.route) { ScreenContent("Users", vm, user, navigate) }
+                composable(CapNavRoute.Status.route) { ScreenContent("Status", vm, user, navigate) }
+                composable(CapNavRoute.More.route) { ScreenContent("More", vm, user, navigate) }
+                composable(CapNavRoute.Account.route) { ScreenContent("Account", vm, user, navigate) }
+                composable(CapNavRoute.LogNewService.route) { ScreenContent("LogNewService", vm, user, navigate) }
+                composable(CapNavRoute.BookIn.route) { ScreenContent("BookIn", vm, user, navigate) }
+            }
         }
     }
 }

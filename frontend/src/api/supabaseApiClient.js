@@ -300,11 +300,12 @@ export const supabaseApiClient = {
     ProductService: makeEntity("products_services"),
     JobCardSettings: jobCardSettingsApi,
     ClientImport: makeEntity("client_imports"),
-    // Dashboard notes are NOT exposed via a plain table entity here -- see
-    // supabase/migrations/0017_dashboard_notes.sql: RLS has zero policies (deny-all for
-    // anon/authenticated), so a direct .from("dashboard_notes") call would always fail
-    // regardless of backend. Real access goes through the dashboardNotes Cloud Function
-    // (functions/lib/dashboardNotes.js), called directly from StickyNotes.jsx.
+    // Dashboard notes are NOT exposed via makeEntity() here -- they have their own
+    // dedicated client (frontend/src/api/dashboardNotesClient.js, called directly from
+    // StickyNotes.jsx) because create/update need slightly different shaping than a plain
+    // table entity (server-resolved created_by_name, a fixed color fallback). RLS
+    // (supabase/migrations/0023_dashboard_notes_direct_rls.sql) enforces "global read,
+    // creator-or-admin write/delete" directly -- no separate backend service.
   },
   integrations: {
     Core: {

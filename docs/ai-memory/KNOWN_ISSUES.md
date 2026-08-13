@@ -1,6 +1,153 @@
 # Known Issues
 
-## Migrations 0020/0021 pending application (2026-08-13, later still same day)
+## Real Android users likely can't log in via Supabase Auth yet — only 1 of presumably several real users is migrated (found 2026-08-13, Phase C)
+- Confirmed live: only 3 Supabase Auth users exist in production — the 1 real admin
+  (`admin@connoisseurauto.co.za`, migrated during the web cutover) plus 2 unrelated leftover
+  throwaway QA test accounts (see the entry below). Android's Phase C authentication now
+  requires a real Supabase Auth account to log in (Firebase Auth alone is no longer
+  sufficient/authoritative) — any real technician/staff user without one cannot log into the
+  Android app until the `users` migration phase is extended to cover them, which itself is
+  gated on the same still-untested password-reset-email flow already flagged from the web
+  migration (`project_supabase_password_reset_untested` in queen-bee memory).
+- Not a bug in Phase C's code — a real, pre-existing gap in how many users have been
+  migrated, surfaced by this phase rather than caused by it.
+
+## 2 unrelated leftover throwaway QA test accounts found live in production `public.users`/Supabase Auth (found 2026-08-13, Phase C — NOT created this session, NOT deleted, needs a decision)
+- `qa-fixes+admin-1786627520045-4gmd@invalid.local` (role: admin, active) and
+  `qa-fixes+technician-1786627521518-gac2@invalid.local` (role: technician, active) —
+  discovered while checking real Supabase Auth user counts for Android Phase C's login-flow
+  design. Naming/timing pattern strongly suggests leftover debris from an earlier, unrelated
+  QA script run that didn't fully clean up (this session's own QA scripts all independently
+  verified full cleanup — see e.g. `qa-verify-android-auth-rest-contract.mjs`'s own
+  cleanup-verification step — so this predates and is unrelated to that pattern working
+  correctly elsewhere).
+- **Not deleted** — user-account deletion is a destructive action requiring explicit
+  approval, and these being test debris is a strong inference, not a certainty. Flagged
+  directly; needs the user's decision on whether to delete them.
+
+## This ("home") machine's CLI Gradle build still fails, but Android Studio's own GUI build succeeds (found 2026-08-13/14, Phase D)
+- Re-attempted `gradlew.bat assembleDebug` fresh this session (via `testing-bee`) rather than
+  assuming the earlier-documented TLS/CA gap still applied unverified. Result: the Gradle
+  wrapper's own distribution download succeeded this time (different from the earlier
+  `services.gradle.org` symptom), but the build still failed with the same root cause (`PKIX
+  path building failed`, no CA trust chain) at a later stage — dependency resolution
+  (`hilt-compiler`/`room-compiler` from `dl.google.com`/`repo.maven.apache.org`).
+- **The user then opened the project in Android Studio's own GUI (launched by Queen Bee via
+  `start studio64.exe <project path>`, built/run manually by the user) and confirmed it
+  built and ran successfully.** Android Studio evidently uses a different network/trust path
+  for the same underlying Gradle build than a bare `gradlew.bat` CLI invocation.
+- **Practical consequence**: a real Android build IS possible on this machine, but only
+  through Android Studio's GUI, which Queen Bee cannot drive or verify unattended (no GUI
+  automation tool available). Every Android code change from this session onward is still
+  only manually-reviewed + REST-contract-tested by Queen Bee, never Queen-Bee-compiler-
+  verified — the user must periodically confirm via Android Studio that things still build,
+  the same way they just did for Phase C+D together.
+
+## All Android code changes so far (Phases B, C, and D) are manually-reviewed only, NOT compiler-verified by Queen Bee (2026-08-13, updated Phase D)
+- **Phase B**: `MainActivity.kt`'s `AdaptiveShell` was rewritten to use a real
+  `NavController`/`NavHost` in place of a plain `remember`-state string switch. Every
+  `onNavigate("...")` call site was cross-checked by grep against the new label↔route-id
+  adapter to catch typos/mismatches without a compiler.
+- **Phase C**: new `SupabaseAuth.kt` + rewritten `Core.kt`'s `AuthRepository` (see
+  `docs/ai-memory/DECISIONS.md`'s matching entry and `docs/android/ANDROID_SUPABASE_MIGRATION.md`
+  §11.9 for exactly what could/couldn't be verified) — the server-side REST contract the new
+  Kotlin code depends on **was** verified for real (`qa-verify-android-auth-rest-contract.mjs`,
+  12/12 pass against live Supabase), but the Kotlin code's own compilation/execution
+  (`EncryptedSharedPreferences`/`MasterKey` API usage, Hilt wiring, `BuildConfig` field
+  generation, actual runtime behavior) was not.
+- Confirmed **three separate times now**, across both phases, that this environment cannot
+  get a real Android build working: (1) the pinned Gradle wrapper's distribution download,
+  (2) directly invoking an already-cached alternate Gradle version (9.2.1) — failed at
+  Gradle Plugin Portal resolution — both TLS/CA trust-chain issues, not version-compatibility
+  ones; (3) not re-attempted a third time in Phase C since already conclusively established,
+  but re-confirmed by the same root cause still being present.
+- **Phase D**: new `SupabaseData.kt` + `Core.kt`'s `RecordsRepository`/`StatusRepository`
+  changes (see `docs/android/ANDROID_SUPABASE_MIGRATION.md` §12 for full detail) — the
+  server-side REST contract was verified for real (`qa-verify-android-phase-d-rest-contract.mjs`,
+  16/16 pass against live Supabase, including a genuine RLS-permission finding — see §12.4),
+  but the Kotlin code's own compilation was only confirmed indirectly (the user's Android
+  Studio GUI build succeeded on the Phase C+D combined working tree at the time; not
+  independently re-verified by Queen Bee after Phase D's own edits landed).
+- Before trusting any Android code from this session the way the REST-contract results can
+  be trusted, either fix this machine's TLS trust store, or verify on the machine where
+  Android builds have previously succeeded, per `docs/android/ANDROID_SUPABASE_MIGRATION.md`.
+  The Android Studio GUI path (see the entry above) is the one confirmed-working option on
+  this machine right now — re-run it after Phase D to be sure.
+
+## RESOLVED: `0023_dashboard_notes_direct_rls.sql` applied and live-verified 24/24 (2026-08-13, later same day)
+- User applied it via the SQL Editor. Confirmed live via direct probe (both CHECK
+  constraints correctly reject bad input) and via
+  `supabase/scripts/qa-verify-dashboard-notes-rls.mjs` — full authorization matrix, 24/24
+  checks pass, full cleanup independently verified (0 residual notes/auth users). Dashboard
+  notes are fully live now — no further action needed on this. See `SESSION_LOG.md`.
+
+## `supabase/migrations/0023_dashboard_notes_direct_rls.sql` written, NOT yet applied (2026-08-13, later same day) — SUPERSEDED, see RESOLVED entry above
+- Dashboard notes now use direct Supabase Auth + RLS (`public.is_admin()`, a `BEFORE INSERT
+  OR UPDATE` trigger for `created_by_name`, `CHECK` constraints for content length/color) —
+  no server-side service of any kind. Confirmed live 2026-08-13 that the CHECK constraints
+  don't exist yet (a real insert with 2001-char content succeeded against the service-role
+  client, then was cleaned up) — the migration needs the SQL Editor, same as every other one.
+- **Blocks** `supabase/scripts/qa-verify-dashboard-notes-rls.mjs` (the full authorization-
+  matrix QA script, ready to run) until applied — it needs the real RLS policies/constraints
+  live to test against. Ask Queen Bee to run it once 0023 is confirmed applied.
+- Once applied: sticky notes work end-to-end immediately, no deploy of anything else needed
+  (no Worker, no Cloud Function — see the RESOLVED entry below for why).
+
+## RESOLVED (migrated to direct RLS, not a server-side service): `dashboardNotes`'s Firebase/GCP billing blocker and the Worker that briefly replaced it are both moot (2026-08-13, same day)
+- Two designs were tried and discarded the same day before landing on the final one:
+  1. Firebase Cloud Function (original design) — blocked on GCP billing the whole time it
+     existed, never live.
+  2. Cloudflare Worker (`workers/dashboard-notes-api/`) — built, unit-tested (26/26),
+     confirmed to bundle correctly, but never deployed (wrong Cloudflare account logged in
+     on this machine — see the git history of this file for that entry's detail if ever
+     needed) before being superseded.
+  3. **Final: direct Supabase Auth + RLS** (`supabase/migrations/0023_dashboard_notes_direct_rls.sql`)
+     — `public.is_admin()` already existed and already expressed exactly this
+     "creator or admin" rule everywhere else in this schema; the original premise that RLS
+     couldn't express it was simply wrong for this codebase. `workers/dashboard-notes-api/`
+     was deleted entirely. See `DECISIONS.md`'s 2026-08-13 entries for the full history.
+- Neither Firebase/GCP billing nor a Cloudflare account/deploy is relevant to this feature
+  at all anymore — it's pure Postgres + the existing frontend Supabase client.
+
+## This ("home") machine's Gradle wrapper cannot download its distribution — blocks direct Android build verification (found 2026-08-13)
+- `mobile-android/gradlew.bat testDebugUnitTest`/`lintDebug`/`assembleDebug` fail before
+  even reaching the project: `javax.net.ssl.SSLHandshakeException: PKIX path building
+  failed` while the Gradle wrapper tries to download `gradle-8.14.5-bin.zip` from
+  `services.gradle.org` — this JDK/machine has no valid CA trust chain for that host. A
+  `C:\Users\USER-PC\.gradle\wrapper\dists\gradle-8.14.5-bin\` cache entry existed but was
+  only a partial `.zip.part` (an earlier attempt that also failed) — removed, not a usable
+  cache.
+- Found `C:\Program Files\Android\Android Studio\jbr` (JetBrains Runtime, OpenJDK 21.0.9) as
+  a usable `JAVA_HOME` on this machine — that part works. The download/TLS-trust step is
+  what fails, not a missing JDK.
+- **Not something to work around by disabling certificate validation** — that would be a
+  real security downgrade for a one-off local verification. The fix is either: install a
+  proper CA bundle/trust store this JDK will use, run Android builds through Android Studio
+  itself (which bundles its own network stack) instead of a bare `gradlew.bat` shell-out, or
+  do Android build verification on the other ("work") machine where it's previously
+  succeeded (see the matching `supabase/.env` portability gap below — same
+  two-machine-split pattern).
+- **Practical effect**: any Android build/lint/test claim made from this machine is a static
+  code read, not a real build, until this is fixed. Say so explicitly rather than re-stating
+  an old verification claim as if it were re-confirmed.
+
+## RESOLVED: migrations 0020/0021/0022 confirmed applied and live (2026-08-13, continuation session)
+- User applied all three via the SQL Editor. Confirmed via a new read-only script
+  (`supabase/scripts/qa-check-0020-0021-0022-applied.mjs`) that all 5 new
+  columns/behaviors exist live: `service_records.photos`, `job_cards.arrival_photos`,
+  `job_card_settings.available_statuses`/`line_types`, `job_cards.machine_type`.
+- Went beyond existence-checking (spot-checked actual values, not just that the query
+  didn't error): `job_card_settings`'s singleton row has `available_statuses`/`line_types`
+  matching the exact default arrays from the migration files (no drift); a real
+  `service_records` row and a real `job_cards` row both show the expected `[]` default for
+  their new jsonb array columns; `machine_type` is `null` on the sampled pre-existing job
+  card, as expected (only populated going forward via `BookIn.jsx`).
+- Photo uploads on Log Service/Book In and the Settings > Job Cards status/line-type editor
+  should now work end-to-end. Not separately click-through QA'd this session (no browser
+  tool) — code-level wiring for all three was already verified in the session that wrote
+  them; this check only confirms the database side landed correctly.
+
+## Migrations 0020/0021 pending application (2026-08-13, later still same day) — SUPERSEDED, see RESOLVED entry above
 - `0020_service_and_job_card_photos.sql`: exact SQL given to the user verbatim, only 2
   columns (`service_records.photos`, `job_cards.arrival_photos`). Not yet confirmed
   applied.
@@ -59,7 +206,7 @@
   attention in them (e.g. section H's specific Calendar checklist may still have gaps even
   though the phase's initial redesign commit exists).
 
-## `dashboardNotes` Cloud Function cannot be deployed — GCP billing not enabled on `capdatabasefb2` (found 2026-08-13)
+## `dashboardNotes` Cloud Function cannot be deployed — GCP billing not enabled on `capdatabasefb2` (found 2026-08-13) — SUPERSEDED, see the RESOLVED (migrated away) entry above
 - `firebase deploy --only functions` fails identically on two separate attempts (not
   transient) with: `Request to secretmanager.googleapis.com... had HTTP Error: 403, This
   API method requires billing to be enabled` for `SUPABASE_SERVICE_ROLE_KEY`. Exact fix
@@ -224,8 +371,11 @@
   `apiClient`/`supabaseApiClient` integration, and all 8 Cloud Functions' code are removed.
   **Still outstanding**:
   1. **Delete the actually-deployed Cloud Functions from GCP** (code removal alone doesn't
-     stop billing for whatever's still deployed from before). Exact command (also in
-     `functions/index.js`'s header comment):
+     stop billing for whatever's still deployed from before). **Still not confirmed done as
+     of 2026-08-13** — the source `functions/` dir this command's comment used to live in
+     was deleted entirely that day (dashboardNotes migrated off Firebase to a Cloudflare
+     Worker, `workers/dashboard-notes-api/` — unrelated to Google Calendar, but see this
+     file's matching 2026-08-13 entries). This command is still the one to run:
      ```
      firebase functions:delete googleCalendarStatus googleCalendarConnect \
        googleCalendarCallback googleCalendarListCalendars googleCalendarSelectCalendars \

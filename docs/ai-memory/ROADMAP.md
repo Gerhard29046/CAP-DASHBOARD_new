@@ -1,6 +1,32 @@
 # Roadmap
 
 ## In progress
+- **Android Firebase→Supabase migration (started 2026-08-13, separate project from the web
+  cutover — explicitly authorized by the user).** Phase A (audit) + Phase B (mapping +
+  Navigation-Compose foundation) + Phase C (authentication) + **Phase D (core data: Clients/
+  Machines/Service Records/Job Cards/Job Card Lines)** complete. **Phases E–J (secondary
+  features incl. photo upload, UI redesign, logo/icon, testing, Firebase removal, final
+  build) explicitly NOT started** — user asked Queen Bee to "run through all the phases"
+  unsupervised overnight; Queen Bee completed D (real, scoped, live-REST-verified) and
+  stopped there rather than rushing E–J with no build verification available — see
+  `docs/android/ANDROID_SUPABASE_MIGRATION.md` §12.9 for the itemized reasoning per phase.
+  Full detail: `docs/android/ANDROID_SUPABASE_MIGRATION.md`. Login runs on Supabase Auth
+  authoritatively (Firebase Auth kept as a temporary bridge for the still-unmigrated
+  Firestore screens: `knowledge_*`, `users`); Phase D's data layer (`SupabaseData.kt`) swaps
+  the 5 core tables from Firestore to Postgres/PostgREST while keeping every screen's code
+  unchanged (same `CapRecord`/`RecordsState` generic shape). Live REST-contract tests: Phase
+  C 12/12, Phase D 16/16, both pass against live production Supabase. Real, unresolved
+  blocker: no Android build could be run via CLI in this environment (Gradle/TLS gap,
+  reconfirmed again this session at a later build stage — dependency resolution, not the
+  wrapper download this time) — **however the user separately confirmed a real build+run DID
+  succeed via Android Studio's own GUI**, which Queen Bee cannot drive unattended, so Phase D
+  is still only manually-reviewed + REST-contract-tested, not Queen-Bee-compiler-verified.
+  Real open item: only 1 real user has both a Firebase and Supabase account, so most real
+  Android users likely can't log in via Supabase yet; 2 unrelated leftover QA test accounts
+  found live in production, flagged to the user, still not deleted (no explicit go-ahead
+  received yet). Do not assume Android CLI build-tooling works here without re-checking; the
+  Android Studio GUI path is the one known-working path on this machine.
+
 - **UX redesign resumed (2026-08-13, after the Supabase cutover), functional fixes +
   Settings/Products & Services/Customer Import.** See SESSION_LOG.md's matching entry for
   full detail. Status:
@@ -23,16 +49,36 @@
     new migration `0020`. 2 real responsive/overflow bugs found+fixed via code-level
     reasoning (Phase 10, partial): `InvoiceQueue.jsx`/`ImportCustomers.jsx` table wrappers
     clipped horizontal overflow on narrow widths instead of scrolling.
-  - **In progress**: Phase 11 first step (Android build/health audit) delegated to
-    `testing-bee` — verifying build/lint/tests still pass and no Supabase reference leaked
-    into `mobile-android/`, plus a current screens inventory, before any visual redesign
-    work starts.
+  - **CORRECTED (2026-08-13, continuation session): Phase 11 (Android) is further along than
+    "in progress" suggested.** `git log` confirms the actual visual redesign is committed
+    (`a1e4016`, `9cc1b52`), not just the pre-redesign health audit — see
+    `latest_patch_notes.txt` for its own dated verification claim. **Not independently
+    re-verified this continuation session**: this machine's Gradle wrapper can't download
+    its distribution (TLS trust-chain failure) — see `KNOWN_ISSUES.md`. Treat the redesign
+    as "committed, verified once on a different machine, not re-confirmed here" until either
+    this machine's Gradle/TLS gap is fixed or it's re-verified on the machine where it
+    previously worked.
+  - **Phase 9 (forms)/Phase 10 (responsive) continuation (2026-08-13, later)**: swept the
+    remaining forms/pages not yet individually audited (`MachineForm.jsx`, `ServiceForm.jsx`,
+    `JobCardDetail.jsx`'s inline line-item form, plus a full-repo grep for bare multi-column
+    grids/fixed pixel widths/raw `<table>` usage/single-check viewport logic). Found and
+    fixed one real, narrow bug: `BookIn.jsx`'s Job Number/Date row wasn't responsive
+    (inconsistent with every sibling form). Nothing else found — the codebase from the prior
+    session's redesign work is in genuinely good shape. Full verification: `frontend` lint/
+    typecheck/test (13/13)/build all clean, production bundle re-confirmed zero "firebase"
+    strings. See `KNOWN_ISSUES.md` for a separate, unrelated fix needed this pass (stale
+    `node_modules` after pulling — `npm install` needed `xlsx`).
+  - **`0020`/`0021`/`0022` confirmed applied and live (2026-08-13, checked this
+    continuation)** — see `KNOWN_ISSUES.md`'s RESOLVED entry;
+    `supabase/scripts/qa-check-0020-0021-0022-applied.mjs` (new, reusable) confirmed all 5
+    new columns exist with correct default values, not just that the migration "ran."
   - **Not yet done**: no browser-based visual/click-through QA (still no browser tool);
-    `0020` not applied/QA'd; Phase 9's remaining forms beyond AddClient.jsx/
-    LogServiceModal.jsx/BookIn.jsx not individually audited; Phase 10's remaining pages
-    beyond InvoiceQueue/ImportCustomers not audited; Android visual redesign itself (only
-    the pre-redesign health-check has started); Phase 12 (final polish); real Pastel
-    spreadsheet inspection/import (needs the user to provide the file).
+    Phase 12 (final
+    consistency polish) not started — the one known candidate item for it is `Login.jsx`'s
+    bespoke (non-shared-design-system) styling, deliberately left alone pending the user's
+    explicit go-ahead since it's a real layout/product decision, not a mechanical fix; real
+    Pastel spreadsheet inspection/import (needs the user to provide the file); Android build
+    re-verification (blocked on this machine's Gradle/TLS gap, see `KNOWN_ISSUES.md`).
   - **Discrepancy found (still open)**: the user's framing said phases 1-4 were "already
     completed" and asked to continue from Phase 5 — `git log` shows phases 5-8 already
     have dedicated redesign commits. Treated as substantially done this session (Calendar
@@ -221,6 +267,9 @@
 - Firebase-direct Firestore CRUD for web and Android (clients, machines, service
   records, job cards, users, permissions).
 - Google Calendar Cloud Functions backend + frontend + Android read-only consumer.
+- Dashboard notes on direct Supabase Auth + RLS (2026-08-13) — migration `0023` applied,
+  24/24 live authorization-matrix checks pass (`supabase/scripts/qa-verify-dashboard-notes-rls.mjs`).
+  No server-side service. See `DECISIONS.md`/`SESSION_LOG.md`.
 
 ## Deferred / explicitly not being pursued
 - Laravel parity for Google Calendar and other Firestore-backed resources — Laravel

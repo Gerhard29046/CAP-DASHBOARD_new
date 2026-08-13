@@ -1,9 +1,17 @@
 ---
 name: project-supabase-calendar-401-bug
-description: googleCalendarStatus (and likely all Google Calendar Cloud Functions) reject a genuinely valid Supabase session with 401 — found 2026-08-07, root cause unconfirmed, NOT fixed. Blocks Supabase-backend Google Calendar QA.
+description: MOOT as of 2026-08-12 — Google Calendar sync was removed entirely (cost decision), so this 401 bug can no longer occur. Kept only as historical record of a real root-cause investigation technique; do not treat as an open blocker.
 metadata:
   type: project
 ---
+
+**MOOT since 2026-08-12**: Google Calendar sync was removed entirely from the web app and
+Cloud Functions (user decision — cost; see `docs/ai-memory/DECISIONS.md` and
+`docs/ai-memory/PROJECT_STATE.md`'s 2026-08-12 entry). There is no `googleCalendarStatus`
+function left to fail. This memory is kept only because the investigation technique below
+(reproducing a Cloud Function's auth-verification logic locally against the real project to
+isolate "code is right, deployed environment/secret is wrong") is a reusable pattern for
+this repo. Do not act on this as an open bug.
 
 On 2026-08-07, the first-ever test of the Google Calendar auth redesign
 ([[project-supabase-migration]]) with a **genuinely valid** (not intentionally-malformed)

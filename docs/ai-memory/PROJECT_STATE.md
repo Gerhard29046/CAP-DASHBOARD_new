@@ -1,5 +1,116 @@
 # Project State
-_Last verified: 2026-08-13 (UX redesign resumed after the Supabase cutover). Two real
+_Last verified: 2026-08-14 (Android Phase D, core data — clients/machines/service_records/
+job_cards/job_card_lines now read/write live Postgres via a new `SupabaseData.kt`
+(PostgREST, plain REST, matching Phase C's `SupabaseAuth.kt` pattern) instead of Firestore.
+Deliberately kept `CapRecord`/`RecordsState`'s existing generic shape so every screen
+composable needed zero changes — only `Core.kt`'s `RecordsRepository`/`StatusRepository`
+route by table name now. "Observe" is polling (20s) + an immediate refresh on the signed-in
+user's own writes, not Firestore-style real-time push (disclosed simplification, avoids a new
+Gradle dependency). **Live REST-contract test: 16/16 pass** against real production
+Supabase — including a genuine finding along the way: RLS correctly denies writes for a user
+with a role but no `effective_permissions` populated (fixed the test, not a product bug).
+User separately confirmed a real build+run succeeded via Android Studio's own GUI (the CLI
+`gradlew.bat` path remains broken on this machine, reconfirmed this session at a later build
+stage than before) — Queen Bee cannot drive that GUI unattended, so Phase D itself is not
+independently compiler-verified by Queen Bee, only manually reviewed + REST-contract-tested.
+**Explicitly stopped after Phase D** despite being asked to "run through all the phases" —
+Phases E (secondary features/photos), F (UI redesign), G (logo/icon — no source asset
+exists), H (testing), I (Firebase removal — doc'd as gated on verified D/E parity, not yet
+true), J (final build) were not attempted, each for a stated reason — see
+`docs/android/ANDROID_SUPABASE_MIGRATION.md` §12.9. Full detail: same doc, §12.
+
+_Last verified before that: 2026-08-13 (same day, later still — Android Phase C, authentication).
+`mobile-android/`'s login/session now runs on Supabase Auth + `public.users`, authoritatively
+(Firebase Auth kept only as a temporary, best-effort bridge so the still-unmigrated Firestore
+screens keep working — `firestore.rules` confirmed to require a real Firebase session, no
+bridge-free alternative exists). New `SupabaseAuth.kt` uses plain REST calls (matching the
+existing `GoogleCalendarRepository.kt` pattern), not the third-party `supabase-kt` SDK, since
+this environment cannot verify new Gradle dependencies. **Live REST-contract test: 12/12
+pass** against real production Supabase. **Real finding**: only 1 real user
+(`admin@connoisseurauto.co.za`) has both a Firebase and Supabase account today — other real
+Android users likely can't log in via Supabase yet — plus 2 unrelated leftover throwaway QA
+accounts discovered live, flagged to the user, not deleted. **Still not build-verified** —
+this machine cannot compile/run the Android app (confirmed again, third time this session
+across Phases B/C). Full detail: `docs/android/ANDROID_SUPABASE_MIGRATION.md` §11. Stopped
+for review before Phase D, per the user's explicit phase-gated approval process.
+
+_Last verified before that: 2026-08-13 (same day, earlier — migration 0023 applied, full live QA run).
+User applied `supabase/migrations/0023_dashboard_notes_direct_rls.sql` via the SQL Editor.
+Confirmed live via direct probe (both CHECK constraints reject bad input as expected), then
+ran `supabase/scripts/qa-verify-dashboard-notes-rls.mjs` for real against production: **24/24
+checks passed** — every cell of the approved authorization matrix (read/create/edit/delete ×
+creator/other/admin), `created_by` spoofing blocked for all three roles including admin,
+`created_by_name` unspoofable on both insert and after edits by another user/admin, both
+CHECK constraints (content length, color enum) verified live, and full cleanup confirmed (0
+residual notes, 0 residual throwaway auth users — verified by an independent sweep beyond the
+script's own self-report). `frontend` lint/typecheck/test(13/13)/build all clean afterward.
+**Dashboard notes are now fully live**, direct Supabase Auth + RLS, zero server-side service
+of any kind. See `SESSION_LOG.md`'s matching entry for the itemized pass/fail list.
+
+_Last verified before that: 2026-08-13 (same day, earlier — dashboardNotes redesigned a second time).
+Following the Cloudflare Worker fix below, the user asked whether direct Supabase Auth + RLS
+would work instead — re-investigation found the original "RLS can't express creator-or-admin"
+premise was wrong for this schema (`public.is_admin()` already existed and is already used
+for exactly this everywhere else). User gave detailed, explicit approval for a full direct-
+RLS redesign. **Built and code-verified, NOT yet live**:
+`supabase/migrations/0023_dashboard_notes_direct_rls.sql` (RLS policies, `content`/`color`
+CHECK constraints, a `created_by_name`-pinning trigger) is written but not applied —
+confirmed live via a read-only probe (then cleaned up) that its constraints don't exist yet.
+`dashboardNotesClient.js` now calls Supabase directly; `workers/dashboard-notes-api/`
+(this same day's earlier fix) was deleted entirely, never having been deployed. `frontend`
+lint/typecheck/test(13/13)/build all clean. **A full live authorization-matrix test script**
+(`supabase/scripts/qa-verify-dashboard-notes-rls.mjs` — 3 throwaway real-session users,
+every cell of the approved matrix, `created_by_name`-spoofing check, full cleanup) is
+written and ready but has NOT run yet — it needs migration 0023 applied first. See
+`DECISIONS.md`'s matching entry and `KNOWN_ISSUES.md` for the exact next step.
+
+_Last verified before that: 2026-08-13 (same day, earlier — Firebase Cloud Functions retirement completed).
+The `dashboardNotes` sticky-notes feature's last remaining Firebase/GCP dependency (Cloud
+Functions hosting — the data itself was already 100% Supabase) is now migrated to a
+Cloudflare Worker (`workers/dashboard-notes-api/`), triggered by explicit, sharp user
+correction after Queen Bee repeatedly mis-framed the GCP billing lapse as something to fix
+by re-enabling Firebase billing rather than removing the Firebase dependency. `functions/`
+(the Firebase Cloud Functions directory) was deleted entirely — it was never live in
+production, so this has zero production impact. Code-level verified (26/26 new Worker unit
+tests, `wrangler deploy --dry-run` bundles cleanly, `frontend` lint/typecheck/test/build all
+clean). **NOT deployed/live yet**: this environment's `wrangler` is logged into a different
+Cloudflare account than the one hosting production — see `KNOWN_ISSUES.md`, this is a real
+access gap, not unfinished work. See `DECISIONS.md`'s matching 2026-08-13 entry for full
+detail.
+
+_Last verified before that: 2026-08-13 (continuing the UX/UI redesign phases, "home" machine). Real,
+narrow findings this pass:
+- **`frontend/node_modules` was stale relative to the already-committed `package-lock.json`**
+  (missing `xlsx`, needed by the Customer Import feature) — `npm run build` failed until
+  `npm install` was run (also removed 79 now-unused packages, i.e. the old Firebase tree).
+  Not a code bug; just needed after pulling the earlier full-cutover/redesign commits onto
+  this machine. Fixed; full verification (lint/typecheck/test 13/13/build) all clean after,
+  and the production bundle re-confirmed to contain zero "firebase" strings.
+- **One real Phase 9 (forms) consistency/responsiveness bug found+fixed**:
+  `BookIn.jsx`'s Job Number/Date Booked In row used bare `grid-cols-2` (always 2-up, even on
+  a 375px phone) — inconsistent with every other 2-field form row in the app (`AddClient`/
+  `ClientForm`/`MachineForm`/`ServiceForm` all use `grid-cols-1 sm:grid-cols-2`) and
+  genuinely cramped for the free-text Job Number field. Fixed to match. A broader grep sweep
+  of `frontend/src` for the same anti-pattern (bare multi-column grids, fixed pixel widths,
+  raw `<table>` usage, single-check-on-mount viewport logic) found nothing else — the shared
+  `Table` component already wraps in `overflow-auto`, and the other bare `grid-cols-2/3` uses
+  found (Qty/Price pairs, photo-thumbnail grids, stat label:value rows) are legitimately fine
+  at those widths, not bugs.
+- **Phase 11 (Android) status corrected**: `git log` confirms the Android visual redesign
+  (`a1e4016`, `9cc1b52`) is already committed, not "in progress" as `ROADMAP.md` said before
+  this entry — see `latest_patch_notes.txt` for its own dated verification claim (rebuilt,
+  compiled, all automated checks passed, zero Firebase/data/auth changes). **That claim was
+  NOT independently re-verified this session** — this machine's Gradle wrapper cannot
+  download its distribution (`PKIX path building failed`, no valid CA trust chain for
+  `services.gradle.org` from this JDK), a local environment/network gap, not a code issue.
+  See `KNOWN_ISSUES.md`.
+- **Login.jsx redesign remains explicitly deferred, not silently dropped**: it's the one
+  page still using bespoke hardcoded colors instead of the shared design-system tokens,
+  flagged again this pass. Deliberately NOT rewritten without the user's sign-off first — its
+  two-column marketing+form layout is structurally different from the other auth pages'
+  shared `AuthLayout.jsx`, a real product-design decision, not a mechanical token swap.
+
+_Last verified before that: 2026-08-13 (UX redesign resumed after the Supabase cutover). Two real
 functional bugs found+fixed this pass (Job Card line items not displaying;
 Dashboard-linked Notes not showing on the client's own page — see SESSION_LOG.md for full
 root-cause detail), plus new Settings/Products & Services/Job Card configuration/Customer

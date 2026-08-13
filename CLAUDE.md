@@ -267,7 +267,7 @@ This repository contains three applications plus a mostly superseded API:
 - `frontend/`: React/Vite web client, deployed to Cloudflare through `wrangler.jsonc`, project name `capdashboard`.
 - `mobile-android/`: Native Kotlin/Compose client using MVVM, Hilt, Room, and WorkManager. **Still on Firebase** — see 6.2.
 - `backend/`: Laravel 13 API using MySQL, Sanctum, models, controllers, middleware, and tests. Superseded by Supabase for the web client (see below); not used by the web/Android clients for normal CRUD.
-- `functions/`: Firebase Cloud Functions (2nd gen) — hosting/runtime only now. `dashboardNotes` is the only export; it reads/writes Supabase (not Firestore) via a service-role client, and exists only because Postgres RLS alone can't express "creator or admin" authorization for that one feature. No Firebase Admin SDK, Firestore, or Firebase Auth usage remains here.
+- No backend service beyond `frontend/` and `backend/` (Laravel, superseded). Dashboard notes (sticky notes) are a normal Supabase-backed feature, direct client→Postgres RLS, same as everything else — no Cloud Function, no Worker. `functions/` (the old Firebase Cloud Functions dir) and `workers/dashboard-notes-api/` (a same-day, since-superseded Cloudflare Worker replacement) were both deleted entirely 2026-08-13 — see DECISIONS.md for the full history.
 - `docs/`: API, deployment, setup, and implementation documentation.
 
 ## 6.1 The web client (`frontend/`) is fully on Supabase — Firebase was removed entirely 2026-08-13
@@ -306,7 +306,7 @@ File uploads go directly to Supabase Storage (`frontend/src/services/supabase/st
 
 Authorization for client data is enforced by Postgres Row Level Security policies in `supabase/migrations/*.sql` (see `0002_rls_policies.sql` for the core policy set, `0016` for storage bucket policies). Policies check the signed-in user's own `public.users` row and its `role`/`effective_permissions`.
 
-One exception: `dashboard_notes` (sticky notes) has RLS enabled with **zero policies** (deny-all for anon/authenticated) — all real access goes through the `dashboardNotes` Cloud Function using the service-role client, which enforces "global read, creator-or-admin write/delete" in code, since Postgres RLS alone can't express that authorization rule.
+`dashboard_notes` (sticky notes) uses real RLS policies like everything else (`supabase/migrations/0023_dashboard_notes_direct_rls.sql`): global read for any authenticated user, creator-or-admin write/delete via the existing `public.is_admin()` security-definer function (same pattern `public.users`'s own policies already use). A `BEFORE INSERT OR UPDATE` trigger resolves/pins `created_by_name` server-side so a client can't spoof it; `CHECK` constraints bound `content` length and `color`. No server-side service is needed for this table — an earlier same-day design (first a Firebase Cloud Function, then briefly a Cloudflare Worker) assumed RLS couldn't express "creator or admin," which was incorrect for this schema specifically. See DECISIONS.md's 2026-08-13 entries for the full history.
 
 Laravel middleware protects Laravel routes only. It does not protect Supabase client operations.
 
@@ -317,6 +317,15 @@ Android was explicitly kept out of scope during the web cutover (both the origin
 ## 6.3 Old Firebase data — not deleted, just unused by the web client now
 
 Firestore (project `capdatabasefb2`) and Firebase Auth still physically contain the original data (it was never deleted, only superseded as the web client's live data source). Whether to archive, keep, or delete that data/project (and its billing) is the user's decision, not made as part of the cutover — cutting over the web client's code path does not delete anything.
+
+## 6.4 PERMANENT POLICY: Firebase is retired for the web app — never reintroduce it, not even for a Cloud Function or a test
+
+The user issued a formal, written, **PERMANENT / NON-NEGOTIABLE** policy on 2026-08-13 (full text: `docs/ai-memory/DECISIONS.md`'s 2026-08-13 "Firebase permanently retired" entry). Summary, binding on all future work:
+
+- Never create, restore, or extend any Firebase/GCP resource for the web app — no new Firestore collection, Firebase Auth user/config, Firebase Storage bucket, Firebase Cloud Function, Firebase Hosting config, `firebase`/`firebase-admin`/`firebase-functions` dependency, Firebase env var, project ID, or service-account credential. **No exception for testing** — use Supabase test users/records instead, fully cleaned up after.
+- A missing feature, failed test, or deployment problem is **never** authorization to reach for Firebase or enable GCP billing. If something genuinely seems to need Firebase, stop and design it with Supabase (Auth/Postgres/RLS/Storage/Edge Functions) or Cloudflare Workers instead, or report the gap to the user — do not implement it with Firebase and do not silently enable GCP billing to unblock development.
+- The existence of old Firebase Cloud Function code is not permission to create another one. There shouldn't be any server-side service left for the web app at all as of 2026-08-13 — `dashboardNotes` (the last one) went Firebase Cloud Function → Cloudflare Worker → direct Supabase RLS, same day, once it was confirmed RLS could express its authorization rule. Prefer RLS + `public.is_admin()`/`public.has_permission()` over a new server-side service by default; only reach for Supabase Edge Functions/Cloudflare Workers if RLS genuinely cannot express the rule.
+- **`mobile-android/` scope still genuinely unresolved, not silently assumed either way**: Android (see 6.2) remains fully on Firebase, a separate deliberate decision from before this policy existed. The policy's written text doesn't mention Android; Queen Bee asked the user directly whether it extends there too and has not yet received an answer as of the last time this file was updated — check `docs/ai-memory/DECISIONS.md`'s 2026-08-13 entry for the current status before assuming this rule covers Android, and don't assume it doesn't either.
 
 ---
 
@@ -347,9 +356,11 @@ What was removed:
 
 **Not yet done as of 2026-08-12** (see `docs/ai-memory/KNOWN_ISSUES.md` for current status):
 
-- Deleting the actually-deployed Cloud Functions from GCP (`firebase functions:delete ...`
-  — must be run by the user, see the exact command in `functions/index.js`'s header comment
-  or `KNOWN_ISSUES.md`).
+- **Deleting the actually-deployed Google Calendar Cloud Functions from GCP is still
+  outstanding as of the last check** (`firebase functions:delete ...` — must be run by the
+  user; exact command in `docs/ai-memory/KNOWN_ISSUES.md`'s matching entry). Code removal
+  alone doesn't stop GCP billing for whatever's still actually deployed — this is a real,
+  concrete billing-stopping action, not yet confirmed done.
 - Revoking the stored OAuth connection in Firestore `system_integrations/google_calendar`.
 - The Android `GoogleCalendarRepository` read-only consumer and any related UI —
   Android-layer removal belongs to `android-ui-bee`/`integration-sync-bee`, not done in the
@@ -422,7 +433,7 @@ When modifying permissions:
 2. inspect Postgres RLS policies (web) and Firestore rules (Android) — they are two independent systems now, not one;
 3. inspect web permission checks;
 4. inspect Android permission checks;
-5. inspect Cloud Functions (`dashboardNotes` enforces its own creator-or-admin logic in code, not RLS);
+5. inspect `dashboard_notes`'s RLS policies (`supabase/migrations/0023_dashboard_notes_direct_rls.sql`) if touching notes — creator-or-admin logic lives in RLS + `public.is_admin()`, not application code;
 6. inspect Laravel duplication;
 7. update tests for all affected active layers;
 8. document any intentionally deferred Laravel parity.
@@ -481,19 +492,7 @@ gradlew.bat testDebugUnitTest --tests "com.example.SomeClassTest"
 
 Use the Gradle wrapper from the Android project directory unless the repository wrapper is configured differently.
 
-## Firebase Functions — `functions/`
-
-Inspect `functions/package.json` before selecting commands.
-
-Typical verification may include:
-
-```bash
-npm install
-npm run build
-npm test
-```
-
-Do not deploy functions without explicit user approval.
+There is no separate backend API service for the web app — see section 6, section 9's "no server-side service by default" guidance, and `docs/ai-memory/DECISIONS.md`'s 2026-08-13 entries (a same-day Cloudflare Worker built for `dashboardNotes` was itself superseded by direct RLS before ever being deployed).
 
 ## Repository checks
 
@@ -558,16 +557,20 @@ Important navigation behavior requires Compose/UI tests when practical.
 ## Supabase (web client)
 
 - Treat `supabase/migrations/*.sql` (RLS policies) as production authorization code.
-- Keep privileged secrets (service_role key) in Cloud Functions or trusted server environments only — never in frontend code.
+- The Supabase service_role key is not currently used by any part of the live web app — nothing should reintroduce it into frontend code. Prefer RLS + `public.is_admin()`/`public.has_permission()` for new authorization rules over a server-side service (see section 6's permission-model guidance).
 - Do not apply migrations (SQL Editor) without explicit approval.
 - Review RLS policies whenever adding a new table or query pattern.
 
-## Firebase (Android client + Cloud Functions hosting only)
+## Cloudflare Workers (`frontend/` only, currently)
+
+- Do not deploy without explicit user approval. Confirm `npx wrangler whoami` shows the correct account before any real deploy (see KNOWN_ISSUES.md).
+
+## Firebase (Android client only — see 6.4, permanently retired for the web app)
 
 - `firestore.rules` still governs Android's direct Firestore access — treat it as production authorization code for Android.
-- `functions/` no longer touches Firestore or Firebase Auth (see CLAUDE.md section 6.1) — it exists purely as hosting/runtime for `dashboardNotes`, which reads/writes Supabase.
 - Never expose OAuth secrets in frontend or Android code.
-- Do not deploy Cloud Functions, Firestore rules, hosting, or indexes without explicit approval.
+- Do not deploy Firestore rules, hosting, or indexes without explicit approval.
+- Do not create any new Firebase/GCP resource for the web app under any circumstance — see section 6.4.
 
 ---
 
@@ -663,10 +666,6 @@ Run focused tests first, then broader tests when practical:
 php artisan test --filter=RelevantTest
 php artisan test
 ```
-
-## Functions changes
-
-Run the scripts available in `functions/package.json`, normally including build and tests.
 
 ## Firestore rule changes
 

@@ -9,7 +9,6 @@ import com.google.firebase.FirebaseApp
 import com.google.firebase.FirebaseNetworkException
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseAuthException
-import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreException
@@ -64,6 +63,18 @@ val syncResources = listOf(
     SyncResource("Service Records", "services.view", "service_records"),
     SyncResource("Job Cards", "job_cards.view", "job_cards")
 )
+
+/**
+ * Phase D (Android->Supabase migration, see docs/android/ANDROID_SUPABASE_MIGRATION.md):
+ * these tables now read/write live Postgres via [SupabaseDataRepository] instead of Firestore.
+ * NOT yet migrated: `knowledge_machines`/`knowledge_notes`/`knowledge_media`/
+ * `knowledge_documents`/`knowledge_service_codes` (Phase E) and `users` (Phase E / web-only
+ * administration) -- those still read Firestore, unchanged, via [RecordsRepository]'s Firestore
+ * branch below. `job_card_lines` is included even though it has no direct permission gate in
+ * [syncResources] because JobCardDetail-equivalent screens read/write it through the same
+ * generic `RecordsRepository`/`RecordsState` contract as everything else.
+ */
+val SUPABASE_MIGRATED_TABLES = setOf("clients", "machines", "service_records", "job_cards", "job_card_lines")
 
 data class CapRecord(
     val id: String,
@@ -122,6 +133,7 @@ class ConnectivityObserver(context: Context) {
 class StatusRepository @Inject constructor(
     private val auth: FirebaseAuth,
     private val firestore: FirebaseFirestore,
+    private val supabaseData: SupabaseDataRepository,
     @ApplicationContext context: Context
 ) {
     private val _status = MutableStateFlow(GlobalStatus())
@@ -179,7 +191,12 @@ class StatusRepository @Inject constructor(
         _status.update { it.copy(connection = ConnectionStatus.Checking) }
         val results = allowedSyncResources(user).map { resource ->
             async {
-                val result = runCatching { firestore.collection(resource.collection).get().await().size() }
+                // Phase D: clients/machines/service_records/job_cards now live in Postgres --
+                // counting them via Firestore here would silently show stale/zero counts.
+                val result = runCatching {
+                    if (resource.collection in SUPABASE_MIGRATED_TABLES) supabaseData.count(resource.collection)
+                    else firestore.collection(resource.collection).get().await().size()
+                }
                 SyncResult(resource.label, result.getOrNull(), result.exceptionOrNull()?.connectionUserMessage())
             }
         }.awaitAll()
@@ -198,11 +215,25 @@ class StatusRepository @Inject constructor(
     }
 }
 
+/**
+ * Phase D (Android->Supabase migration): routes each named collection/table to whichever
+ * backend currently owns it -- [SUPABASE_MIGRATED_TABLES] go to [SupabaseDataRepository]
+ * (Postgres/PostgREST), everything else (knowledge_*, users) stays on the original Firestore
+ * path, unchanged. Both branches return/accept the exact same [CapRecord]/[RecordsState]
+ * shapes, so callers (MainViewModel, every screen composable) never need to know or care which
+ * backend actually served a given collection -- see docs/android/ANDROID_SUPABASE_MIGRATION.md
+ * Phase D section for the full design writeup.
+ */
 @Singleton
 class RecordsRepository @Inject constructor(
-    private val firestore: FirebaseFirestore
+    private val firestore: FirebaseFirestore,
+    private val supabaseData: SupabaseDataRepository
 ) {
-    fun observeCollection(name: String): Flow<List<CapRecord>> = callbackFlow {
+    fun observeCollection(name: String): Flow<List<CapRecord>> =
+        if (name in SUPABASE_MIGRATED_TABLES) supabaseData.observeCollection(name)
+        else observeFirestoreCollection(name)
+
+    private fun observeFirestoreCollection(name: String): Flow<List<CapRecord>> = callbackFlow {
         val registration = firestore.collection(name).addSnapshotListener { snapshot, error ->
             when {
                 error != null -> close(error)
@@ -229,6 +260,7 @@ class RecordsRepository @Inject constructor(
     }
 
     suspend fun create(collection: String, fields: Map<String, Any?>): String {
+        if (collection in SUPABASE_MIGRATED_TABLES) return supabaseData.create(collection, fields)
         val payload = fields.filterValues { it != null }.toMutableMap().apply {
             put("created_at", FieldValue.serverTimestamp())
             put("updated_at", FieldValue.serverTimestamp())
@@ -237,6 +269,7 @@ class RecordsRepository @Inject constructor(
     }
 
     suspend fun update(collection: String, id: String, fields: Map<String, Any?>) {
+        if (collection in SUPABASE_MIGRATED_TABLES) { supabaseData.update(collection, id, fields); return }
         val payload = fields.filterValues { it != null }.toMutableMap().apply {
             put("updated_at", FieldValue.serverTimestamp())
         }
@@ -244,6 +277,7 @@ class RecordsRepository @Inject constructor(
     }
 
     suspend fun delete(collection: String, id: String) {
+        if (collection in SUPABASE_MIGRATED_TABLES) { supabaseData.delete(collection, id); return }
         firestore.collection(collection).document(id).delete().await()
     }
 }
@@ -258,71 +292,102 @@ object FirebaseModule {
 
 class ApiException(message: String) : Exception(message)
 
+/**
+ * Phase C (Android->Supabase auth migration, see docs/android/ANDROID_SUPABASE_MIGRATION.md):
+ * Supabase Auth + `public.users` (via [SupabaseAuthRepository]) is now the AUTHORITATIVE
+ * login/session/identity mechanism -- replacing what was previously a pure Firebase Auth +
+ * Firestore `users/{uid}` flow. `login()`/`restore()`/`logout()` keep the exact same
+ * signatures as before Phase C, so [MainViewModel] and every UI call site needed zero
+ * changes.
+ *
+ * Firebase Auth is kept as a best-effort SECONDARY bridge, not removed, because Firestore
+ * itself is NOT migrated this phase (Clients/Machines/Jobs/Services/Knowledge Base/Status
+ * all still read Firestore directly via [RecordsRepository]/[StatusRepository]/
+ * [GoogleCalendarRepository], unchanged) and `firestore.rules` hard-requires a real Firebase
+ * Auth session for every read (`signedIn() = request.auth != null`, confirmed by reading the
+ * rules file directly -- there is no anonymous/bridged access path). Signing into Firebase
+ * with the same credentials right after a successful Supabase login keeps those
+ * not-yet-migrated screens working exactly as before. If the Firebase-side sign-in fails
+ * (e.g. this Supabase account has no Firebase counterpart, or the two systems' passwords
+ * differ -- a real, expected possibility since only 1 real user has been migrated to
+ * Supabase Auth so far), the Supabase login itself still succeeds (it is authoritative
+ * regardless), and Firestore-backed screens will show their EXISTING "sign-in
+ * required"/error state (already handled by `StatusRepository`'s `ConnectionStatus`) rather
+ * than crash -- a disclosed, temporary limitation of this transitional phase, not a masked
+ * one. This bridge is removed in Phase I once Firestore itself is migrated.
+ */
 @Singleton
 class AuthRepository @Inject constructor(
-    private val auth: FirebaseAuth,
-    private val firestore: FirebaseFirestore
+    private val supabaseAuth: SupabaseAuthRepository,
+    private val firebaseAuth: FirebaseAuth
 ) {
     suspend fun restore(): CapUser? {
-        val firebaseUser = auth.currentUser ?: return null
+        val session = supabaseAuth.restore() ?: return null
         return try {
-            loadProfile(firebaseUser.uid, firebaseUser.email.orEmpty())
+            loadProfile(session.userId)
         } catch (_: Exception) {
-            auth.signOut()
+            supabaseAuth.logout()
             null
         }
+        // Deliberately no Firebase-side action here: FirebaseAuth's own SDK persists its
+        // session locally, independent of this class. If the original login's bridge (below)
+        // succeeded, auth.currentUser is already populated from Firebase's own persistence
+        // by the time this runs -- nothing to redo. If it didn't succeed, restore()
+        // correctly leaves Firebase signed out too, consistent with login-time reality.
     }
 
     suspend fun login(email: String, password: String): CapUser {
-        try {
-            val result = auth.signInWithEmailAndPassword(email.trim(), password).await()
-            val firebaseUser = result.user ?: throw ApiException("Firebase did not return a user account.")
-            return loadProfile(firebaseUser.uid, firebaseUser.email ?: email)
-        } catch (error: ApiException) {
-            auth.signOut()
-            throw error
+        val session = try {
+            supabaseAuth.login(email, password)
+        } catch (error: SupabaseAuthException) {
+            throw ApiException(error.message ?: "Authentication failed.")
         } catch (error: Exception) {
-            auth.signOut()
-            throw ApiException(error.userMessage())
+            throw ApiException("An unexpected error occurred.")
         }
-    }
-
-    private suspend fun loadProfile(uid: String, email: String): CapUser {
-        val direct = firestore.collection("users").document(uid).get().await()
-        val profile = if (direct.exists()) direct else {
-            firestore.collection("users")
-                .whereEqualTo("email", email.lowercase())
-                .limit(1)
-                .get()
-                .await()
-                .documents
-                .firstOrNull()
-                ?: throw ApiException("User profile not found.")
+        val user = try {
+            loadProfile(session.userId)
+        } catch (error: Exception) {
+            supabaseAuth.logout()
+            throw error
         }
-        val user = profile.toCapUser(uid, email)
-        if (!user.active) throw ApiException("This account is disabled.")
+        // Best-effort Firestore-continuity bridge -- see class doc. Never allowed to fail
+        // the overall login (Supabase already succeeded, that's authoritative) and never
+        // surfaced as a user-facing error here; StatusRepository's existing ConnectionStatus
+        // mechanism is what tells the user if Firestore-backed screens aren't reachable.
+        runCatching { firebaseAuth.signInWithEmailAndPassword(email.trim(), password).await() }
         return user
     }
 
-    suspend fun logout() { auth.signOut() }
+    private suspend fun loadProfile(userId: String): CapUser {
+        val user = try {
+            supabaseAuth.loadProfile(userId)
+        } catch (error: SupabaseAuthException) {
+            // Wrapped so every caller (MainViewModel's `catch (error: ApiException)`) keeps
+            // seeing the exact specific message, matching this class's pre-Phase-C contract
+            // of always throwing ApiException, never a raw underlying exception type.
+            throw ApiException(error.message ?: "Unable to load your profile.")
+        }
+        if (!user.active) {
+            supabaseAuth.logout()
+            throw ApiException("This account is disabled.")
+        }
+        return user
+    }
+
+    suspend fun logout() {
+        supabaseAuth.logout()
+        runCatching { firebaseAuth.signOut() }
+    }
 }
 
-private fun DocumentSnapshot.toCapUser(uid: String, authEmail: String): CapUser {
-    val permissions = (get("effective_permissions") ?: get("permissions") as? List<*>)
-    val permissionSet = when (permissions) {
-        is List<*> -> permissions.filterIsInstance<String>().toSet()
-        is Map<*, *> -> permissions.filterValues { it == true }.keys.filterIsInstance<String>().toSet()
-        else -> emptySet()
-    }
-    return CapUser(
-        id = uid,
-        name = getString("name") ?: getString("display_name") ?: authEmail,
-        email = getString("email") ?: authEmail,
-        role = getString("role") ?: "",
-        active = getBoolean("is_active") ?: getBoolean("active") ?: false,
-        permissions = permissionSet
-    )
-}
+// DocumentSnapshot.toCapUser() (the old Firestore users/{uid} -> CapUser mapper) was removed
+// here in Phase C -- AuthRepository's identity/profile now comes from Supabase
+// (SupabaseAuth.kt's JSONObject.toCapUser()), not Firestore. Note this is specifically about
+// the SIGNED-IN user's own identity: the separate, still-Firestore-backed "Users" list screen
+// (SimpleRecordsScreen("users", ...) in MainActivity.kt, reading generic CapRecords via
+// RecordsRepository, unchanged this phase) is a different, currently-inconsistent data
+// source for "users" than the logged-in user's own profile -- a known, disclosed, temporary
+// artifact of a partial migration, resolved once Firestore itself migrates in a later phase.
 
 private fun Throwable.connectionStatus(): ConnectionStatus = when (this) {
     is FirebaseAuthException -> ConnectionStatus.AuthRequired
@@ -359,6 +424,10 @@ private fun Throwable.userMessage(): String = when (this) {
 // Never surfaces a raw exception message, stack trace, auth token, or Firebase secret -
 // every branch resolves to one of the fixed product-spec strings below.
 private fun Throwable.connectionUserMessage(): String = when {
+    // Phase D: errors raised by SupabaseDataRepository (Postgres/PostgREST path) already carry
+    // a specific, product-facing message -- reuse it rather than falling through to the
+    // generic Firebase-oriented branches below.
+    this is ApiException -> message ?: "The service responded, but the returned information could not be processed."
     this is FirebaseNetworkException ->
         "Your phone is not connected to the internet. Check Wi-Fi or mobile data and try again."
     this is FirebaseAuthException ->

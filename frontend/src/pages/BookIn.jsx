@@ -222,7 +222,13 @@ export default function BookIn() {
       <form onSubmit={handleSubmit} className="space-y-5">
         <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
           <h2 className="font-heading font-semibold text-sm text-foreground">Job Information</h2>
-          <div className="grid grid-cols-2 gap-4">
+          {/* REAL FIX (Phase 9 continuation, 2026-08-13): bare grid-cols-2 gave Job Number
+              (free-text, can be a longer alphanumeric code) ~160px on a 375px phone --
+              cramped, and inconsistent with every other 2-field form row in the app
+              (AddClient/ClientForm/MachineForm/ServiceForm all stack on mobile via
+              grid-cols-1 sm:grid-cols-2). Date Booked In is a native date input, unaffected
+              either way. */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <Label>Job Number</Label>
               <Input value={form.job_number} onChange={e => set("job_number", e.target.value)} className="mt-1 h-11 rounded-xl" />

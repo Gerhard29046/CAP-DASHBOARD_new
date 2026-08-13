@@ -8,17 +8,27 @@ val localProperties = Properties().apply {
 val productionWebAppUrl = "https://capdashboard.gerhardvanwijk.workers.dev/"
 val productionFunctionsBaseUrl = "https://africa-south1-capdatabasefb2.cloudfunctions.net"
 val defaultLoginEmail = localProperties.getProperty("CAP_LOGIN_EMAIL", "admin@connoisseurauto.co.za")
+// Phase C (Android->Supabase auth migration, see docs/android/ANDROID_SUPABASE_MIGRATION.md).
+// Same project/values already committed in frontend/.env.production -- the publishable/anon
+// key, not a secret: safe to commit, designed to be public, every access RLS-constrained.
+// Never put the service-role key here or anywhere in mobile-android/.
+val supabaseUrl = "https://cjvrquipmnoihksijful.supabase.co"
+val supabaseAnonKey = "sb_publishable_Eu9Qx2QyjMZVLhKcv8232A_KvxjTbbi"
 android { namespace="com.CAPDATABASE.capdatabase"; compileSdk=36
  defaultConfig { applicationId="com.CAPDATABASE.capdatabase"; minSdk=26; targetSdk=36; versionCode=1; versionName="1.0.0"; testInstrumentationRunner="androidx.test.runner.AndroidJUnitRunner"; vectorDrawables.useSupportLibrary=true; buildConfigField("String", "DEFAULT_LOGIN_EMAIL", "\"$defaultLoginEmail\"") }
  buildTypes {
     debug {
         buildConfigField("String", "WEB_APP_URL", "\"$productionWebAppUrl\"")
         buildConfigField("String", "FUNCTIONS_BASE_URL", "\"$productionFunctionsBaseUrl\"")
+        buildConfigField("String", "SUPABASE_URL", "\"$supabaseUrl\"")
+        buildConfigField("String", "SUPABASE_ANON_KEY", "\"$supabaseAnonKey\"")
     }
     release {
         isMinifyEnabled=true
         buildConfigField("String", "WEB_APP_URL", "\"$productionWebAppUrl\"")
         buildConfigField("String", "FUNCTIONS_BASE_URL", "\"$productionFunctionsBaseUrl\"")
+        buildConfigField("String", "SUPABASE_URL", "\"$supabaseUrl\"")
+        buildConfigField("String", "SUPABASE_ANON_KEY", "\"$supabaseAnonKey\"")
         proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"),"proguard-rules.pro")
     }
  }
@@ -37,4 +47,4 @@ android { namespace="com.CAPDATABASE.capdatabase"; compileSdk=36
 kotlin {
     jvmToolchain(17)
 }
-dependencies { implementation(platform(libs.compose.bom)); androidTestImplementation(platform(libs.compose.bom)); implementation(platform(libs.firebase.bom)); implementation(libs.firebase.auth); implementation(libs.firebase.firestore); implementation(libs.firebase.storage); implementation(libs.kotlinx.coroutines.play.services); implementation(libs.compose.ui); implementation(libs.compose.preview); implementation(libs.material3); implementation(libs.material.icons); implementation(libs.activity.compose); implementation(libs.lifecycle.runtime); implementation(libs.lifecycle.viewmodel); implementation(libs.navigation); implementation(libs.hilt.android); ksp(libs.hilt.compiler); implementation(libs.hilt.navigation); implementation(libs.room.runtime); implementation(libs.room.ktx); ksp(libs.room.compiler); implementation(libs.work); implementation(libs.datastore); implementation(libs.coil); testImplementation(libs.junit); androidTestImplementation(libs.compose.test); debugImplementation(libs.compose.tooling); debugImplementation(libs.compose.manifest) }
+dependencies { implementation(platform(libs.compose.bom)); androidTestImplementation(platform(libs.compose.bom)); implementation(platform(libs.firebase.bom)); implementation(libs.firebase.auth); implementation(libs.firebase.firestore); implementation(libs.firebase.storage); implementation(libs.kotlinx.coroutines.play.services); implementation(libs.compose.ui); implementation(libs.compose.preview); implementation(libs.material3); implementation(libs.material.icons); implementation(libs.activity.compose); implementation(libs.lifecycle.runtime); implementation(libs.lifecycle.viewmodel); implementation(libs.navigation); implementation(libs.hilt.android); ksp(libs.hilt.compiler); implementation(libs.hilt.navigation); implementation(libs.room.runtime); implementation(libs.room.ktx); ksp(libs.room.compiler); implementation(libs.work); implementation(libs.datastore); implementation(libs.security); implementation(libs.coil); testImplementation(libs.junit); androidTestImplementation(libs.compose.test); debugImplementation(libs.compose.tooling); debugImplementation(libs.compose.manifest) }

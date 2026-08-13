@@ -13,25 +13,24 @@ migrations) means it needs to be run in the Supabase SQL Editor.
 STILL NEEDS YOUR ACTION
 ====================================
 
-1. Run these migrations in the Supabase SQL Editor (in this order), all
-   confirmed to ONLY do what's described, nothing else:
+1. CONFIRMED DONE (checked 2026-08-13, later session): migrations 0020,
+   0021, and 0022 are all applied and live — photo uploads on Log Service/
+   Book In, the editable Job Statuses/Line Types lists in Settings > Job
+   Cards, and the Machine Type field on Book In should all work now.
 
-   supabase/migrations/0020_service_and_job_card_photos.sql
-     -> Adds service_records.photos + job_cards.arrival_photos.
-        Without this, uploaded photos on Log Service / Book In won't save.
-
-   supabase/migrations/0021_job_card_settings_statuses_and_line_types.sql
-     -> Makes "Job Statuses" and "Service/Line Item Types" editable in
-        Settings > Job Cards. Safe no-op until you actually edit them.
-
-   supabase/migrations/0022_job_cards_machine_type.sql
-     -> Adds job_cards.machine_type so the "Machine Type" field on Book In
-        actually saves (it was being silently discarded before).
-
-2. The Dashboard sticky-notes Cloud Function is still not deployed (GCP
-   billing was disabled on that project). Customer-linked notes are coded
-   and tested at the database level, but can't be confirmed working
-   end-to-end until you re-enable billing and redeploy Cloud Functions.
+2. DONE (2026-08-13): Dashboard Notes now run entirely on Supabase --
+   no Cloud Function, no Worker, no separate service of any kind, nothing
+   left to deploy. Migration applied, and the full permissions test
+   (who can read/edit/delete which notes) was actually run against the
+   real database: 24 out of 24 checks passed, including that a regular
+   user genuinely cannot edit/delete someone else's note or fake who a
+   note is from, and that an administrator genuinely can. All test data
+   cleaned up afterward, independently double-checked.
+   Separately, still unresolved: the OLD Google Calendar Cloud Functions
+   (removed from the app back on 2026-08-12) were never actually deleted
+   from Google Cloud, so they may still be costing you money. Command to
+   delete them is in docs/ai-memory/KNOWN_ISSUES.md -- ask Claude for it
+   directly if you'd rather not dig through that file.
 
 3. When you're ready to test the real customer import: go to Settings >
    Data Management > Import Customers and upload your Pastel Excel export.
