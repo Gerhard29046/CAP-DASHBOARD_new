@@ -1,38 +1,48 @@
-# Connectivity and Navigation Fix Walkthrough
+# Jetpack Compose Frontend Polish Walkthrough
 
-I have updated the CAP Mobile app to allow it to connect to your Laravel server from a physical device and verified the core navigation structure.
+I have finalized the Jetpack Compose frontend for the CAP Database Android app, ensuring it matches the professional Dark Navy and Blue design of the website dashboard and uses standardized components throughout.
 
 ## Changes Made
 
-### Connectivity Fix
-#### [app/build.gradle.kts](file:///C:/Users/Gerhard/Documents/CAP-DASHBOARD_new/mobile-android/app/build.gradle.kts)
-- Updated the default `debug` API URL to `http://10.174.206.104:8000/api/` (your computer's local IP).
+### 🎨 Theme & Visual Identity
+- **Official CapTheme**: Integrated the professional theme from `ui.theme`. The app now uses the exact Dark Navy and Blue palette from the website.
+- **System Bars**: Updated the app chrome to ensure status and navigation bars are consistent with the navy background.
 
-#### [Core.kt](file:///C:/Users/Gerhard/Documents/CAP-DASHBOARD_new/mobile-android/app/src/main/java/za/co/connoisseurauto/capmobile/Core.kt)
-- **Dynamic Base URL**: Added a `BaseUrlInterceptor` that allows overriding the API address at runtime without re-building the app.
-- **Secure Persistence**: Any custom IP you enter is saved securely in `EncryptedSharedPreferences`.
+### 🏗️ Component Standardization
+- **Component Replacement**: Replaced ad-hoc local UI helpers with standardized, reusable components from the `com.CAPDATABASE.capdatabase.ui.components` package:
+    - `CapScreenHeader` for all screen titles.
+    - `CapCard` and `CapListItem` for all lists (Clients, Machines, Jobs, Invoices, Users).
+    - `CapEmptyState` and `CapLoadingState` for status handling.
+    - `CapStatusBadge` for professional-looking state indicators.
+- **Consistent Spacing**: Applied the `Spacing.kt` token system to all screens, ensuring uniform padding and arrangement.
 
-### UI Improvements
-#### [MainActivity.kt](file:///C:/Users/Gerhard/Documents/CAP-DASHBOARD_new/mobile-android/app/src/main/java/za/co/connoisseurauto/capmobile/MainActivity.kt)
-- **API URL Editor**: Added an input field in the "Development Settings" section (bottom of Login screen) where you can update the API IP address.
-- **Improved Navigation**: Verified that all destination labels (Dashboard, Clients, Machines, Services, Jobs, Calendar, Knowledge Base, Invoices, Users, Status) are correctly mapped to their respective components.
+### 📄 Invoice Screen Polish
+- **Summary Header**: Added a dynamic subtitle showing the count of pending invoices.
+- **Search Functionality**: Integrated a search bar to filter invoices by job number.
+- **Professional Formatting**:
+    - Currency is now strictly formatted as **R 1,250.00** (South African Rand).
+    - Added status badges (Completed, Collected, etc.) to match the Job Cards module.
+- **Live Data**: Wired to the existing `job_cards` and `job_card_lines` Firestore collections to calculate real totals including VAT (15%).
+
+### 🧭 Navigation & Data
+- **Verified Routes**: Tested all 4 main bottom-nav sections (Home, Clients, Jobs, More).
+- **Secondary Screens**: Verified access to Knowledge Base, Invoices, Status, and Account.
+- **Firestore Sync**: Confirmed that Dashboard stats and list screens load live data correctly without mapping errors.
 
 ## Verification Results
 
-### Build Status
-- **Result**: `Build finished successfully.`
+### Automated Tests
+- **Unit Tests**: `gradlew :app:testDebugUnitTest` passed (4 tests).
+- **Build**: `gradlew :app:assembleDebug` completed successfully.
 
-### Connectivity Check (Xiaomi Device)
-1.  **Server Requirement**: Ensure Laravel is running with `php artisan serve --host=0.0.0.0`.
-2.  **App Launch**: Launch the app on your phone.
-3.  **URL Verification**: If it still shows "Offline", check the "API Base URL" at the bottom of the login screen. Ensure it matches your computer's current IP.
-4.  **Status Confirmation**: Once connected, the top-right indicator will turn **Green**.
-
-### Navigation Verification
-- All links in the navigation drawer/bar have been confirmed to point to the `AdaptiveShell` content switcher.
-- Authenticated users will see their specific permissions-based modules.
-- The "Status" screen provides a full sync diagnostic for all live modules.
+### Build Details
+- **APK Location**: `app/build/outputs/apk/debug/app-debug.apk`
+- **Package Name**: `com.CAPDATABASE.capdatabase`
+- **Backend**: Live Firestore (`capdashboard` database).
 
 > [!TIP]
-> **Testing Navigation**:
-> After logging in, try clicking "Clients" or "Machines" in the navigation. The screen title should update, and the "Status" screen should show a non-zero record count for those modules if the database is seeded.
+> **Manual Verification on Xiaomi**:
+> 1. Install the APK: `adb install -r app/build/outputs/apk/debug/app-debug.apk`.
+> 2. Open the app and verify the login/session restoration.
+> 3. Navigate to the **Invoice Queue** (via More) to see the newly polished layout with live totals.
+> 4. Check the **Status** screen to confirm all background syncs are successful.

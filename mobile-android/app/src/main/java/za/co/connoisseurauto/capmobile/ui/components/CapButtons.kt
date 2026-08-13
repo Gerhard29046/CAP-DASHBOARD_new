@@ -78,6 +78,29 @@ fun CapOutlinedButton(
     }
 }
 
+/** Filled button in the destructive tone, for irreversible actions such as logout or delete. */
+@Composable
+fun CapDestructiveButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    loading: Boolean = false
+) {
+    Button(
+        onClick = onClick,
+        modifier = modifier.fillMaxWidth().defaultMinSize(minHeight = MinButtonHeight),
+        enabled = enabled && !loading,
+        shape = MaterialTheme.shapes.medium,
+        colors = ButtonDefaults.buttonColors(
+            containerColor = MaterialTheme.colorScheme.error,
+            contentColor = MaterialTheme.colorScheme.onError
+        )
+    ) {
+        CapButtonContent(text, loading)
+    }
+}
+
 @Composable
 private fun CapButtonContent(text: String, loading: Boolean) {
     Box(contentAlignment = Alignment.Center) {

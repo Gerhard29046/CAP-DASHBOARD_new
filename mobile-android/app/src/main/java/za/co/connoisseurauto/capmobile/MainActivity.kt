@@ -3,8 +3,8 @@ package com.CAPDATABASE.capdatabase
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -14,18 +14,13 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalUriHandler
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -33,14 +28,22 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.AndroidEntryPoint
 import dagger.hilt.android.lifecycle.HiltViewModel
+import com.CAPDATABASE.capdatabase.ui.components.CapBackRow
 import com.CAPDATABASE.capdatabase.ui.components.CapCard
+import com.CAPDATABASE.capdatabase.ui.components.CapConfirmDialog
 import com.CAPDATABASE.capdatabase.ui.components.CapDateField
+import com.CAPDATABASE.capdatabase.ui.components.CapDestructiveButton
+import com.CAPDATABASE.capdatabase.ui.components.CapDetailField
 import com.CAPDATABASE.capdatabase.ui.components.CapDropdownField
 import com.CAPDATABASE.capdatabase.ui.components.CapEmptyState
 import com.CAPDATABASE.capdatabase.ui.components.CapErrorState
+import com.CAPDATABASE.capdatabase.ui.components.CapKeyValueRow
 import com.CAPDATABASE.capdatabase.ui.components.CapListItem
 import com.CAPDATABASE.capdatabase.ui.components.CapLoadingState
+import com.CAPDATABASE.capdatabase.ui.components.CapOutlinedButton
+import com.CAPDATABASE.capdatabase.ui.components.CapPasswordField
 import com.CAPDATABASE.capdatabase.ui.components.CapPrimaryButton
+import com.CAPDATABASE.capdatabase.ui.components.CapQuickActionCard
 import com.CAPDATABASE.capdatabase.ui.components.CapScreenHeader
 import com.CAPDATABASE.capdatabase.ui.components.CapSearchField
 import com.CAPDATABASE.capdatabase.ui.components.CapSecondaryButton
@@ -55,7 +58,9 @@ import com.CAPDATABASE.capdatabase.ui.navigation.CapAppScaffold
 import com.CAPDATABASE.capdatabase.ui.navigation.CapBottomNavigation
 import com.CAPDATABASE.capdatabase.ui.navigation.CapNavDestination
 import com.CAPDATABASE.capdatabase.ui.navigation.CapTopAppBar
+import com.CAPDATABASE.capdatabase.ui.theme.CapSuccessGreen
 import com.CAPDATABASE.capdatabase.ui.theme.CapTheme
+import com.CAPDATABASE.capdatabase.ui.theme.CapWarningAmber
 import com.CAPDATABASE.capdatabase.ui.theme.Spacing
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -203,7 +208,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun CapApp(vm: MainViewModel = hiltViewModel()) {
     when {
-        !vm.sessionRestored -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+        !vm.sessionRestored -> Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) { CapLoadingState() }
         vm.state.user == null -> LoginScreen(vm.state.error, vm.state.loading, vm::login)
         else -> AdaptiveShell(vm)
     }
@@ -213,9 +218,13 @@ fun CapApp(vm: MainViewModel = hiltViewModel()) {
 fun LoginScreen(error: String?, loading: Boolean, login: (String, String) -> Unit) {
     var email by remember { mutableStateOf(BuildConfig.DEFAULT_LOGIN_EMAIL) }
     var password by remember { mutableStateOf("") }
-    var passwordVisible by remember { mutableStateOf(false) }
     LazyColumn(
-        Modifier.fillMaxSize().imePadding().padding(Spacing.lg),
+        Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .safeDrawingPadding()
+            .imePadding()
+            .padding(Spacing.lg),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
@@ -241,24 +250,15 @@ fun LoginScreen(error: String?, loading: Boolean, login: (String, String) -> Uni
                         onValueChange = { email = it },
                         keyboardType = KeyboardType.Email
                     )
-                    OutlinedTextField(
-                        value = password,
-                        onValueChange = { password = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text("Password") },
-                        singleLine = true,
-                        visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                        trailingIcon = {
-                            IconButton({ passwordVisible = !passwordVisible }) {
-                                Icon(
-                                    if (passwordVisible) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
-                                    contentDescription = if (passwordVisible) "Hide password" else "Show password"
-                                )
-                            }
-                        },
-                        shape = MaterialTheme.shapes.medium
-                    )
-                    error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                    CapPasswordField(value = password, onValueChange = { password = it })
+                    error?.let {
+                        Text(
+                            it,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                    }
                     CapPrimaryButton(
                         text = "Sign In",
                         onClick = { login(email.trim(), password) },
@@ -299,17 +299,48 @@ private val destinations = listOf(
 
 private fun permissionFor(label: String) = destinations.first { it.label == label }.permission
 
+/** Up to two initials from a display name, for [CapUserAvatar]. */
+private fun initialsOf(name: String): String = name.trim().split(Regex("\\s+"))
+    .filter { it.isNotBlank() }
+    .take(2)
+    .mapNotNull { it.firstOrNull()?.toString() }
+    .joinToString("")
+    .ifBlank { "?" }
+
+/** Human-readable label for a connection state — the raw enum name is not user-facing copy. */
+private fun connectionLabel(status: ConnectionStatus): String = when (status) {
+    ConnectionStatus.Connected -> "Connected"
+    ConnectionStatus.Checking -> "Checking"
+    ConnectionStatus.Offline -> "Offline"
+    ConnectionStatus.AuthRequired -> "Sign-in required"
+    ConnectionStatus.ServerError -> "Server error"
+    ConnectionStatus.DbUnavailable -> "Database unavailable"
+    ConnectionStatus.SyncError -> "Sync error"
+}
+
+/**
+ * Compact top-bar connection indicator: a tinted dot plus its label, both driven by the same
+ * [connectionTone] mapping the Status screen's badges use, so the two never disagree visually.
+ */
 @Composable
 fun ServerStatusIndicator(status: ConnectionStatus) {
-    val color = when (status) {
-        ConnectionStatus.Connected -> Color.Green
-        ConnectionStatus.Checking, ConnectionStatus.SyncError -> Color(0xFFFFA500)
-        ConnectionStatus.AuthRequired -> Color.Yellow
-        else -> Color.Red
+    val color = when (connectionTone(status)) {
+        StatusTone.Success -> CapSuccessGreen
+        StatusTone.Warning -> CapWarningAmber
+        StatusTone.Error -> MaterialTheme.colorScheme.error
+        else -> MaterialTheme.colorScheme.primary
     }
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    Row(
+        modifier = Modifier.padding(end = Spacing.md),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Spacing.xs)
+    ) {
         Box(Modifier.size(8.dp).background(color, CircleShape))
-        Text(status.name, style = MaterialTheme.typography.labelSmall)
+        Text(
+            connectionLabel(status),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 
@@ -363,7 +394,7 @@ fun AdaptiveShell(vm: MainViewModel) {
         },
         snackbarHostState = snackbar
     ) { padding ->
-        Box(Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp, vertical = 12.dp)) {
+        Box(Modifier.fillMaxSize().padding(padding).padding(horizontal = Spacing.md, vertical = Spacing.sm)) {
             ScreenContent(selected, vm, user) { selected = it }
         }
     }
@@ -373,11 +404,11 @@ fun AdaptiveShell(vm: MainViewModel) {
 private fun ScreenContent(selected: String, vm: MainViewModel, user: CapUser, onNavigate: (String) -> Unit) {
     val data = vm.recordsState
     if (data.loading) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+        CapLoadingState()
         return
     }
-    data.error?.let {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(it, color = MaterialTheme.colorScheme.error) }
+    data.error?.let { message ->
+        CapErrorState(message = message, onRetry = { vm.checkHealth() })
         return
     }
     when (selected) {
@@ -459,7 +490,11 @@ private fun MoreScreen(user: CapUser, onNavigate: (String) -> Unit, onLogout: ()
 
         CapCard {
             CapListItem("Account", leading = { Icon(Icons.Outlined.Person, null) }, showNavArrow = true, onClick = { onNavigate("Account") })
-            CapListItem("Logout", leading = { Icon(Icons.Outlined.Logout, null) }, onClick = { confirmLogout = true })
+            CapListItem(
+                "Logout",
+                leading = { Icon(Icons.Outlined.Logout, null, tint = MaterialTheme.colorScheme.error) },
+                onClick = { confirmLogout = true }
+            )
         }
     }
 
@@ -483,6 +518,32 @@ private fun AccountScreen(user: CapUser, onLogout: () -> Unit) {
         CapScreenHeader("Account")
 
         CapCard {
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+            ) {
+                CapUserAvatar(initialsOf(user.name))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        user.name.ifBlank { "Signed-in user" },
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        user.email,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                CapStatusBadge(user.role.ifBlank { "User" }, StatusTone.Info)
+            }
+        }
+
+        CapCard {
             CapListItem(user.name, subtitle = "Name", leading = { Icon(Icons.Outlined.Person, null) })
             CapListItem(user.email, subtitle = "Email", leading = { Icon(Icons.Outlined.Email, null) })
             CapListItem(user.role, subtitle = "Role", leading = { Icon(Icons.Outlined.Badge, null) })
@@ -497,19 +558,7 @@ private fun AccountScreen(user: CapUser, onLogout: () -> Unit) {
             )
         }
 
-        Button(
-            onClick = { confirmLogout = true },
-            modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = MaterialTheme.colorScheme.error,
-                contentColor = MaterialTheme.colorScheme.onError
-            ),
-            shape = MaterialTheme.shapes.medium
-        ) {
-            Icon(Icons.Outlined.Logout, null, Modifier.size(20.dp))
-            Spacer(Modifier.width(8.dp))
-            Text("Logout")
-        }
+        CapDestructiveButton(text = "Logout", onClick = { confirmLogout = true })
     }
 
     if (confirmLogout) {
@@ -520,23 +569,15 @@ private fun AccountScreen(user: CapUser, onLogout: () -> Unit) {
     }
 }
 
-/** Shared logout confirmation dialog, mirroring the existing `EditDialog` AlertDialog structure. */
+/** Shared logout confirmation, delegating to the reusable [CapConfirmDialog]. */
 @Composable
 private fun LogoutConfirmDialog(onDismiss: () -> Unit, onConfirm: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Log out?") },
-        text = { Text("Are you sure you want to log out?") },
-        confirmButton = {
-            Button(
-                onClick = onConfirm,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.error,
-                    contentColor = MaterialTheme.colorScheme.onError
-                )
-            ) { Text("Logout") }
-        },
-        dismissButton = { TextButton(onDismiss) { Text("Cancel") } }
+    CapConfirmDialog(
+        title = "Log out?",
+        message = "You'll need to sign in again to view CAP data on this device.",
+        confirmLabel = "Logout",
+        onConfirm = onConfirm,
+        onDismiss = onDismiss
     )
 }
 
@@ -553,8 +594,7 @@ private fun DashboardScreen(data: RecordsState, user: CapUser, onNavigate: (Stri
     val openJobs = jobs.count { it.text("status") !in closedJobStatuses }
     val dueServices = services.filter { it.text("next_service_due").isNotBlank() }.sortedBy { it.text("next_service_due") }
 
-    val initials = user.name.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
-        .take(2).mapNotNull { it.firstOrNull()?.toString() }.joinToString("").ifBlank { "?" }
+    val initials = initialsOf(user.name)
 
     LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
         item {
@@ -585,33 +625,34 @@ private fun DashboardScreen(data: RecordsState, user: CapUser, onNavigate: (Stri
             }
         }
         item {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                DashboardQuickAction(Icons.Outlined.Build, "Log New Service", Modifier.weight(1f)) {
-                    onNavigate("LogNewService")
+            // 2x2 rather than 4-across: four tiles on one phone-width row left each label
+            // truncated and each target under the comfortable touch size.
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                CapSectionHeader(title = "Quick actions")
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                    CapQuickActionCard(Icons.Outlined.Build, "Log New Service", { onNavigate("LogNewService") }, Modifier.weight(1f))
+                    CapQuickActionCard(Icons.Outlined.PrecisionManufacturing, "Book In Machine", { onNavigate("BookIn") }, Modifier.weight(1f))
                 }
-                DashboardQuickAction(Icons.Outlined.PrecisionManufacturing, "Book In Machine", Modifier.weight(1f)) {
-                    onNavigate("BookIn")
-                }
-                DashboardQuickAction(Icons.Outlined.Assignment, "View Jobs", Modifier.weight(1f)) {
-                    onNavigate("Jobs")
-                }
-                DashboardQuickAction(Icons.Outlined.Groups, "View Clients", Modifier.weight(1f)) {
-                    onNavigate("Clients")
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                    CapQuickActionCard(Icons.Outlined.Assignment, "View Jobs", { onNavigate("Jobs") }, Modifier.weight(1f))
+                    CapQuickActionCard(Icons.Outlined.Groups, "View Clients", { onNavigate("Clients") }, Modifier.weight(1f))
                 }
             }
         }
         item {
             CapCard {
-                CapSectionHeader(title = "Upcoming Services", action = {
-                    Text(
-                        "View all",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.clickable {
-                            // TODO: wire navigation once bottom-nav/NavHost lands
+                CapSectionHeader(
+                    title = "Upcoming Services",
+                    // "Calendar" is this app's Upcoming Services screen (see MoreScreen), and the
+                    // link is gated on exactly the permission that gates it there.
+                    action = {
+                        if (user.hasPermission(permissionFor("Calendar"))) {
+                            TextButton(onClick = { onNavigate("Calendar") }) {
+                                Text("View all", style = MaterialTheme.typography.labelMedium)
+                            }
                         }
-                    )
-                })
+                    }
+                )
                 if (dueServices.isEmpty()) {
                     CapEmptyState("No upcoming service dates.", modifier = Modifier.fillMaxWidth().wrapContentHeight())
                 } else {
@@ -640,26 +681,6 @@ private fun DashboardScreen(data: RecordsState, user: CapUser, onNavigate: (Stri
                     }
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun DashboardQuickAction(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    Card(modifier = modifier.clickable(onClick = onClick)) {
-        Column(
-            Modifier.fillMaxWidth().padding(Spacing.sm),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(Spacing.xs)
-        ) {
-            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-            Text(
-                label,
-                style = MaterialTheme.typography.labelSmall,
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
-            )
         }
     }
 }
@@ -731,7 +752,7 @@ private fun ClientsScreen(data: RecordsState, user: CapUser, save: (String, Stri
                 }
             }
         }
-        if (user.hasPermission("clients.create")) FloatingActionButton({ clientDialog = true }, Modifier.align(Alignment.BottomEnd).padding(16.dp)) { Icon(Icons.Outlined.PersonAdd, "Add client") }
+        if (user.hasPermission("clients.create")) FloatingActionButton({ clientDialog = true }, Modifier.align(Alignment.BottomEnd).padding(Spacing.md)) { Icon(Icons.Outlined.PersonAdd, "Add client") }
     }
     if (clientDialog) ClientDialog({ clientDialog = false }) { fields -> save("clients", null, fields, "Client"); clientDialog = false }
     machineClient?.let { client -> MachineDialog(clients, null, client.id, { machineClient = null }) { fields -> save("machines", null, fields, "Machine"); machineClient = null } }
@@ -740,11 +761,16 @@ private fun ClientsScreen(data: RecordsState, user: CapUser, save: (String, Stri
 
 @Composable
 private fun ClientSummary(client: CapRecord, machines: List<CapRecord>) {
-    Column {
-        Text(client.text("company_name").ifBlank { "Unnamed client" }, style = MaterialTheme.typography.titleMedium)
-        Text(client.text("contact_person").ifBlank { "No contact person" }, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text("${machines.size} ${if (machines.size == 1) "machine" else "machines"}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-    }
+    CapListItem(
+        title = client.text("company_name").ifBlank { "Unnamed client" },
+        subtitle = client.text("contact_person").ifBlank { "No contact person" },
+        trailing = {
+            CapStatusBadge(
+                "${machines.size} ${if (machines.size == 1) "machine" else "machines"}",
+                StatusTone.Neutral
+            )
+        }
+    )
 }
 
 @Composable
@@ -768,12 +794,7 @@ private fun ClientDetailScreen(
     Box(Modifier.fillMaxSize()) {
         LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(Spacing.md), contentPadding = PaddingValues(bottom = 84.dp)) {
             item {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back")
-                    }
-                    Text("Back to clients", style = MaterialTheme.typography.labelLarge)
-                }
+                CapBackRow("Back to clients", onBack)
             }
             item {
                 Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
@@ -791,12 +812,7 @@ private fun ClientDetailScreen(
                                 client.text("email").ifBlank { null }?.let { "Email" to it },
                                 client.text("address").ifBlank { null }?.let { "Address" to it },
                                 client.text("notes").ifBlank { null }?.let { "Notes" to it }
-                            ).forEach { (label, value) ->
-                                Column {
-                                    Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    Text(value, style = MaterialTheme.typography.bodyMedium)
-                                }
-                            }
+                            ).forEach { (label, value) -> CapDetailField(label, value) }
                         }
                     }
                 }
@@ -935,7 +951,7 @@ private fun MachinesScreen(data: RecordsState, user: CapUser, save: (String, Str
                 }
             }
         }
-        if (user.hasPermission("machines.create") && clients.isNotEmpty()) FloatingActionButton({ creating = true }, Modifier.align(Alignment.BottomEnd).padding(16.dp)) { Icon(Icons.Outlined.Add, "Add machine") }
+        if (user.hasPermission("machines.create") && clients.isNotEmpty()) FloatingActionButton({ creating = true }, Modifier.align(Alignment.BottomEnd).padding(Spacing.md)) { Icon(Icons.Outlined.Add, "Add machine") }
     }
     if (creating) MachineDialog(clients, null, clients.firstOrNull()?.id.orEmpty(), { creating = false }) { save("machines", null, it, "Machine"); creating = false }
 }
@@ -960,12 +976,7 @@ private fun MachineDetailScreen(
     Box(Modifier.fillMaxSize()) {
         LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(Spacing.md), contentPadding = PaddingValues(bottom = 84.dp)) {
             item {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back")
-                    }
-                    Text("Back to machines", style = MaterialTheme.typography.labelLarge)
-                }
+                CapBackRow("Back to machines", onBack)
             }
             item {
                 Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
@@ -985,12 +996,7 @@ private fun MachineDetailScreen(
                                 machine.text("installation_date").ifBlank { null }?.let { "Installed" to it },
                                 lastService?.text("service_date")?.ifBlank { null }?.let { "Last service" to it },
                                 nextService?.text("next_service_due")?.ifBlank { null }?.let { "Next service due" to it }
-                            ).forEach { (label, value) ->
-                                Column {
-                                    Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    Text(value, style = MaterialTheme.typography.bodyMedium)
-                                }
-                            }
+                            ).forEach { (label, value) -> CapDetailField(label, value) }
                         }
                     }
                     if (user.hasPermission("machines.edit")) {
@@ -1040,12 +1046,7 @@ private fun ServiceRecordDetailScreen(
     Box(Modifier.fillMaxSize()) {
         LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(Spacing.md), contentPadding = PaddingValues(bottom = 84.dp)) {
             item {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back")
-                    }
-                    Text("Back", style = MaterialTheme.typography.labelLarge)
-                }
+                CapBackRow("Back", onBack)
             }
             item {
                 Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
@@ -1065,12 +1066,7 @@ private fun ServiceRecordDetailScreen(
                                 service.text("technician_name").ifBlank { null }?.let { "Technician" to it },
                                 service.text("work_performed").ifBlank { null }?.let { "Work performed" to it },
                                 service.text("next_service_due").ifBlank { null }?.let { "Next service due" to it }
-                            ).forEach { (label, value) ->
-                                Column {
-                                    Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    Text(value, style = MaterialTheme.typography.bodyMedium)
-                                }
-                            }
+                            ).forEach { (label, value) -> CapDetailField(label, value) }
                         }
                     }
                     if (user.hasPermission("services.edit")) {
@@ -1136,12 +1132,7 @@ private fun LogNewServiceScreen(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).imePadding(),
         verticalArrangement = Arrangement.spacedBy(Spacing.md)
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back")
-            }
-            Text("Back to dashboard", style = MaterialTheme.typography.labelLarge)
-        }
+        CapBackRow("Back to dashboard", onBack)
         CapScreenHeader(title = "Log New Service", subtitle = "Record a completed or scheduled service")
         CapCard {
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
@@ -1251,12 +1242,7 @@ private fun BookInScreen(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).imePadding(),
         verticalArrangement = Arrangement.spacedBy(Spacing.md)
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back")
-            }
-            Text("Back to dashboard", style = MaterialTheme.typography.labelLarge)
-        }
+        CapBackRow("Back to dashboard", onBack)
         CapScreenHeader(title = "Book In Machine", subtitle = "Create a new job card for an incoming machine")
         CapCard {
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
@@ -1408,7 +1394,7 @@ private fun ServicesScreen(data: RecordsState, user: CapUser, save: (String, Str
                 }
             }
         }
-        if (user.hasPermission("services.create") && machines.isNotEmpty()) FloatingActionButton({ creating = true }, Modifier.align(Alignment.BottomEnd).padding(16.dp)) { Icon(Icons.Outlined.Add, "Add service") }
+        if (user.hasPermission("services.create") && machines.isNotEmpty()) FloatingActionButton({ creating = true }, Modifier.align(Alignment.BottomEnd).padding(Spacing.md)) { Icon(Icons.Outlined.Add, "Add service") }
     }
     if (creating) ServiceDialog(machines, null, { creating = false }) { save("service_records", null, it, "Service record"); creating = false }
 }
@@ -1484,7 +1470,7 @@ private fun JobsScreen(data: RecordsState, user: CapUser, save: (String, String?
                 }
             }
         }
-        if (user.hasPermission("job_cards.create") && clients.isNotEmpty() && machines.isNotEmpty()) FloatingActionButton({ creating = true }, Modifier.align(Alignment.BottomEnd).padding(16.dp)) { Icon(Icons.Outlined.Add, "Add job") }
+        if (user.hasPermission("job_cards.create") && clients.isNotEmpty() && machines.isNotEmpty()) FloatingActionButton({ creating = true }, Modifier.align(Alignment.BottomEnd).padding(Spacing.md)) { Icon(Icons.Outlined.Add, "Add job") }
     }
     if (creating) JobDialog(clients, machines, null, { creating = false }) { save("job_cards", null, it, "Job card"); creating = false }
 }
@@ -1505,12 +1491,7 @@ private fun JobDetailScreen(
     Box(Modifier.fillMaxSize()) {
         LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(Spacing.md), contentPadding = PaddingValues(bottom = 84.dp)) {
             item {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back")
-                    }
-                    Text("Back to jobs", style = MaterialTheme.typography.labelLarge)
-                }
+                CapBackRow("Back to jobs", onBack)
             }
             item {
                 Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
@@ -1532,12 +1513,7 @@ private fun JobDetailScreen(
                                 job.text("date_received").ifBlank { null }?.let { "Date received" to it },
                                 job.text("fault_description").ifBlank { null }?.let { "Fault description" to it },
                                 job.text("technician_name").ifBlank { null }?.let { "Technician" to it }
-                            ).forEach { (label, value) ->
-                                Column {
-                                    Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    Text(value, style = MaterialTheme.typography.bodyMedium)
-                                }
-                            }
+                            ).forEach { (label, value) -> CapDetailField(label, value) }
                         }
                     }
                     if (user.hasPermission("job_cards.edit")) {
@@ -1749,8 +1725,11 @@ private fun CapRecord.number(key: String): Double? = (fields[key] as? Number)?.t
 
 @Composable
 private fun InvoiceScreen(data: RecordsState) {
+    var query by remember { mutableStateOf("") }
     val jobs = data.collection("job_cards").filter {
         it.text("status").contains("invoice", true) || it.text("status") == "Completed" || it.text("status") == "Collected"
+    }.filter {
+        query.isBlank() || it.text("job_number").contains(query, ignoreCase = true)
     }
     val lines = data.collection("job_card_lines")
     val machines = data.collection("machines")
@@ -1763,9 +1742,22 @@ private fun InvoiceScreen(data: RecordsState) {
         verticalArrangement = Arrangement.spacedBy(Spacing.sm),
         contentPadding = PaddingValues(bottom = 84.dp)
     ) {
-        item { CapScreenHeader(title = "Invoice Queue", subtitle = "Completed jobs ready for billing") }
+        item {
+            CapScreenHeader(
+                title = "Invoice Queue",
+                subtitle = if (jobs.isEmpty()) "No jobs pending" else "${jobs.size} jobs ready for billing"
+            )
+        }
+        item {
+            CapSearchField(
+                value = query,
+                onValueChange = { query = it },
+                placeholder = "Search by job number",
+                modifier = Modifier.padding(bottom = Spacing.xs)
+            )
+        }
         if (jobs.isEmpty()) {
-            item { CapEmptyState("No jobs are ready for invoicing.", modifier = Modifier.fillMaxWidth().wrapContentHeight()) }
+            item { CapEmptyState(if (query.isBlank()) "No jobs are ready for invoicing." else "No invoices match your search.", modifier = Modifier.fillMaxWidth().wrapContentHeight()) }
         }
         items(jobs, key = { it.id }) { job ->
             val machine = machinesById[job.text("machine_id")]
@@ -1903,12 +1895,7 @@ private fun KnowledgeBaseDetailScreen(
     Box(Modifier.fillMaxSize()) {
         LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(Spacing.md), contentPadding = PaddingValues(bottom = 84.dp)) {
             item {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back")
-                    }
-                    Text("Back to knowledge base", style = MaterialTheme.typography.labelLarge)
-                }
+                CapBackRow("Back to knowledge base", onBack)
             }
             item {
                 Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
@@ -1930,12 +1917,7 @@ private fun KnowledgeBaseDetailScreen(
                                 machine.text("product_code").ifBlank { null }?.let { "Product code" to it },
                                 machine.text("category").ifBlank { null }?.let { "Category" to it },
                                 machine.text("summary").ifBlank { null }?.let { "Summary" to it }
-                            ).forEach { (label, value) ->
-                                Column {
-                                    Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    Text(value, style = MaterialTheme.typography.bodyMedium)
-                                }
-                            }
+                            ).forEach { (label, value) -> CapDetailField(label, value) }
                         }
                     }
                 }
@@ -1956,12 +1938,7 @@ private fun KnowledgeBaseDetailScreen(
                 item {
                     CapSectionCard(title = "Technical Specifications") {
                         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-                            specifications.forEach { (key, value) ->
-                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                    Text(key, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    Text(value, style = MaterialTheme.typography.bodyMedium)
-                                }
-                            }
+                            specifications.forEach { (key, value) -> CapKeyValueRow(key, value) }
                         }
                     }
                 }
@@ -2082,27 +2059,33 @@ private fun KnowledgeBaseDetailScreen(
     }
 }
 
+/**
+ * Generic read-only list (currently only the Users screen). Restyled onto CapCard/CapListItem so
+ * it matches every other list in the app; the record fields shown are unchanged.
+ */
 @Composable
 private fun SimpleRecordsScreen(collection: String, data: RecordsState, titleKey: String, subtitleKey: String, empty: String) {
     val records = data.collection(collection)
-    LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        if (records.isEmpty()) item { EmptyCard(empty) }
-        items(records, key = { it.id }) { RecordCard(it.text(titleKey).ifBlank { it.id }, listOf(it.text(subtitleKey)), Modifier) }
-    }
-}
-
-@Composable
-private fun RecordCard(title: String, details: List<String?>, modifier: Modifier) {
-    Card(modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text(title.ifBlank { "Untitled" }, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            details.filterNotNull().filter { it.isNotBlank() }.forEach { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis) }
+    LazyColumn(
+        Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+        contentPadding = PaddingValues(bottom = 84.dp)
+    ) {
+        if (records.isEmpty()) {
+            item { CapEmptyState(empty, modifier = Modifier.fillMaxWidth().wrapContentHeight()) }
+        }
+        items(records, key = { it.id }) { record ->
+            val name = record.text(titleKey).ifBlank { record.id }
+            CapCard {
+                CapListItem(
+                    title = name,
+                    subtitle = record.text(subtitleKey).ifBlank { null },
+                    leading = { CapUserAvatar(initialsOf(name)) }
+                )
+            }
         }
     }
 }
-
-@Composable
-private fun EmptyCard(message: String) = Card(Modifier.fillMaxWidth()) { Text(message, Modifier.padding(24.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
 
 private fun machineTitle(machine: CapRecord?): String = machine?.let { "${it.text("brand")} ${it.text("model")}".trim().ifBlank { "Unnamed machine" } } ?: "Unknown machine"
 
@@ -2185,25 +2168,56 @@ private fun JobDialog(clients: List<CapRecord>, machines: List<CapRecord>, initi
 private fun EditDialog(title: String, onDismiss: () -> Unit, valid: Boolean, onSave: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(title) },
-        text = { Column(Modifier.fillMaxWidth().heightIn(max = 500.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp), content = content) },
-        confirmButton = { Button(onSave, enabled = valid) { Text("Save") } },
+        title = { Text(title, style = MaterialTheme.typography.titleLarge) },
+        text = {
+            Column(
+                Modifier.fillMaxWidth().heightIn(max = 500.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+                content = content
+            )
+        },
+        shape = MaterialTheme.shapes.large,
+        confirmButton = { Button(onSave, enabled = valid, shape = MaterialTheme.shapes.medium) { Text("Save") } },
         dismissButton = { TextButton(onDismiss) { Text("Cancel") } }
     )
 }
 
 @Composable
 private fun TextInput(label: String, value: String, onValueChange: (String) -> Unit, required: Boolean = false, keyboardType: KeyboardType = KeyboardType.Text) {
-    OutlinedTextField(value, onValueChange, Modifier.fillMaxWidth(), label = { Text(label + if (required) " *" else "") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = keyboardType))
+    CapTextField(
+        label = label,
+        value = value,
+        onValueChange = onValueChange,
+        required = required,
+        keyboardType = keyboardType
+    )
 }
 
+/**
+ * Dialog-local select control. Kept as a button + [DropdownMenu] rather than switching to
+ * [CapDropdownField]: `ExposedDropdownMenuBox` anchors against the window, which misbehaves
+ * inside an AlertDialog. Styling now follows the theme (medium shape, 48dp touch target,
+ * outline colour) so it reads the same as the CapTheme fields around it.
+ */
 @Composable
 private fun SelectInput(label: String, options: List<Pair<String, String>>, selected: String, onSelected: (String) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     Box(Modifier.fillMaxWidth()) {
-        OutlinedButton({ expanded = true }, Modifier.fillMaxWidth()) {
-            Text(options.firstOrNull { it.first == selected }?.second?.ifBlank { label } ?: "Select $label", Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Icon(Icons.Outlined.ArrowDropDown, null)
+        OutlinedButton(
+            onClick = { expanded = true },
+            modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp),
+            shape = MaterialTheme.shapes.medium,
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onSurface),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+        ) {
+            Text(
+                options.firstOrNull { it.first == selected }?.second?.ifBlank { label } ?: "Select $label",
+                Modifier.weight(1f),
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Icon(Icons.Outlined.ArrowDropDown, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         DropdownMenu(expanded, { expanded = false }) {
             options.forEach { option -> DropdownMenuItem(text = { Text(option.second.ifBlank { option.first }) }, onClick = { onSelected(option.first); expanded = false }) }
@@ -2227,77 +2241,90 @@ fun StatusScreen(vm: MainViewModel) {
     val fmt = remember { SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()) }
     val uriHandler = LocalUriHandler.current
     val user = vm.state.user
-    LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
+    LazyColumn(
+        Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(Spacing.md),
+        contentPadding = PaddingValues(bottom = 84.dp)
+    ) {
         item {
-            CapCard {
-                Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                    Text("Connection Details", fontWeight = FontWeight.Bold)
-                    StatusRowBadge("Internet / Live Service", status.connection.name, connectionTone(status.connection))
-                    StatusRowBadge("Authentication", if (status.apiHealthy) "Connected" else "Not connected", if (status.apiHealthy) StatusTone.Success else StatusTone.Error)
-                    StatusRowBadge("Firebase / Database Access", if (status.dbHealthy) "Connected" else "Not connected", if (status.dbHealthy) StatusTone.Success else StatusTone.Error)
-                    StatusRow("Data Read", vm.recordsState.records.values.sumOf { it.size }.toString())
-                    StatusRow("Latency", "${status.latency} ms")
-                    StatusRow("Firebase Project", "capdatabasefb2")
-                    StatusRow("Firestore Database", "capdashboard")
-                    StatusRow("Environment", "Production")
-                    StatusRow("Last Sync", if (status.lastSync > 0) fmt.format(Date(status.lastSync)) else "Never")
-                    StatusRow("Pending Operations", status.pendingOperations.toString())
-                    StatusRow("Failed Operations", status.failedOperations.toString())
-                    status.lastError?.let { Text("Last Error: $it", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                        Button(vm::checkHealth, Modifier.weight(1f)) { Text("Test") }
-                        Button(vm::sync, Modifier.weight(1f)) { Text("Sync") }
+            CapScreenHeader(
+                title = "Connection and Sync",
+                subtitle = "Live view of this device's link to the CAP Firebase backend"
+            )
+        }
+        item {
+            CapSectionCard(title = "Connection Details") {
+                StatusRowBadge("Internet / Live Service", connectionLabel(status.connection), connectionTone(status.connection))
+                StatusRowBadge("Authentication", if (status.apiHealthy) "Connected" else "Not connected", if (status.apiHealthy) StatusTone.Success else StatusTone.Error)
+                StatusRowBadge("Firebase / Database Access", if (status.dbHealthy) "Connected" else "Not connected", if (status.dbHealthy) StatusTone.Success else StatusTone.Error)
+                StatusRow("Data Read", vm.recordsState.records.values.sumOf { it.size }.toString())
+                StatusRow("Latency", "${status.latency} ms")
+                StatusRow("Firebase Project", "capdatabasefb2")
+                StatusRow("Firestore Database", "capdashboard")
+                StatusRow("Environment", "Production")
+                StatusRow("Last Sync", if (status.lastSync > 0) fmt.format(Date(status.lastSync)) else "Never")
+                StatusRow("Pending Operations", status.pendingOperations.toString())
+                StatusRow("Failed Operations", status.failedOperations.toString())
+                status.lastError?.let {
+                    Text("Last error: $it", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                    CapSecondaryButton(text = "Test", onClick = { vm.checkHealth() }, modifier = Modifier.weight(1f))
+                    CapSecondaryButton(text = "Sync", onClick = { vm.sync() }, modifier = Modifier.weight(1f))
+                }
+                CapOutlinedButton(text = "Open Web Dashboard", onClick = { uriHandler.openUri(BuildConfig.WEB_APP_URL) })
+            }
+        }
+        item {
+            CapSectionCard(title = "Account") {
+                StatusRow("Current Account", user?.email?.ifBlank { "Unknown" } ?: "Unknown")
+                StatusRow("User Role", user?.role?.ifBlank { "Unknown" } ?: "Unknown")
+                StatusRow("App Version", BuildConfig.VERSION_NAME)
+                StatusRow("Build Version", BuildConfig.VERSION_CODE.toString())
+            }
+        }
+        item {
+            CapSectionCard(title = "Connection Test") {
+                Text(
+                    "Runs a one-off, read-only check against Firestore, separate from the background status above.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                CapOutlinedButton(
+                    text = "Test Connection",
+                    onClick = { vm.testConnection() },
+                    loading = vm.testingConnection
+                )
+                vm.connectionTestResult?.let { result ->
+                    if (result.success) {
+                        CapStatusBadge(
+                            "Connected" + (result.latencyMs?.let { " — $it ms" } ?: ""),
+                            StatusTone.Success
+                        )
+                    } else {
+                        Text(
+                            result.message,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
                     }
-                    OutlinedButton({ uriHandler.openUri(BuildConfig.WEB_APP_URL) }, Modifier.fillMaxWidth()) { Text("Open Cloudflare Dashboard") }
                 }
             }
         }
-        item {
-            CapCard {
-                Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                    Text("Account", fontWeight = FontWeight.Bold)
-                    StatusRow("Current Account", user?.email?.ifBlank { "Unknown" } ?: "Unknown")
-                    StatusRow("User Role", user?.role?.ifBlank { "Unknown" } ?: "Unknown")
-                    StatusRow("App Version", BuildConfig.VERSION_NAME)
-                    StatusRow("Build Version", BuildConfig.VERSION_CODE.toString())
-                }
-            }
-        }
-        item {
-            CapCard {
-                Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                    Text("Connection Test", fontWeight = FontWeight.Bold)
-                    Text(
-                        "Runs a one-off, read-only check against Firestore, separate from the background status above.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+        if (status.syncResults.isNotEmpty()) {
+            item { CapSectionHeader(title = "Last Sync Results") }
+            items(status.syncResults) { result ->
+                CapCard {
+                    CapListItem(
+                        title = result.resource,
+                        trailing = {
+                            if (result.error == null) {
+                                CapStatusBadge("${result.count ?: 0} records", StatusTone.Success)
+                            } else {
+                                CapStatusBadge("Error", StatusTone.Error)
+                            }
+                        }
                     )
-                    OutlinedButton(vm::testConnection, Modifier.fillMaxWidth(), enabled = !vm.testingConnection) {
-                        if (vm.testingConnection) {
-                            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                            Spacer(Modifier.width(8.dp))
-                            Text("Testing…")
-                        } else {
-                            Text("Test Connection")
-                        }
-                    }
-                    vm.connectionTestResult?.let { result ->
-                        val color = if (result.success) Color(0xFF67B58B) else MaterialTheme.colorScheme.error
-                        val text = if (result.success) {
-                            "Connected" + (result.latencyMs?.let { " — $it ms" } ?: "")
-                        } else {
-                            result.message
-                        }
-                        Text(text, color = color, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                    }
-                }
-            }
-        }
-        items(status.syncResults) { result ->
-            CapCard {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(result.resource)
-                    Text(if (result.error == null) "${result.count ?: 0} records" else "Error", color = if (result.error == null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error)
                 }
             }
         }
@@ -2305,12 +2332,7 @@ fun StatusScreen(vm: MainViewModel) {
 }
 
 @Composable
-fun StatusRow(label: String, value: String) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text(label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(value, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-    }
-}
+fun StatusRow(label: String, value: String) = CapKeyValueRow(label, value)
 
 @Composable
 fun StatusRowBadge(label: String, value: String, tone: StatusTone) {
