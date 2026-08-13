@@ -4,8 +4,8 @@ import { createClient } from "@supabase/supabase-js";
 // expose client-side and is constrained by Row Level Security policies (see
 // supabase/migrations/*.sql). Never import the service_role/secret key here.
 //
-// This module is additive during the Firebase -> Supabase migration: it does not replace
-// frontend/src/lib/firebase.js yet. See docs/ai-memory/DECISIONS.md for migration phase status.
+// Full Supabase cutover, 2026-08-13 -- this is now the app's only data/auth client.
+// frontend/src/lib/firebase.js was deleted entirely.
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;

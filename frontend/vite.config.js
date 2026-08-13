@@ -6,17 +6,13 @@ import { fileURLToPath, URL } from 'node:url'
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
 
-  const requiredFirebaseKeys = [
-    'VITE_FIREBASE_API_KEY',
-    'VITE_FIREBASE_AUTH_DOMAIN',
-    'VITE_FIREBASE_PROJECT_ID',
-    'VITE_FIREBASE_STORAGE_BUCKET',
-    'VITE_FIREBASE_MESSAGING_SENDER_ID',
-    'VITE_FIREBASE_APP_ID',
-  ];
-  const missingFirebaseKeys = requiredFirebaseKeys.filter((key) => !env[key]);
-  if (mode === 'production' && missingFirebaseKeys.length) {
-    throw new Error(`Missing Firebase production configuration: ${missingFirebaseKeys.join(', ')}`);
+  // Full Supabase cutover, 2026-08-13 -- this used to require VITE_FIREBASE_* keys at
+  // production build time (Firebase was the live backend then). Firebase is fully removed
+  // from the frontend now; Supabase's equivalent required keys are checked instead.
+  const requiredSupabaseKeys = ['VITE_SUPABASE_URL', 'VITE_SUPABASE_ANON_KEY'];
+  const missingSupabaseKeys = requiredSupabaseKeys.filter((key) => !env[key]);
+  if (mode === 'production' && missingSupabaseKeys.length) {
+    throw new Error(`Missing Supabase production configuration: ${missingSupabaseKeys.join(', ')}`);
   }
 
   return {

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { apiClient } from "@/api/apiClient";
 import { supabase } from "@/services/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -8,38 +8,27 @@ import { Label } from "@/components/ui/label";
 import { Lock, Loader2, AlertTriangle } from "lucide-react";
 import AuthLayout from "@/components/AuthLayout";
 
-// Which backend's reset-link shape this page needs to recognize. Static import of
-// `supabase` above is safe regardless of backend (services/supabase/client.js's env-var
-// check is a lazy Proxy, deferred to first real `supabase.*` call -- see
-// docs/ai-memory/PROJECT_STATE.md's 2026-08-06 Phase 3 entry) -- this file only actually
-// touches it when AUTH_BACKEND is "supabase".
-const AUTH_BACKEND = import.meta.env.VITE_AUTH_BACKEND === "supabase" ? "supabase" : "firebase";
-
+// Full Supabase cutover, 2026-08-13 -- this page used to branch between Firebase's
+// query-string `oobCode`/`token` reset-link shape and Supabase's hash-fragment session
+// exchange. The Firebase branch is removed; Supabase's recovery link carries its tokens in
+// the URL hash fragment (#access_token=...&type=recovery), which the client SDK
+// (detectSessionInUrl: true, see services/supabase/client.js) exchanges into a real,
+// already-authenticated recovery session automatically on page load.
 export default function ResetPassword() {
-  const [searchParams] = useSearchParams();
-  // Firebase's reset link carries an exchangeable `oobCode`/`token` in the query string,
-  // consumed explicitly by confirmPasswordReset() below. Supabase's reset link instead
-  // carries its tokens in the URL *hash fragment* (#access_token=...&type=recovery), which
-  // its client SDK (detectSessionInUrl: true, see services/supabase/client.js) exchanges
-  // into a real, already-authenticated recovery session automatically on page load -- there
-  // is no discrete token for this page to read from the URL itself. See the effect below.
-  const resetToken = searchParams.get("oobCode") || searchParams.get("token");
-
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const [checkingSupabaseSession, setCheckingSupabaseSession] = useState(AUTH_BACKEND === "supabase");
-  const [hasSupabaseRecoverySession, setHasSupabaseRecoverySession] = useState(false);
+  const [checkingSession, setCheckingSession] = useState(true);
+  const [hasRecoverySession, setHasRecoverySession] = useState(false);
 
   useEffect(() => {
-    if (AUTH_BACKEND !== "supabase") return undefined;
     let active = true;
     supabase.auth.getSession().then(({ data }) => {
       if (!active) return;
-      setHasSupabaseRecoverySession(Boolean(data.session));
-      setCheckingSupabaseSession(false);
+      setHasRecoverySession(Boolean(data.session));
+      setCheckingSession(false);
     });
     // detectSessionInUrl's exchange can complete slightly after getSession()'s first read
     // on some redirects -- onAuthStateChange's PASSWORD_RECOVERY event is Supabase's own
@@ -48,16 +37,12 @@ export default function ResetPassword() {
     const { data: subscription } = supabase.auth.onAuthStateChange((event, session) => {
       if (!active) return;
       if (event === "PASSWORD_RECOVERY" || session) {
-        setHasSupabaseRecoverySession(true);
-        setCheckingSupabaseSession(false);
+        setHasRecoverySession(true);
+        setCheckingSession(false);
       }
     });
     return () => { active = false; subscription.subscription.unsubscribe(); };
   }, []);
-
-  const hasValidResetContext = AUTH_BACKEND === "supabase"
-    ? hasSupabaseRecoverySession
-    : Boolean(resetToken);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -68,7 +53,7 @@ export default function ResetPassword() {
     }
     setLoading(true);
     try {
-      await apiClient.auth.resetPassword({ resetToken, newPassword });
+      await apiClient.auth.resetPassword({ newPassword });
       window.location.href = "/login";
     } catch (err) {
       setError(err.message || "Failed to reset password");
@@ -77,7 +62,7 @@ export default function ResetPassword() {
     }
   };
 
-  if (checkingSupabaseSession) {
+  if (checkingSession) {
     return (
       <AuthLayout icon={Lock} title="Checking your reset link" subtitle="One moment...">
         <div className="flex justify-center py-4">
@@ -87,7 +72,7 @@ export default function ResetPassword() {
     );
   }
 
-  if (!hasValidResetContext) {
+  if (!hasRecoverySession) {
     return (
       <AuthLayout
         icon={AlertTriangle}

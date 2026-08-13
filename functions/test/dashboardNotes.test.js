@@ -59,45 +59,67 @@ test("createNote: rejects empty content with 400, never reaches the database", a
   assert.equal(res.statusCode, 400);
 });
 
+// createNote() calls resolveDisplayName() first (a real `.from("users")` lookup), THEN
+// inserts into `.from("dashboard_notes")` -- the mock must handle both tables distinctly,
+// or resolveDisplayName's own try/catch silently swallows a broken mock and the test would
+// pass for the wrong reason (this genuinely happened while writing this test: an earlier
+// version asserted `table === "dashboard_notes"` unconditionally and "passed" only because
+// the assertion error thrown inside the mock was caught by resolveDisplayName, not because
+// the mock actually worked).
+function mockUsersAndNotes(t, { userRow = { full_name: "Creator Name", email: "creator@example.com" }, insertCapture }) {
+  const client = getServiceRoleClient();
+  t.mock.method(client, "from", (table) => {
+    if (table === "users") {
+      return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: userRow, error: null }) }) }) };
+    }
+    if (table === "dashboard_notes") {
+      return {
+        insert: (row) => {
+          if (insertCapture) insertCapture.row = row;
+          return { select: () => ({ single: async () => ({ data: { id: "new-1", ...row }, error: null }) }) };
+        },
+      };
+    }
+    throw new Error(`Unexpected table in test mock: ${table}`);
+  });
+  return client;
+}
+
 test("createNote: sets created_by/created_by_name from the authenticated caller, defaults color, allows an optional client_id", async (t) => {
   withMockedConfig(t);
-  const client = getServiceRoleClient();
-  let insertedRow = null;
-  t.mock.method(client, "from", (table) => {
-    assert.equal(table, "dashboard_notes");
-    return {
-      insert: (row) => {
-        insertedRow = row;
-        return {
-          select: () => ({
-            single: async () => ({ data: { id: "new-1", ...row }, error: null }),
-          }),
-        };
-      },
-    };
-  });
+  const captured = {};
+  mockUsersAndNotes(t, { insertCapture: captured });
 
-  const req = { body: JSON.stringify({ content: "Call back client re: parts", client_id: "firestore-client-1" }) };
+  const req = { body: JSON.stringify({ content: "Call back client re: parts", client_id: "client-uuid-1" }) };
   const res = fakeRes();
   await createNote(req, res, CREATOR);
 
   assert.equal(res.statusCode, 201);
-  assert.equal(insertedRow.created_by, CREATOR.uid);
-  assert.equal(insertedRow.content, "Call back client re: parts");
-  assert.equal(insertedRow.color, "yellow");
-  assert.equal(insertedRow.client_id, "firestore-client-1");
+  assert.equal(captured.row.created_by, CREATOR.uid);
+  assert.equal(captured.row.created_by_name, "Creator Name");
+  assert.equal(captured.row.content, "Call back client re: parts");
+  assert.equal(captured.row.color, "yellow");
+  assert.equal(captured.row.client_id, "client-uuid-1");
 });
 
 test("createNote: rejects an unrecognized color by falling back to the default rather than storing arbitrary input", async (t) => {
   withMockedConfig(t);
-  const client = getServiceRoleClient();
-  let insertedRow = null;
-  t.mock.method(client, "from", () => ({
-    insert: (row) => { insertedRow = row; return { select: () => ({ single: async () => ({ data: row, error: null }) }) }; },
-  }));
+  const captured = {};
+  mockUsersAndNotes(t, { insertCapture: captured });
 
   await createNote({ body: JSON.stringify({ content: "hi", color: "<script>" }) }, fakeRes(), CREATOR);
-  assert.equal(insertedRow.color, "yellow");
+  assert.equal(captured.row.color, "yellow");
+});
+
+test("createNote: falls back to 'Someone' when the caller has no resolvable profile, rather than failing the whole request", async (t) => {
+  withMockedConfig(t);
+  const captured = {};
+  mockUsersAndNotes(t, { userRow: null, insertCapture: captured });
+
+  const res = fakeRes();
+  await createNote({ body: JSON.stringify({ content: "hi" }) }, res, CREATOR);
+  assert.equal(res.statusCode, 201);
+  assert.equal(captured.row.created_by_name, "Someone");
 });
 
 function mockLookupThenAction(t, existing, actionMock) {

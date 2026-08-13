@@ -1,24 +1,20 @@
-// Dashboard sticky notes (2026-08-13, explicit user request + follow-up correction:
-// "THE DATABASE MUST BE ON SUPABASE", notes must be GLOBAL not per-user, and only the
-// creator or an admin may delete a note).
+// Dashboard sticky notes. Global (every signed-in user sees every note), only the creator
+// or an admin may edit/delete a note, optionally linked to a client.
 //
-// Why this needs a Cloud Function at all, not a direct browser->Supabase call:
-// the live app authenticates via Firebase (VITE_AUTH_BACKEND=firebase), so a logged-in
-// user has no Supabase session/JWT -- Supabase RLS (auth.uid()) cannot see who they are.
-// This function verifies the caller's Firebase ID token server-side (requireUser(), same
-// as every other function in this file always has), then uses the Supabase SERVICE ROLE
-// client (trusted server-side context, bypasses RLS by design) to perform the actual
-// Postgres read/write -- enforcing "global read, creator-or-admin delete" itself in code,
-// since Postgres RLS has no way to know the caller's identity here.
+// Why this needs a Cloud Function at all, not a direct browser->Supabase call: Postgres RLS
+// (auth.uid()) can enforce "you can only touch your own row" but has no concept of "the
+// creator OR an admin" without either a security-definer function or trusting the client to
+// send its own role honestly -- easiest and most auditable to enforce it here, in one place,
+// the same way every other authorization decision in this app's Cloud Functions already
+// works. requireUser() verifies the caller's Supabase session token server-side, then this
+// module uses the Supabase SERVICE ROLE client (trusted server-side context, bypasses RLS
+// by design) to perform the actual Postgres read/write.
 //
-// `client_id` deliberately references a Firestore client document ID (a string), NOT a
-// Supabase `public.clients.id` (a uuid) -- clients are still live data in Firestore today
-// (Firebase is the active backend); Supabase's clients table is the dormant migrated copy.
-// Resolving the linked client's name/color happens client-side via the normal
-// apiClient.entities.Client.get(client_id) call against the real, live Firestore data --
-// this function only stores and returns the plain client_id string.
+// `client_id` references `public.clients.id` directly -- both tables are real, live
+// Supabase data post-cutover. Resolving the linked client's name/color happens client-side
+// via the normal apiClient.entities.Client.get(client_id) call -- this function only stores
+// and returns the plain client_id, it never needs to know what a client "looks like".
 
-const { db } = require("./firebaseAdmin");
 const { getServiceRoleClient } = require("./supabaseAuth");
 
 const TABLE = "dashboard_notes";
@@ -27,9 +23,14 @@ const VALID_COLORS = ["yellow", "blue", "green", "pink"];
 
 async function resolveDisplayName(uid) {
   try {
-    const snap = await db.collection("users").doc(uid).get();
-    const data = snap.exists ? snap.data() : null;
-    return data?.name || data?.full_name || data?.email || "Someone";
+    const supabase = getServiceRoleClient();
+    const { data, error } = await supabase
+      .from("users")
+      .select("full_name, email")
+      .eq("id", uid)
+      .maybeSingle();
+    if (error || !data) return "Someone";
+    return data.full_name || data.email || "Someone";
   } catch (error) {
     console.error("dashboardNotes: failed to resolve display name", error);
     return "Someone";

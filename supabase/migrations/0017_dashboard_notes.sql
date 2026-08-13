@@ -1,38 +1,28 @@
--- Dashboard sticky notes (2026-08-13, explicit user request, revised after user
--- correction: "THE DATABASE MUST BE ON SUPABASE", notes must be GLOBAL (visible to
--- everyone) not per-user, only the creator or an admin may edit/delete, and a note may
--- optionally be linked to a client).
+-- Dashboard sticky notes. Global (every signed-in user sees every note), only the creator
+-- or an admin may edit/delete a note, optionally linked to a client (shown as a colored
+-- label in the UI).
 --
--- `created_by` is the Firebase UID (text), not a foreign key to `public.users(id)` --
--- the live app authenticates via Firebase today, and not every Firebase-authenticated
--- user is guaranteed to have a migrated `public.users` row yet. `created_by_name` is a
--- denormalized display-name snapshot (resolved server-side at creation time via
--- functions/lib/dashboardNotes.js) so the UI never needs a second lookup to show who
--- wrote a note.
+-- `created_by`/`client_id` are real foreign keys (post-cutover, 2026-08-13 -- both
+-- `public.users` and `public.clients` are now the live source of truth in Supabase; an
+-- earlier draft of this migration had them as plain text columns referencing
+-- Firebase/Firestore IDs, back when Firebase was still the active backend).
 --
--- `client_id` is a plain text reference to a *Firestore* client document ID, deliberately
--- NOT a foreign key to `public.clients(id)` (a different uuid scheme) -- clients are still
--- live data in Firestore (Firebase is the active backend); Supabase's `clients` table is
--- the dormant migrated copy. The frontend resolves the linked client's real name/details
--- client-side via the normal apiClient.entities.Client.get(client_id) call against live
--- Firestore data, not from this table.
---
--- All real access goes through the `dashboardNotes` Cloud Function (functions/index.js),
--- which uses the service-role client and enforces "global read, creator-or-admin write/
--- delete" in code -- Postgres RLS cannot see the caller's identity here since there is no
--- Supabase Auth session for a Firebase-authenticated user. RLS is still enabled and
--- explicitly deny-all for the anon/authenticated roles as defense-in-depth (no direct
--- browser-to-Supabase path for this table is expected to ever exist while Firebase remains
--- the active auth backend); the service role bypasses RLS entirely by design, so this does
--- not block the Cloud Function.
+-- All real access goes through the `dashboardNotes` Cloud Function
+-- (functions/lib/dashboardNotes.js), which uses the service-role client and enforces
+-- "global read, creator-or-admin write/delete" in code, verifying the caller's identity
+-- from their Supabase session token via the existing requireUser()/verifySupabaseUser()
+-- auth chain. RLS is enabled with zero policies as defense-in-depth (deny-all for anon/
+-- authenticated) -- the service role bypasses RLS entirely by design, so this does not
+-- block the Cloud Function; a direct browser-to-Supabase call for this table is not
+-- expected to ever be a supported path, by design (server-side authorization only).
 
 create table public.dashboard_notes (
   id uuid primary key default gen_random_uuid(),
-  created_by text not null,
+  created_by uuid not null references public.users (id) on delete cascade,
   created_by_name text,
   content text not null,
   color text not null default 'yellow',
-  client_id text,
+  client_id uuid references public.clients (id) on delete set null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
