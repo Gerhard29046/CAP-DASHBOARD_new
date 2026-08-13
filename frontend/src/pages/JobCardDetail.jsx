@@ -24,6 +24,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
+import EmptyState from "@/components/EmptyState";
 import moment from "moment";
 
 const LINE_TYPES = ["Labour", "Part / Product", "Diagnosis", "Other"];
@@ -39,14 +42,16 @@ const STATUSES = [
 
 const ARRIVAL_CONDITIONS = ["Good", "Fair", "Damaged", "Heavy Damage"];
 
-const STATUS_STYLES = {
-  Open: "bg-blue-500/15 text-blue-400",
-  "Booked In": "bg-blue-500/15 text-blue-400",
-  "In Progress": "bg-amber-500/15 text-amber-400",
-  "Waiting for Parts": "bg-purple-500/15 text-purple-400",
-  "Ready for Collection": "bg-teal-500/15 text-teal-400",
-  Completed: "bg-emerald-500/15 text-emerald-400",
-  Collected: "bg-secondary text-muted-foreground",
+// Same semantic tokens as Jobs.jsx's StatusBadge -- one status vocabulary
+// shared across the list and detail pages.
+const STATUS_VARIANT = {
+  Open: "info",
+  "Booked In": "info",
+  "In Progress": "warning",
+  "Waiting for Parts": "neutral",
+  "Ready for Collection": "success",
+  Completed: "success",
+  Collected: "neutral",
 };
 
 function AddLineForm({ onAdd, onCancel }) {
@@ -272,23 +277,22 @@ export default function JobCardDetail() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-32">
-        <div className="w-8 h-8 border-4 border-secondary border-t-primary rounded-full animate-spin" />
+      <div className="w-full max-w-4xl mx-auto space-y-4">
+        <Skeleton className="h-4 w-20" />
+        <Skeleton className="h-40 rounded-xl" />
+        <Skeleton className="h-64 rounded-xl" />
       </div>
     );
   }
 
   if (!jobCard) {
     return (
-      <div className="flex flex-col items-center justify-center py-20 text-center">
-        <ClipboardList className="w-12 h-12 text-muted-foreground mb-3" />
-        <p className="font-medium text-foreground mb-1">Job card not found</p>
-        <Link to="/jobs">
-          <Button variant="ghost" size="sm">
-            Back to Jobs
-          </Button>
-        </Link>
-      </div>
+      <EmptyState
+        icon={ClipboardList}
+        title="Job card not found"
+        description="This job card may have been removed."
+        action={<Link to="/jobs"><Button variant="outline" size="sm">Back to Jobs</Button></Link>}
+      />
     );
   }
 
@@ -343,7 +347,7 @@ export default function JobCardDetail() {
         </div>
 
         <div id="job-card-print" ref={printRef}>
-          <div className="bg-card border border-border rounded-2xl p-5 mb-4">
+          <div className="bg-card border border-border rounded-xl p-5 mb-4">
             <div className="flex items-start justify-between gap-3 flex-wrap">
               <div>
                 <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">
@@ -369,13 +373,7 @@ export default function JobCardDetail() {
               </div>
 
               <div className="flex flex-col items-end gap-2">
-                <span
-                  className={`text-xs font-medium px-3 py-1 rounded-full ${
-                    STATUS_STYLES[jobCard.status] || "bg-secondary text-foreground"
-                  }`}
-                >
-                  {jobCard.status}
-                </span>
+                <Badge variant={STATUS_VARIANT[jobCard.status] || "neutral"}>{jobCard.status}</Badge>
 
                 <p className="text-xs text-muted-foreground">
                   {jobCard.date_received
@@ -388,7 +386,7 @@ export default function JobCardDetail() {
             <div className="mt-4 no-print space-y-3">
               {!editing && jobCard.status !== "Completed" && jobCard.status !== "Collected" && (
                 <Button
-                  className="w-full h-11 rounded-xl gap-2 bg-emerald-600 hover:bg-emerald-700 text-white"
+                  className="w-full gap-2 bg-success hover:bg-success/90 text-success-foreground"
                   disabled={updatingStatus}
                   onClick={() => handleStatusChange("Completed")}
                 >
@@ -398,9 +396,9 @@ export default function JobCardDetail() {
               )}
 
               {!editing && jobCard.status === "Completed" && (
-                <div className="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/30 rounded-xl px-4 py-2.5">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                  <p className="text-sm text-emerald-400 font-medium">
+                <div className="flex items-center gap-2 bg-success/10 border border-success/20 rounded-lg px-4 py-2.5">
+                  <CheckCircle2 className="w-4 h-4 text-success shrink-0" />
+                  <p className="text-sm text-success font-medium">
                     Completed — visible in the Accountant's Invoice Queue
                   </p>
                 </div>
@@ -409,16 +407,16 @@ export default function JobCardDetail() {
               {!editing && (
                 <div>
                   <Label className="text-xs text-muted-foreground">Update Status</Label>
-                  <div className="flex gap-2 mt-1 flex-wrap">
+                  <div className="flex gap-2 mt-1.5 flex-wrap">
                     {STATUSES.map((status) => (
                       <button
                         key={status}
                         disabled={updatingStatus || jobCard.status === status}
                         onClick={() => handleStatusChange(status)}
-                        className={`text-xs px-3 py-1.5 rounded-lg border transition-all ${
+                        className={`text-xs px-3 py-1.5 rounded-lg border transition-colors duration-150 ${
                           jobCard.status === status
-                            ? `${STATUS_STYLES[status]} border-current font-semibold shadow-sm`
-                            : "border-border text-muted-foreground hover:border-primary/50"
+                            ? "border-primary bg-primary/10 text-primary font-medium"
+                            : "border-border text-muted-foreground hover:border-primary/40 hover:text-foreground"
                         }`}
                       >
                         {status}
@@ -430,7 +428,7 @@ export default function JobCardDetail() {
             </div>
           </div>
 
-          <div className="bg-card border border-border rounded-2xl p-5 mb-4 space-y-4">
+          <div className="bg-card border border-border rounded-xl p-5 mb-4 space-y-4">
             <h2 className="font-heading font-semibold text-sm text-foreground flex items-center gap-2">
               <ClipboardList className="w-4 h-4 text-primary" />
               Job Details
@@ -565,7 +563,7 @@ export default function JobCardDetail() {
           </div>
 
           {jobCard.arrival_photos?.length > 0 && (
-            <div className="bg-card border border-border rounded-2xl p-5 mb-4">
+            <div className="bg-card border border-border rounded-xl p-5 mb-4">
               <h2 className="font-heading font-semibold text-sm text-foreground mb-3">
                 Arrival Photos
               </h2>
@@ -584,7 +582,7 @@ export default function JobCardDetail() {
             </div>
           )}
 
-          <div className="bg-card border border-border rounded-2xl p-5 mb-4">
+          <div className="bg-card border border-border rounded-xl p-5 mb-4">
             <div className="flex items-center justify-between mb-4 no-print">
               <h2 className="font-heading font-semibold text-sm text-foreground flex items-center gap-2">
                 <Wrench className="w-4 h-4 text-primary" />
