@@ -1,6 +1,32 @@
 # Known Issues
 
-## `apiClient.js`'s static Supabase import ships `@supabase/supabase-js` in the production bundle even in Firebase mode — bundle-size issue, NOT a runtime/security issue (found 2026-08-13)
+## `dashboardNotes` Cloud Function cannot be deployed — GCP billing not enabled on `capdatabasefb2` (found 2026-08-13)
+- `firebase deploy --only functions` fails identically on two separate attempts (not
+  transient) with: `Request to secretmanager.googleapis.com... had HTTP Error: 403, This
+  API method requires billing to be enabled` for `SUPABASE_SERVICE_ROLE_KEY`. Exact fix
+  link the CLI printed: `https://console.developers.google.com/billing/enable?project=
+  capdatabasefb2`.
+- **Likely the same root cause as the real 500/503s from the (now-removed) Google Calendar
+  Cloud Function that prompted its removal on 2026-08-12** — never confirmed at the time
+  (see that entry below), now strongly corroborated: a genuine billing lapse on this GCP
+  project, not a code bug.
+- **Blocks**: the sticky-notes feature entirely (its Cloud Function doesn't exist live).
+  Everything else in the 2026-08-13 full cutover is unaffected — the web app's core
+  auth/data path doesn't depend on this function.
+- **Fix**: user re-enables billing at the link above, then re-runs `firebase deploy --only
+  functions` (or asks Queen Bee to retry — Queen Bee cannot enable billing itself).
+
+## `supabase/migrations/0017_dashboard_notes.sql` still not applied (confirmed live 2026-08-13)
+- Confirmed via a direct read-only query immediately before the full cutover: `public.
+  dashboard_notes` does not exist yet. Needs the SQL Editor, same as every other migration.
+  Blocks sticky notes alongside the billing issue above — both need to be resolved before
+  this feature works.
+
+## `apiClient.js`'s static Supabase import ships `@supabase/supabase-js` in the production bundle even in Firebase mode — RESOLVED, moot (Firebase removed entirely 2026-08-13)
+- This entire class of concern (Supabase code shipping even when Firebase was the active
+  backend) no longer applies — there is no Firebase branch left to accidentally ship
+  alongside. Left below as historical record of a real, once-relevant finding, not
+  something to act on.
 - A past session's memory claimed a real production build with `VITE_AUTH_BACKEND=firebase`
   showed "zero Supabase-related code" in the output bundle via `grep`. Re-checked directly
   during this session's UI redesign work (unrelated change, found incidentally while

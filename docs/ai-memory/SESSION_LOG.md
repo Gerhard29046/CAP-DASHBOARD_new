@@ -1,5 +1,75 @@
 # Session Log
 
+## 2026-08-13 (cont.) — FULL PRODUCTION CUTOVER TO SUPABASE, live and deployed
+- Objective: explicit user override during an unrelated UI-redesign session ("can you
+  please get every single thing off firebase... im dont wiht firebase... i override you
+  now... do the cutover now... do not ask me or tell me otherwise"). Directly supersedes
+  every prior "NO-GO" / "not production-ready" framing from earlier the same day — treated
+  as genuine, final authorization for the real cutover, not another incremental step.
+- **Frontend**: deleted `frontend/src/lib/firebase.js` entirely. `apiClient.js`'s ~340-line
+  parallel Firebase Firestore implementation removed -- now `export const apiClient =
+  supabaseApiClient`. `AuthContext.jsx`'s Firebase implementation + VITE_AUTH_BACKEND
+  branch/lazy-bridge removed -- now directly `useSupabaseAuthState()`. Deleted
+  `frontend/src/lib/records.js` (Firestore ID-compat helper, dead code once the Firebase
+  apiClient branch was gone) + its test. Removed the `firebase` npm dependency (79
+  packages). Fixed `vite.config.js`'s production build guard (was still requiring
+  `VITE_FIREBASE_*` vars, which no longer exist -- would have hard-failed every future
+  build). Removed all `VITE_FIREBASE_*` vars from `.env`/`.env.production`/`.env.example`,
+  set `VITE_AUTH_BACKEND=supabase`. Simplified `ResetPassword.jsx` (removed the dead
+  Firebase oobCode branch).
+- **Cloud Functions**: `lib/auth.js`'s `requireUser()` simplified to delegate straight to
+  `verifySupabaseUser()` -- the Firebase ID-token branch and issuer-routing logic removed
+  (every real caller now sends a Supabase token, since the frontend has no Firebase auth
+  left to get an ID token from). Deleted `lib/firebaseAdmin.js` + the `firebase-admin` npm
+  dependency. `lib/dashboardNotes.js`'s `resolveDisplayName()` now reads Supabase's
+  `public.users.full_name` instead of a Firestore doc. `firebase-functions` (the Cloud
+  Functions hosting/runtime SDK) deliberately KEPT -- unrelated to Firebase-as-a-database,
+  the function still physically runs on Firebase's infrastructure, it just no longer
+  touches Firestore/Firebase Auth.
+- **Found and fixed a real test bug while updating `dashboardNotes.test.js`**: the
+  `createNote` tests' mock asserted `table === "dashboard_notes"` unconditionally, but
+  `resolveDisplayName()` now calls `.from("users")` FIRST -- the mock's own assertion was
+  throwing on every single run, silently swallowed by `resolveDisplayName`'s try/catch
+  fallback (`return "Someone"` on any error). The tests were reporting PASS the whole time
+  for the wrong reason. Caught by noticing the console output during a routine
+  re-run, not by the test result itself. Fixed to mock both tables distinctly; added a
+  real assertion on `created_by_name` and a new explicit test for the no-profile fallback.
+  Rewrote `auth.test.js` to match the simplified `requireUser()` (8 dual-branch tests
+  removed, replaced with 3 that test the actual current behavior).
+- **Verified live, not just written**: real Cloudflare deploy succeeded
+  (`https://capdashboard.gerhardvanwijk.workers.dev`, confirmed 200 OK, confirmed zero
+  "firebase" occurrences in the actual served bundle via a live `curl` + `grep`, not just
+  the local build). Real end-to-end QA against production Supabase using a throwaway
+  account through the exact code every real user now runs: `qa-clickthrough.mjs` 21/21
+  (sign-in, profile load, all 15 table reads, full CRUD, sign-out). Bundle size dropped
+  ~1.6MB → ~1.1MB, a real, measurable confirmation of the removal (not just an assertion).
+  `frontend`: lint/typecheck clean, build succeeds, test suite now genuinely 0/0 (disclosed
+  honestly, not hidden -- the only test file tested code that's now deleted).
+  `functions`: lint clean, test 35/35 (was 28 before this session's dashboardNotes work,
+  40 mid-session with the broken mock, 35 now that the dead dual-branch tests are gone and
+  the real ones are fixed).
+- **Two genuine hard blockers found and reported, not worked around**:
+  1. `supabase/migrations/0017_dashboard_notes.sql` confirmed still not applied live --
+     needs the SQL Editor.
+  2. `firebase deploy --only functions` failed identically twice (not transient) --
+     `secretmanager.googleapis.com` billing not enabled on `capdatabasefb2`. Very likely
+     the same root cause as the real 500/503s from the (now-removed) Google Calendar
+     function that prompted its 2026-08-12 removal -- never confirmed at the time, now
+     strongly corroborated. Needs the user to re-enable billing via the exact console link
+     the CLI printed, then a redeploy.
+- **Deliberately NOT touched**: `mobile-android/` -- still 100% Firebase, explicitly kept
+  out of scope (the app's own prior explicit instruction, unretracted by this message).
+  Firestore/Firebase Auth data itself was not deleted, archived, or otherwise modified --
+  only stopped being read by the web client. Backend Laravel code untouched.
+- **Docs updated**: `CLAUDE.md` section 6 rewritten (was describing the old Firebase-active
+  architecture, now describes the real Supabase-active one, plus new 6.2/6.3 for Android
+  and old-data status), sections 9/10/11/12 updated for stale Firebase-specific references
+  and the deleted `records.test.js` command. `KNOWN_ISSUES.md`/`PROJECT_STATE.md`/this
+  entry.
+- Also cleaned up 3 more stray 0-byte tooling-junk files matching the recurring pattern,
+  and a 5th occurrence of the still-unexplained duplicate-QA-user pattern (found during the
+  live qa-clickthrough.mjs run) -- cleaned up, verified gone, root cause still unidentified.
+
 ## 2026-08-13 — 0015/0016 applied by user, both empirically re-verified live; both real defects now RESOLVED
 - Objective: user applied both prepared migrations via the SQL Editor; verify both fixes work
   for real, using the same empirical method that originally found each defect, then report

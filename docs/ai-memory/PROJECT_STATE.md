@@ -1,18 +1,34 @@
 # Project State
-_Last verified: 2026-08-13 (0015/0016 applied by user + empirically re-verified live). Both
-real defects found during the 2026-08-12 pre-cutover readiness pass are now **RESOLVED**:
-realtime (`clients`/`machines` now genuinely deliver `postgres_changes` events, proven via a
-real subscribe+write test, not just publication membership) and generic storage bucket RLS
-(`documents`/`photos`/`attachments` now owner-or-admin, proven via a real cross-user
-denied-access test with ground-truth verification, not just absence of an error). See
-`KNOWN_ISSUES.md` for full verification detail and `SESSION_LOG.md`'s 2026-08-13 entry for
-the narrative. The `permissions`/`role_permissions` migration (`0014`) remains applied and
-verified (76/124 rows). **Still explicitly untested, not claimed as done**: real browser QA
-(no browser automation tool available in this environment, confirmed via a direct capability
-check) and real email-inbox password-reset delivery (throwaway test addresses are rejected by
-Supabase's real send path; needs a real receivable address). **Still nothing live**:
-`VITE_AUTH_BACKEND` remains `firebase` in every committed/production config; Firebase is
-still the sole production backend. Earlier work follows below.
+_Last verified: 2026-08-13. **THE WEB CLIENT HAS FULLY CUT OVER TO SUPABASE, LIVE IN
+PRODUCTION.** Explicit user override ("get every single thing off firebase... this is not
+live data... i override you now... do the cutover now"). `VITE_AUTH_BACKEND=supabase` is
+the only mode — `frontend/src/lib/firebase.js` and the entire parallel Firebase
+implementation in `apiClient.js`/`AuthContext.jsx` were deleted, not just made dormant. A
+real production build was deployed to Cloudflare (`https://capdashboard.gerhardvanwijk.
+workers.dev`, confirmed 200 OK, confirmed zero "firebase" occurrences in the live bundle)
+and verified end-to-end with a real throwaway-account login + full CRUD cycle against
+production Supabase (21/21 checks). Cloud Functions' `lib/auth.js` also now verifies
+Supabase tokens exclusively (`lib/firebaseAdmin.js` deleted). **Android is deliberately
+untouched** — still 100% Firebase, out of scope for this cutover (the app's own prior
+explicit instruction). **Old Firestore/Firebase Auth data was NOT deleted** — just no
+longer read by the web client; that data/project's fate is a separate decision for the
+user. See `SESSION_LOG.md`'s 2026-08-13 (full cutover) entry for the complete narrative,
+`KNOWN_ISSUES.md` for the two things still blocking 100% completeness (below).
+
+**Two real blockers remain, both requiring the user directly:**
+1. `supabase/migrations/0017_dashboard_notes.sql` still needs the SQL Editor — confirmed
+   live the table doesn't exist yet, so sticky notes will 404/error until applied.
+2. The `dashboardNotes` Cloud Function deploy failed **twice, identically, not
+   transiently**: `Secret Manager... requires billing to be enabled` on the
+   `capdatabasefb2` GCP project. This is very likely the same billing lapse that caused
+   the real 500/503s from the (now-removed) Google Calendar function that prompted its
+   removal on 2026-08-12 — never confirmed at the time, now strongly corroborated. The
+   user needs to re-enable billing at the exact console link the CLI printed, then re-run
+   `firebase deploy --only functions` themselves (or ask Queen Bee to retry once billing
+   is confirmed active).
+
+Earlier work (0015/0016 realtime/storage-RLS fixes, permissions migration, pre-cutover
+readiness investigation) follows below, all still accurate/applied.
 
 **Google Calendar sync was removed entirely this session** (user
 decision: cost) — see the dated entry below and `docs/ai-memory/DECISIONS.md`. Web UI

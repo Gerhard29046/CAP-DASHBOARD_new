@@ -265,85 +265,58 @@ Use for:
 This repository contains three applications plus a mostly superseded API:
 
 - `frontend/`: React/Vite web client, deployed to Cloudflare through `wrangler.jsonc`, project name `capdashboard`.
-- `mobile-android/`: Native Kotlin/Compose client using MVVM, Hilt, Room, and WorkManager.
-- `backend/`: Laravel 13 API using MySQL, Sanctum, models, controllers, middleware, and tests.
-- `functions/`: Firebase Cloud Functions, including Google Calendar integration.
+- `mobile-android/`: Native Kotlin/Compose client using MVVM, Hilt, Room, and WorkManager. **Still on Firebase** — see 6.2.
+- `backend/`: Laravel 13 API using MySQL, Sanctum, models, controllers, middleware, and tests. Superseded by Supabase for the web client (see below); not used by the web/Android clients for normal CRUD.
+- `functions/`: Firebase Cloud Functions (2nd gen) — hosting/runtime only now. `dashboardNotes` is the only export; it reads/writes Supabase (not Firestore) via a service-role client, and exists only because Postgres RLS alone can't express "creator or admin" authorization for that one feature. No Firebase Admin SDK, Firestore, or Firebase Auth usage remains here.
 - `docs/`: API, deployment, setup, and implementation documentation.
 
-## 6.1 Firebase is the active client data layer
+## 6.1 The web client (`frontend/`) is fully on Supabase — Firebase was removed entirely 2026-08-13
 
-Both `frontend` and `mobile-android` communicate directly with Firebase.
+**Full cutover, explicit user instruction** ("get every single thing off firebase... do the cutover now"). `VITE_AUTH_BACKEND=supabase` is the only mode — the env var still exists structurally but there is no Firebase branch left to fall back to; `frontend/src/lib/firebase.js` was deleted, the `firebase` npm package was removed, and a real production build/deploy was verified to contain zero Firebase code.
 
 ### Authentication
 
-Authentication uses Firebase Auth:
+Authentication uses Supabase Auth exclusively:
 
-- `frontend/src/lib/firebase.js`
-- `frontend/src/lib/AuthContext.jsx`
+- `frontend/src/services/supabase/client.js`
+- `frontend/src/services/supabase/SupabaseAuthContext.jsx` (the actual state logic, `useSupabaseAuthState()`)
+- `frontend/src/lib/AuthContext.jsx` (the public `AuthProvider`/`useAuth()` entry point every page imports — thin now, just wires the context above)
 
-Do not assume Laravel Sanctum is the active client authentication layer.
+### Data CRUD
 
-### Firestore CRUD
-
-Client, machine, service-record, job-card, user, knowledge-base, permission, and related CRUD operations use Firestore directly.
-
-The web abstraction is centered around:
+Client, machine, service-record, job-card, user, knowledge-base, permission, and related CRUD operations use Postgres (via Supabase) directly, through:
 
 ```text
-frontend/src/api/apiClient.js
+frontend/src/api/apiClient.js   →  export const apiClient = supabaseApiClient
+frontend/src/api/supabaseApiClient.js
+frontend/src/services/supabase/{database,entities,storage,auth}.js
 ```
 
-`apiClient.request(path)` maps REST-shaped paths onto Firestore collection operations through the Firebase SDK.
+`apiClient.request(path)` maps REST-shaped paths onto Postgres table operations via `@supabase/supabase-js`. There is no Laravel HTTP call and no Firestore call for the normal CRUD resources the clients use.
 
-There is no Laravel HTTP call for the normal CRUD resources currently used by the clients.
+### Database
 
-### Firestore database name
-
-The active Firestore database is explicitly named:
-
-```text
-capdashboard
-```
-
-The frontend uses:
-
-```javascript
-getFirestore(firebaseApp, "capdashboard")
-```
-
-Any new Firestore SDK initialization must use the same database unless an intentional migration is approved.
+The Supabase project is `cjvrquipmnoihksijful` (`CAPDATABASE`). Schema/RLS lives in `supabase/migrations/*.sql`, applied via the SQL Editor (no automated apply pipeline exists — Queen Bee cannot run DDL directly in this environment, only prepare migration files).
 
 ### File uploads
 
-File uploads go directly to Firebase Storage.
-
-The web client performs client-side image downscaling and WebP conversion before upload.
-
-Relevant abstraction:
-
-```text
-apiClient.integrations.Core.UploadFile
-```
+File uploads go directly to Supabase Storage (`frontend/src/services/supabase/storage.js`), via signed URLs (buckets are private). Relevant abstraction: `apiClient.integrations.Core.UploadFile`.
 
 ### Authorization
 
-Authorization for active client data is enforced by:
+Authorization for client data is enforced by Postgres Row Level Security policies in `supabase/migrations/*.sql` (see `0002_rls_policies.sql` for the core policy set, `0016` for storage bucket policies). Policies check the signed-in user's own `public.users` row and its `role`/`effective_permissions`.
 
-```text
-firestore.rules
-```
+One exception: `dashboard_notes` (sticky notes) has RLS enabled with **zero policies** (deny-all for anon/authenticated) — all real access goes through the `dashboardNotes` Cloud Function using the service-role client, which enforces "global read, creator-or-admin write/delete" in code, since Postgres RLS alone can't express that authorization rule.
 
-Rules inspect the signed-in user's own:
+Laravel middleware protects Laravel routes only. It does not protect Supabase client operations.
 
-```text
-users/{uid}
-```
+## 6.2 The Android client (`mobile-android/`) remains on Firebase — deliberately, not yet migrated
 
-document and its role/effective permissions.
+Android was explicitly kept out of scope during the web cutover (both the original redesign brief and the cutover instruction itself only addressed the web app). Android still uses Firebase Auth + Firestore directly, unchanged. **Do not assume web's cutover applies to Android.** Firebase project/data for Android has not been touched, deleted, or migrated.
 
-Laravel middleware protects Laravel routes only. It does not protect direct Firestore client operations.
+## 6.3 Old Firebase data — not deleted, just unused by the web client now
 
-A change to Laravel authorization alone does not change active client behavior.
+Firestore (project `capdatabasefb2`) and Firebase Auth still physically contain the original data (it was never deleted, only superseded as the web client's live data source). Whether to archive, keep, or delete that data/project (and its billing) is the user's decision, not made as part of the cutover — cutting over the web client's code path does not delete anything.
 
 ---
 
@@ -427,25 +400,29 @@ Relevant structures include:
 - `user_permissions`;
 - related models and middleware.
 
-## Firestore
+## Supabase (web client, live)
 
 Relevant structures include:
 
-- `permissions`;
-- `role_permissions`;
-- `users/{uid}.effective_permissions`.
+- `public.permissions`;
+- `public.role_permissions`;
+- `public.users.effective_permissions`.
 
-Both `firestore.rules` and the clients read Firebase permission data.
+Postgres RLS policies (`supabase/migrations/*.sql`) and the web client both read this data.
 
-These models must be kept consistent deliberately.
+## Firestore (Android client only)
+
+Android still reads Firebase permission data (`firestore.rules`, `users/{uid}.effective_permissions`) — unrelated to and not synchronized with the Supabase model above since the web/Android clients no longer share a backend.
+
+These models must be kept consistent deliberately within each client's own backend.
 
 When modifying permissions:
 
 1. identify the authoritative behavior expected by active clients;
-2. inspect Firestore rules;
+2. inspect Postgres RLS policies (web) and Firestore rules (Android) — they are two independent systems now, not one;
 3. inspect web permission checks;
 4. inspect Android permission checks;
-5. inspect Firebase functions;
+5. inspect Cloud Functions (`dashboardNotes` enforces its own creator-or-admin logic in code, not RLS);
 6. inspect Laravel duplication;
 7. update tests for all affected active layers;
 8. document any intentionally deferred Laravel parity.
@@ -465,7 +442,6 @@ npm run lint
 npm run lint:fix
 npm run typecheck
 npm test
-node --test tests/records.test.js
 npm run test:e2e:live
 ```
 
@@ -474,7 +450,8 @@ Notes:
 - `npm run typecheck` runs `tsc -p ./jsconfig.json`.
 - This is a JavaScript/JSDoc project, not a TypeScript migration.
 - Do not convert `.js` or `.jsx` files to `.ts` or `.tsx` incidentally.
-- `npm run test:e2e:live` uses live Firebase, not an emulator. Run it only deliberately and explain the risk first.
+- `npm run test:e2e:live` uses live Supabase, not an emulator. Run it only deliberately and explain the risk first.
+- The frontend has **zero automated tests** as of the 2026-08-13 Supabase cutover (the only test file exercised a Firebase-ID-compat helper that was deleted along with the rest of the Firebase code). This is a real, disclosed gap, not an oversight to silently work around — flag it rather than assuming coverage exists.
 
 ## Backend — `backend/`
 
@@ -578,15 +555,19 @@ Important navigation behavior requires Compose/UI tests when practical.
 - Never run destructive database commands without explicit approval.
 - Do not assume Laravel is the active data path without tracing the client.
 
-## Firebase
+## Supabase (web client)
 
-- Use the named Firestore database `capdashboard`.
-- Treat `firestore.rules` as production authorization code.
-- Keep privileged secrets in Cloud Functions or trusted server environments.
+- Treat `supabase/migrations/*.sql` (RLS policies) as production authorization code.
+- Keep privileged secrets (service_role key) in Cloud Functions or trusted server environments only — never in frontend code.
+- Do not apply migrations (SQL Editor) without explicit approval.
+- Review RLS policies whenever adding a new table or query pattern.
+
+## Firebase (Android client + Cloud Functions hosting only)
+
+- `firestore.rules` still governs Android's direct Firestore access — treat it as production authorization code for Android.
+- `functions/` no longer touches Firestore or Firebase Auth (see CLAUDE.md section 6.1) — it exists purely as hosting/runtime for `dashboardNotes`, which reads/writes Supabase.
 - Never expose OAuth secrets in frontend or Android code.
-- Validate callable-function authentication and permission checks.
-- Review indexes when adding new compound queries.
-- Do not deploy rules, functions, hosting, or indexes without explicit approval.
+- Do not deploy Cloud Functions, Firestore rules, hosting, or indexes without explicit approval.
 
 ---
 
