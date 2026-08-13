@@ -2,7 +2,7 @@ CAP DASHBOARD — LATEST PATCH NOTES
 ====================================
 Last updated: 2026-08-13
 Deployed to: https://capdashboard.gerhardvanwijk.workers.dev
-Pushed to GitHub: origin/main (commit e43daae)
+Pushed to GitHub: origin/main (commit a1e4016)
 
 This file is updated after each work session so you can see what changed,
 what was actually tested (not just written), and what still needs your
@@ -107,15 +107,37 @@ WHAT WAS TESTED (not just written)
   in the real database.
 
 ====================================
+UPDATE — ANDROID REDESIGN (same day, later)
+====================================
+- The Android app has now been visually redesigned to match the web app's
+  look and feel — same dark navy/blue color scheme, same card style,
+  status badges, spacing, and typography as the website, while staying a
+  proper mobile app (bottom navigation, touch-friendly buttons, mobile-
+  style forms and dialogs) rather than a copy-paste of the web layout.
+- This was verified with a real rebuild before being committed: the app
+  compiled successfully, all automated checks still pass, and no new
+  warnings were introduced compared to before the redesign.
+- The Android app's connection to Firebase was NOT touched — it still logs
+  in and reads/writes data exactly as before, only the visual appearance
+  changed.
+- Nothing was changed in how the app talks to the database or handles
+  login — this was a look-and-feel update only.
+
+====================================
 NOT YET DONE / IN PROGRESS
 ====================================
-- Android app: confirmed it still builds correctly and hasn't been broken
-  by any web changes. A visual redesign to match the new web look is
-  currently in progress (not yet finished or committed).
-- A full page-by-page mobile-phone-screen review is partially done — the
-  problems found so far have been fixed, but not every single page has
-  been individually checked yet.
-- No changes have been made to the actual Android app's connection to
-  Firebase — it remains exactly as it was.
+- A full page-by-page mobile-phone-screen review of the WEBSITE is done —
+  every page you listed has been checked and any real problems found were
+  fixed. A small number of borderline/cosmetic items were noted but not
+  changed since they weren't clear-cut problems.
+- The Android redesign covered the main screens in one pass. If anything
+  looks off on a specific screen once you actually use it on a phone,
+  flag it and it can be refined further.
+- Responsive testing throughout this whole session has been done by
+  reading the code carefully, not by physically viewing pages in a real
+  browser or on a real phone (no browser/device testing tool is available
+  in this environment). Everything reported as "fixed" was reasoned
+  through and, where possible, tested against the real database — but a
+  final visual check by you on an actual phone/browser is still worthwhile.
 
 ====================================
