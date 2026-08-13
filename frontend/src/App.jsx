@@ -33,6 +33,7 @@ import KnowledgeBase from '@/pages/KnowledgeBase';
 import KnowledgeMachineForm from '@/pages/KnowledgeMachineForm';
 import KnowledgeMachineDetail from '@/pages/KnowledgeMachineDetail';
 import CalendarPage from '@/pages/CalendarPage';
+import Settings from '@/pages/Settings';
 
 
 const AuthenticatedApp = () => {
@@ -81,6 +82,7 @@ const AuthenticatedApp = () => {
           <Route path="/knowledge-base/new" element={<RoleGuard allowedRoles={["admin"]}><KnowledgeMachineForm /></RoleGuard>} />
           <Route path="/knowledge-base/:id" element={<KnowledgeMachineDetail />} />
           <Route path="/knowledge-base/:id/edit" element={<RoleGuard allowedRoles={["admin"]}><KnowledgeMachineForm /></RoleGuard>} />
+          <Route path="/settings" element={<RoleGuard requiredPermission="settings.access"><Settings /></RoleGuard>} />
         </Route>
       </Route>
 

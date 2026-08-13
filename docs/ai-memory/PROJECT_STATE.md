@@ -1,5 +1,14 @@
 # Project State
-_Last verified: 2026-08-13. **THE WEB CLIENT HAS FULLY CUT OVER TO SUPABASE, LIVE IN
+_Last verified: 2026-08-13 (UX redesign resumed after the Supabase cutover). Two real
+functional bugs found+fixed this pass (Job Card line items not displaying;
+Dashboard-linked Notes not showing on the client's own page — see SESSION_LOG.md for full
+root-cause detail), plus new Settings/Products & Services/Job Card configuration/Customer
+Import features built. **New migrations `0018`/`0019` are NOT yet applied** — the new
+Settings area, catalogue, and import history will not work live until the user runs them
+via the SQL Editor. Everything in this paragraph is code-level verified (lint/typecheck/
+test/build all clean) but has NOT had live/scripted QA yet — see KNOWN_ISSUES.md.
+
+_Last verified before that: 2026-08-13. **THE WEB CLIENT HAS FULLY CUT OVER TO SUPABASE, LIVE IN
 PRODUCTION.** Explicit user override ("get every single thing off firebase... this is not
 live data... i override you now... do the cutover now"). `VITE_AUTH_BACKEND=supabase` is
 the only mode — `frontend/src/lib/firebase.js` and the entire parallel Firebase

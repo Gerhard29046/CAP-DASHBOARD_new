@@ -4,3 +4,4 @@
 - [Commit uncommitted work promptly](feedback_commit_uncommitted_work_promptly.md) — proactively suggest committing verified units of migration work mid-session, don't wait for end-of-day.
 - [Google Calendar 401 bug with valid Supabase session](project_supabase_calendar_401_bug.md) — real deployed function rejects a genuinely valid token, root cause unconfirmed, not fixed, blocks Calendar QA under Supabase.
 - [No browser tool available — use scripted QA instead](feedback_qa_scripted_verification.md) — this project's session has no working browser automation; use throwaway-test-user + direct Supabase-call scripts (qa-test-user.mjs / qa-clickthrough.mjs) instead, and always do a full residual-data sweep after.
+- [Agent tool doesn't resume by name](feedback_agent_tool_does_not_resume_by_name.md) — re-invoking with the same `name` spawns a fresh agent, not a resume; check build/test artifacts on disk directly instead of re-spawning to "check in."

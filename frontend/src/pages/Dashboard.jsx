@@ -11,10 +11,10 @@ import LogServiceModal from "@/components/LogServiceModal";
 import StickyNotes from "@/components/StickyNotes";
 import moment from "moment";
 
-function greeting() {
-  const hour = moment().hour();
-  if (hour < 12) return "Good morning";
-  if (hour < 18) return "Good afternoon";
+function greeting(now) {
+  const hour = now.hour();
+  if (hour >= 5 && hour < 12) return "Good morning";
+  if (hour >= 12 && hour < 18) return "Good afternoon";
   return "Good evening";
 }
 
@@ -25,6 +25,12 @@ export default function Dashboard() {
   const [recentClients, setRecentClients] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showLogService, setShowLogService] = useState(false);
+  const [now, setNow] = useState(() => moment());
+
+  useEffect(() => {
+    const interval = setInterval(() => setNow(moment()), 60 * 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   const loadData = async () => {
     try {
@@ -68,6 +74,8 @@ export default function Dashboard() {
   useEffect(() => { loadData(); }, []);
 
   const firstName = (user?.name || user?.full_name || user?.email || "").split(/[\s@]/)[0];
+  const greetingWord = greeting(now);
+  const formattedDateTime = now.format("dddd, D MMMM YYYY") + " · " + now.format("HH:mm");
 
   if (loading) {
     return (
@@ -100,8 +108,9 @@ export default function Dashboard() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8 animate-fade-in">
         <div>
           <h1 className="text-2xl md:text-3xl font-heading font-bold text-foreground">
-            {greeting()}{firstName ? `, ${firstName}` : ""}
+            {greetingWord}{firstName ? `, ${firstName}` : ""}
           </h1>
+          <p className="text-xs text-muted-foreground mt-1">{formattedDateTime}</p>
           <p className="text-sm text-muted-foreground mt-1">
             {upcoming.length > 0
               ? `${upcoming.length} service${upcoming.length === 1 ? "" : "s"} due in the next 30 days.`

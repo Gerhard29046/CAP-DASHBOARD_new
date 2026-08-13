@@ -15,6 +15,7 @@ import {
   Receipt,
   Library,
   CalendarDays,
+  Settings as SettingsIcon,
 } from "lucide-react";
 import { useAuth } from "@/lib/AuthContext";
 import { apiClient } from "@/api/apiClient";
@@ -35,6 +36,7 @@ const ALL_NAV_ITEMS = [
   { label: "Machine Knowledge Base", path: "/knowledge-base", icon: Library, permission: "knowledge_base.view" },
   { label: "Invoice Queue", path: "/invoice-queue", icon: Receipt, permission: "invoices.queue.view", badgeKey: "pendingInvoices" },
   { label: "User Management", path: "/admin/users", icon: ShieldCheck, permission: "users.view" },
+  { label: "Settings", path: "/settings", icon: SettingsIcon, permission: "settings.access" },
 ];
 
 export default function AppLayout() {

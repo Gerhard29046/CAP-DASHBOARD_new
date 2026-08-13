@@ -54,20 +54,61 @@ const STATUS_VARIANT = {
   Collected: "neutral",
 };
 
-function AddLineForm({ onAdd, onCancel }) {
+function AddLineForm({ onAdd, onCancel, catalog = [], settings, initial = null }) {
   const [form, setForm] = useState({
-    line_type: "Labour",
-    description: "",
-    quantity: 1,
-    unit_price: "",
+    line_type: initial?.line_type || "Labour",
+    description: initial?.description || "",
+    quantity: initial?.quantity ?? (settings?.default_line_quantity || 1),
+    unit_price: initial?.unit_price ?? "",
+    catalog_item_id: initial?.catalog_item_id || null,
   });
 
   const set = (key, value) => {
     setForm((prev) => ({ ...prev, [key]: value }));
   };
 
+  // Catalog picker respects Job Card settings (allow_products/allow_services) -- see
+  // Settings > Job Cards. Selecting an item pre-fills type/description/price, but every
+  // field stays editable -- selecting from the catalogue is a convenience, not a lock.
+  const selectableCatalog = catalog.filter((item) => item.is_active && (
+    (item.type === "product" && settings?.allow_products !== false) ||
+    (item.type === "service" && settings?.allow_services !== false)
+  ));
+
+  const applyCatalogItem = (itemId) => {
+    if (itemId === "__custom__") { set("catalog_item_id", null); return; }
+    const item = catalog.find((c) => c.id === itemId);
+    if (!item) return;
+    setForm((prev) => ({
+      ...prev,
+      catalog_item_id: item.id,
+      line_type: item.type === "service" ? "Labour" : "Part / Product",
+      description: item.name + (item.description ? ` — ${item.description}` : ""),
+      unit_price: String(item.unit_price ?? ""),
+    }));
+  };
+
   return (
     <div className="border border-border rounded-xl p-4 space-y-3 bg-secondary/30">
+      {selectableCatalog.length > 0 && (
+        <div>
+          <Label className="text-xs">From Catalogue (optional)</Label>
+          <Select value={form.catalog_item_id || "__custom__"} onValueChange={applyCatalogItem}>
+            <SelectTrigger className="mt-1 h-10 rounded-lg text-sm">
+              <SelectValue placeholder="Choose a product/service, or enter custom below" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__custom__">Custom (type manually)</SelectItem>
+              {selectableCatalog.map((item) => (
+                <SelectItem key={item.id} value={item.id}>
+                  {item.name} — R{Number(item.unit_price).toFixed(2)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+
       <div className="grid grid-cols-2 gap-3">
         <div className="col-span-2">
           <Label className="text-xs">Type</Label>
@@ -76,7 +117,9 @@ function AddLineForm({ onAdd, onCancel }) {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {LINE_TYPES.map((type) => (
+              {/* Settings > Job Cards ("service types") -- falls back to the original
+                  hardcoded list until 0021 is applied or the admin hasn't customized it. */}
+              {(settings?.line_types || LINE_TYPES).map((type) => (
                 <SelectItem key={type} value={type}>
                   {type}
                 </SelectItem>
@@ -128,7 +171,7 @@ function AddLineForm({ onAdd, onCancel }) {
           disabled={!form.description.trim()}
           onClick={() => onAdd(form)}
         >
-          Add Line
+          {initial ? "Save Changes" : "Add Line"}
         </Button>
       </div>
     </div>
@@ -144,6 +187,8 @@ export default function JobCardDetail() {
   const [lines, setLines] = useState([]);
   const [clients, setClients] = useState([]);
   const [machines, setMachines] = useState([]);
+  const [catalog, setCatalog] = useState([]);
+  const [jobCardSettings, setJobCardSettings] = useState(null);
 
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
@@ -151,22 +196,41 @@ export default function JobCardDetail() {
   const [editForm, setEditForm] = useState({});
 
   const [showAddLine, setShowAddLine] = useState(false);
+  const [editingLineId, setEditingLineId] = useState(null);
   const [savingLine, setSavingLine] = useState(false);
   const [updatingStatus, setUpdatingStatus] = useState(false);
 
   const load = async () => {
     setLoading(true);
 
-    const [job, clientList, machineList] = await Promise.all([
+    // NOTE (bug fix, 2026-08-13): apiClient.entities.JobCard.get() only ever returns the
+    // bare job_cards row -- it does NOT join line items, client, or machine (Supabase has
+    // no auto-embedding here the way the old Firebase/base44 SDK layer implicitly did).
+    // Previously this page read `job.lines || job.job_card_lines`, which was always
+    // undefined, so newly-added/removed line items (and the client/machine header info)
+    // never actually rendered even though the underlying job_card_lines write succeeded.
+    // Fetch job_card_lines explicitly and resolve client/machine from the already-loaded
+    // lists instead of assuming the API embeds them.
+    const [job, clientList, machineList, lineList, catalogList, settings] = await Promise.all([
       apiClient.entities.JobCard.get(id),
       apiClient.entities.Client.list(),
       apiClient.entities.Machine.list(),
+      apiClient.entities.JobCardLine.filter({ job_card_id: id }),
+      apiClient.entities.ProductService.list(),
+      apiClient.entities.JobCardSettings.get().catch((e) => { console.error("Failed to load Job Card settings:", e); return null; }),
     ]);
 
-    setJobCard(job);
-    setLines(job.lines || job.job_card_lines || []);
+    const machine = (machineList || []).find((m) => m.id === job.machine_id) || null;
+    const client = (clientList || []).find((c) => c.id === job.client_id)
+      || (machine ? (clientList || []).find((c) => c.id === machine.client_id) : null)
+      || null;
+
+    setJobCard({ ...job, machine, client });
+    setLines(lineList || []);
     setClients(clientList || []);
     setMachines(machineList || []);
+    setCatalog(catalogList || []);
+    setJobCardSettings(settings);
     setLoading(false);
   };
 
@@ -184,6 +248,7 @@ export default function JobCardDetail() {
       date_completed: jobCard.date_completed || "",
       fault_description: jobCard.fault_description || "",
       technician_name: jobCard.technician_name || "",
+      machine_type: jobCard.machine_type || "",
       accessories_received: jobCard.accessories_received || "",
       arrival_condition: jobCard.arrival_condition || "",
       arrival_condition_notes: jobCard.arrival_condition_notes || "",
@@ -240,11 +305,35 @@ export default function JobCardDetail() {
       quantity,
       unit_price: unitPrice,
       line_total: quantity * unitPrice,
+      catalog_item_id: form.catalog_item_id || null,
     });
 
     setSavingLine(false);
     setShowAddLine(false);
     load();
+  };
+
+  const handleEditLine = async (form) => {
+    setSavingLine(true);
+    const quantity = Number(form.quantity) || 1;
+    const unitPrice = Number(form.unit_price) || 0;
+    try {
+      await apiClient.entities.JobCardLine.update(editingLineId, {
+        line_type: form.line_type,
+        description: form.description,
+        quantity,
+        unit_price: unitPrice,
+        line_total: quantity * unitPrice,
+        catalog_item_id: form.catalog_item_id || null,
+      });
+      setEditingLineId(null);
+      await load();
+    } catch (error) {
+      console.error("Failed to save line item changes:", error);
+      alert("Could not save changes to this line item.");
+    } finally {
+      setSavingLine(false);
+    }
   };
 
   const handleDeleteLine = async (lineId) => {
@@ -408,7 +497,12 @@ export default function JobCardDetail() {
                 <div>
                   <Label className="text-xs text-muted-foreground">Update Status</Label>
                   <div className="flex gap-2 mt-1.5 flex-wrap">
-                    {STATUSES.map((status) => (
+                    {/* Settings > Job Cards ("job statuses") -- falls back to the original
+                        hardcoded list until 0021 is applied or the admin hasn't customized
+                        it. STATUS_VARIANT already safely falls back to a neutral badge for
+                        any status string not in its map, so a custom admin-added status
+                        cannot break this UI. */}
+                    {(jobCardSettings?.available_statuses || STATUSES).map((status) => (
                       <button
                         key={status}
                         disabled={updatingStatus || jobCard.status === status}
@@ -463,7 +557,7 @@ export default function JobCardDetail() {
                   label="Status"
                   value={editForm.status}
                   onChange={(value) => setEditValue("status", value)}
-                  items={STATUSES.map((status) => ({ value: status, label: status }))}
+                  items={(jobCardSettings?.available_statuses || STATUSES).map((status) => ({ value: status, label: status }))}
                 />
 
                 <EditInput
@@ -484,6 +578,12 @@ export default function JobCardDetail() {
                   label="Technician"
                   value={editForm.technician_name}
                   onChange={(value) => setEditValue("technician_name", value)}
+                />
+
+                <EditInput
+                  label="Machine Type"
+                  value={editForm.machine_type}
+                  onChange={(value) => setEditValue("machine_type", value)}
                 />
 
                 <EditSelect
@@ -554,6 +654,10 @@ export default function JobCardDetail() {
                   value={jobCard.technician_name || "Not assigned"}
                 />
                 <DetailRow
+                  label="Machine Type"
+                  value={jobCard.machine_type || "Not recorded"}
+                />
+                <DetailRow
                   label="Technician Notes"
                   value={jobCard.technician_notes || "No technician notes recorded."}
                   multiline
@@ -602,7 +706,12 @@ export default function JobCardDetail() {
 
             {showAddLine && (
               <div className="mb-3 no-print">
-                <AddLineForm onAdd={handleAddLine} onCancel={() => setShowAddLine(false)} />
+                <AddLineForm
+                  onAdd={handleAddLine}
+                  onCancel={() => setShowAddLine(false)}
+                  catalog={catalog}
+                  settings={jobCardSettings}
+                />
               </div>
             )}
 
@@ -613,41 +722,63 @@ export default function JobCardDetail() {
             ) : (
               <div className="space-y-2">
                 {lines.map((line) => (
-                  <div
-                    key={line.id}
-                    className="flex items-start gap-3 py-2.5 border-b border-border last:border-0"
-                  >
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-0.5">
-                        <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground bg-secondary px-1.5 py-0.5 rounded">
-                          {line.line_type}
-                        </span>
+                  editingLineId === line.id ? (
+                    <div key={line.id} className="py-1">
+                      <AddLineForm
+                        initial={line}
+                        onAdd={handleEditLine}
+                        onCancel={() => setEditingLineId(null)}
+                        catalog={catalog}
+                        settings={jobCardSettings}
+                      />
+                    </div>
+                  ) : (
+                    <div
+                      key={line.id}
+                      className="flex items-start gap-3 py-2.5 border-b border-border last:border-0"
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-0.5">
+                          <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground bg-secondary px-1.5 py-0.5 rounded">
+                            {line.line_type}
+                          </span>
+                        </div>
+
+                        <p className="text-sm text-foreground">{line.description}</p>
+
+                        {(line.quantity || line.unit_price) && (
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            {Number(line.quantity || 1)} × R
+                            {Number(line.unit_price || 0).toFixed(2)} ={" "}
+                            <span className="text-foreground font-medium">
+                              R
+                              {(
+                                Number(line.quantity || 1) *
+                                Number(line.unit_price || 0)
+                              ).toFixed(2)}
+                            </span>
+                          </p>
+                        )}
                       </div>
 
-                      <p className="text-sm text-foreground">{line.description}</p>
-
-                      {(line.quantity || line.unit_price) && (
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                          {Number(line.quantity || 1)} × R
-                          {Number(line.unit_price || 0).toFixed(2)} ={" "}
-                          <span className="text-foreground font-medium">
-                            R
-                            {(
-                              Number(line.quantity || 1) *
-                              Number(line.unit_price || 0)
-                            ).toFixed(2)}
-                          </span>
-                        </p>
-                      )}
+                      <div className="no-print flex items-center gap-1 shrink-0">
+                        <button
+                          className="text-muted-foreground hover:text-foreground transition-colors p-1"
+                          onClick={() => setEditingLineId(line.id)}
+                          aria-label="Edit line item"
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </button>
+                        <button
+                          className="text-muted-foreground hover:text-destructive transition-colors p-1"
+                          onClick={() => handleDeleteLine(line.id)}
+                          aria-label="Delete line item"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
                     </div>
-
-                    <button
-                      className="no-print text-muted-foreground hover:text-destructive transition-colors p-1"
-                      onClick={() => handleDeleteLine(line.id)}
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
+                  )
                 ))}
               </div>
             )}

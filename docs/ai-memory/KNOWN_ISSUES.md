@@ -1,5 +1,64 @@
 # Known Issues
 
+## Migrations 0020/0021 pending application (2026-08-13, later still same day)
+- `0020_service_and_job_card_photos.sql`: exact SQL given to the user verbatim, only 2
+  columns (`service_records.photos`, `job_cards.arrival_photos`). Not yet confirmed
+  applied.
+- `0021_job_card_settings_statuses_and_line_types.sql`: adds `job_card_settings.
+  available_statuses`/`line_types` (both default to the exact values already hardcoded, so
+  applying it changes nothing visually by itself). `JobCardSettingsPanel.jsx` already
+  guards for the pre-migration shape (shows a "not available yet" message instead of
+  erroring) so the Settings page works either way.
+- Real bugs found+fixed this same continuation (Jobs.jsx client/machine join,
+  dead-feeling desktop row clicks, missing line-item edit, dead `machine_type` field,
+  Pastel importer intra-file duplicate detection + name-fuzzy-matching gaps) are all
+  independent of these two pending migrations and are already live/verified where
+  applicable — see SESSION_LOG.md's matching entry for the full, itemized breakdown.
+
+## Migration 0018/0019 status update: APPLIED and live-QA verified 18/18 (2026-08-13, later same day)
+- Confirmed applied via `supabase/scripts/qa-check-0018-0019-applied.mjs` and exercised
+  live via `supabase/scripts/qa-verify-2026-08-13-fixes.mjs` (18/18 pass, full residual
+  cleanup confirmed). The entry below is kept as historical record of the pre-apply state
+  — superseded, not deleted, since it documents real reasoning about the migration.
+- **New, not yet applied**: `supabase/migrations/0020_service_and_job_card_photos.sql`
+  (adds `service_records.photos`/`job_cards.arrival_photos`, closing the 2026-08-06-flagged
+  photo-upload gap). Needs the SQL Editor before `LogServiceModal.jsx`/`BookIn.jsx`'s photo
+  writes actually persist (the writes are coded correctly now, but will 400/column-not-
+  found until this migration runs).
+
+## Migrations 0018/0019 not yet applied — Settings/Products & Services/Customer Import are code-complete but not live (2026-08-13) — SUPERSEDED, see entry above
+- `supabase/migrations/0018_products_services_and_job_card_settings.sql` and
+  `0019_client_imports.sql` need the SQL Editor, same as every prior migration. Until
+  applied: `/settings` will error loading Job Card settings/catalogue, `AddLineForm`'s
+  catalogue picker will just show 0 items (harmless — custom entry still works),
+  `ImportCustomers.jsx` will fail to save the post-import history row (the actual client
+  inserts would still work — `public.clients` already has all the columns being written
+  except `legacy_pastel_customer_code`, which is one of the new columns).
+- Also new: `settings.access` and `clients.import` permission rows are inserted by 0018 —
+  until applied, the `/settings` route/nav item will be invisible to everyone (RoleGuard
+  denies by default when the permission key doesn't exist / isn't granted), including
+  admins, since admin's bypass is in `has_permission()`'s SQL function, not the frontend.
+
+## RESOLVED: live/scripted QA now run on the Job Card / Settings / catalogue / import fixes (2026-08-13, later same day)
+- `supabase/scripts/qa-verify-2026-08-13-fixes.mjs`, 18/18 pass — see SESSION_LOG.md.
+  Covers the Job Card line-item fix, products_services/job_card_settings RLS,
+  dashboard_notes defense-in-depth, client_imports/legacy_pastel_customer_code dedup. Still
+  NOT covered: the Notes-linked-to-client UI fix itself can't be exercised end-to-end
+  (depends on the still-undeployed dashboardNotes Cloud Function — billing issue below);
+  no browser-based visual/click-through QA has been done (still no browser tool this
+  session); the new photo fields (migration 0020) are untested since not yet applied.
+
+## Redesign phase framing discrepancy (2026-08-13)
+- The user's most recent instruction framed Phase 5 (Jobs/Service Records) as the next
+  phase to start, with Phase 1-4 "already completed". `git log` shows Phases 5-8 (Jobs,
+  Knowledge Base, User Admin, Calendar) already have their own dedicated redesign commits
+  predating this session. Only phases 9 (Forms/Modals polish pass), 10 (full responsive
+  pass), 11 (Android), 12 (final consistency polish) are genuinely not started. Flagged to
+  the user directly in this session's report — do not silently redo phases 5-8's redesign
+  work in a future session without first confirming what specifically still needs
+  attention in them (e.g. section H's specific Calendar checklist may still have gaps even
+  though the phase's initial redesign commit exists).
+
 ## `dashboardNotes` Cloud Function cannot be deployed — GCP billing not enabled on `capdatabasefb2` (found 2026-08-13)
 - `firebase deploy --only functions` fails identically on two separate attempts (not
   transient) with: `Request to secretmanager.googleapis.com... had HTTP Error: 403, This

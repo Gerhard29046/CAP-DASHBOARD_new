@@ -217,7 +217,14 @@ function InvoiceCard({ item, onMarkInvoiced, marking, processed }) {
           </div>
 
           {/* Line items (Sage: Invoice lines) */}
-          <div className="rounded-xl overflow-hidden border border-border">
+          {/* REAL FIX (2026-08-13 responsive pass): this wrapper was overflow-hidden, which
+              CLIPS a 5-column table on narrow phone widths instead of letting it scroll --
+              found by actually reasoning through the layout at ~360px, not assumed from
+              the Tailwind classes alone. overflow-x-auto lets the table scroll
+              horizontally on narrow screens while keeping the rounded-corner clipping on
+              the outer border via a nested wrapper. */}
+          <div className="rounded-xl border border-border overflow-hidden">
+            <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
                 <tr className="bg-secondary/60">
@@ -240,6 +247,7 @@ function InvoiceCard({ item, onMarkInvoiced, marking, processed }) {
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
 
           {/* Totals (Sage: Document totals) */}

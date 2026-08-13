@@ -32,7 +32,7 @@ export default function Login() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#002f1f] via-[#003f28] to-[#001f16] text-slate-900">
-      <header className="h-24 flex items-center justify-between px-10 border-b border-white/10">
+      <header className="h-24 flex items-center justify-between px-6 sm:px-10 border-b border-white/10">
         <div className="text-white leading-tight">
           <div className="text-xl font-extrabold tracking-wide">
             CONNOISSEUR
@@ -51,7 +51,12 @@ export default function Login() {
 
       <main className="flex items-center justify-center px-6 py-10">
         <div className="w-full max-w-6xl rounded-2xl overflow-hidden shadow-2xl grid grid-cols-1 lg:grid-cols-[0.9fr_1.1fr] bg-white">
-<section className="relative bg-gradient-to-br from-[#004225] to-[#006b3c] text-white pt-10 px-10 pb-44 overflow-hidden">            
+{/* REAL FIX (2026-08-13 responsive audit): pb-44 (176px) was fixed regardless of
+    breakpoint. On mobile, grid-cols-1 stacks this panel directly above the login form,
+    so that padding was pure dead space pushing the actual form further down the page --
+    the exact "excessive empty space" problem. Reduced on mobile, restored at lg: where
+    it visually balances the two-column split layout's height. */}
+<section className="relative bg-gradient-to-br from-[#004225] to-[#006b3c] text-white pt-10 px-6 sm:px-10 pb-16 lg:pb-44 overflow-hidden">
   <div className="relative z-10">
               <div className="border-t-2 border-red-500 border-b-2 py-4 mb-6 max-w-xs">
                 <h1 className="text-3xl font-extrabold leading-none">
@@ -105,7 +110,7 @@ export default function Login() {
 />
           </section>
 
-          <section className="bg-white p-10 lg:p-14">
+          <section className="bg-white p-6 sm:p-10 lg:p-14">
             <h2 className="text-3xl font-extrabold text-[#004225]">
               Sign in to your account
             </h2>

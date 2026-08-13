@@ -1,5 +1,283 @@
 # Session Log
 
+## 2026-08-13 (cont. once more) — Jobs page bug fixed+tested, line-item edit added, Job Card Settings extended, Pastel importer hardened, responsive audit continued, Android redesign delegated
+- User: "Continue... don't stop for approval except manual SQL." Worked through items 1-10
+  of a large combined instruction continuously. Migration 0020's exact SQL was given to the
+  user verbatim (only 2 columns) — **not yet confirmed applied as of this entry**, so its
+  own re-verification step is still pending; everything else below does not depend on it
+  and was completed in the meantime per the user's explicit "don't let one SQL step block
+  unrelated work" instruction.
+- **Jobs page (`Jobs.jsx`) — 2 real, confirmed bugs found+fixed, same root-cause class as
+  the earlier JobCardDetail.jsx fix**: (1) `loadJobs()` called `JobCard.list()` alone —
+  same "no auto-joined client/machine" gap as before — so EVERY job showed "Unknown
+  Client"/"Unknown Machine" regardless of real data quality (confirmed via a live read-only
+  check: all 4 real job cards have valid, non-orphaned client_id/machine_id — this was
+  purely the frontend bug, not corrupt data). Fixed by fetching clients/machines once and
+  joining client-side, mirroring JobCardDetail.jsx's fix. (2) The desktop table row's
+  `onClick` only called `setSelectedJob()`, feeding a preview panel that ONLY renders at
+  the `2xl` breakpoint (>=1536px) — on any normal desktop width (1024-1535px), clicking a
+  row visibly did nothing. Fixed: click now always navigates directly to the Job Card
+  (matching the mobile card list), hover/focus drives the 2xl preview panel instead, and
+  real keyboard accessibility was added (tabIndex, role="link", Enter/Space navigates).
+  **Live-verified 7/7** (`supabase/scripts/qa-verify-jobs-page-fix.mjs`, throwaway data,
+  fully cleaned up).
+- **Real, disclosed finding (not fixed without approval)**: 3 of the 4 real job cards in
+  the live database are leftover `JOB-CODEX-E2E-...` artifacts from a prior automated test
+  harness (not created this session) — cluttering the real Jobs page. Flagged to the user,
+  not deleted (business-record deletion needs explicit approval).
+- **Job Card line-item editing was entirely missing** — only Add/Delete existed, no way to
+  edit an existing line's quantity/price/description. Added real edit-in-place (reuses
+  `AddLineForm` in edit mode via a new `initial` prop, wired to `JobCardLine.update()`).
+  **Full workflow live-verified 13/13** (`supabase/scripts/qa-verify-jobcard-full-workflow.mjs`):
+  add service, add product, refresh, both persist, invoice subtotal/VAT/total all correct,
+  edit a line's quantity, refresh, edit persists, invoice recalculates, remove a line,
+  refresh, removal persists, remaining total correct, AND confirmed accounting integrity —
+  editing a catalogue item's price afterward does NOT retroactively change an
+  already-saved line item's stored price.
+- **`machine_type` was a completely dead write path** — real column, displayed as a badge
+  on `MachineDetail.jsx`/`ClientDetail.jsx`, but `MachineForm.jsx` (used for both Add and
+  Edit Machine) never had a field for it. Fixed; live-verified via a direct insert/read/
+  cleanup (no migration needed, column already existed).
+- **Settings > Job Cards extended** with 2 more real, bounded, admin-editable lists (per
+  explicit request: "job statuses", "service types") — new
+  `supabase/migrations/0021_job_card_settings_statuses_and_line_types.sql` (NOT yet
+  applied), adding `job_card_settings.available_statuses`/`line_types` (both jsonb arrays,
+  defaulting to the EXACT values already hardcoded, so applying changes nothing visually
+  until an admin edits them). Deliberately did NOT make `job_cards.status`/
+  `job_card_lines.line_type` themselves dynamic/enum — too invasive (Jobs.jsx/InvoiceQueue
+  have hardcoded status-string business logic in several places) for the value; only the
+  *lists offered in the UI* are configurable, safely, since the existing badge/variant maps
+  already have safe fallbacks for unmapped strings. `JobCardDetail.jsx` wired to read from
+  settings with a fallback to the original hardcoded constants; `JobCardSettingsPanel.jsx`
+  got a small reusable `TagListEditor` (add/remove, min 1 item) with a graceful "not
+  available until 0021 applied" message if the columns don't exist yet.
+- **Notes (item 5): confirmed still blocked on infrastructure, not code** — sent a live
+  OPTIONS request to the `dashboardNotes` Cloud Function URL, got 404 (not deployed),
+  confirming the GCP billing blocker documented earlier is still in effect. The
+  ClientDetail.jsx fix from earlier this session is implemented and RLS-verified
+  (defense-in-depth, 18/18 suite) but genuinely cannot be end-to-end tested until the user
+  re-enables GCP billing and redeploys Cloud Functions — this is not something Queen Bee
+  can resolve.
+- **Responsive audit (item 8) continued, not yet exhaustive**: systematically grepped every
+  page for `<table>` usage (only 2 exist, both already fixed earlier this session), bare
+  (non-responsive) `grid-cols-3+`, and fixed pixel widths. Found+fixed:
+  `ProductsServicesSettings.jsx`'s 3-equal-column form row (Category/Price/VAT) was cramped
+  in a max-w-md dialog on mobile — now stacks below `sm:`. `Login.jsx` had a fixed 176px
+  bottom-padding decorative panel that, once the responsive grid stacks to 1 column on
+  mobile, sat directly above the login form as pure dead space — reduced on mobile,
+  restored at `lg:`; also tightened fixed 40px horizontal padding to `px-6 sm:px-10`.
+  **Real, disclosed finding, not fixed**: `Login.jsx` (unlike Register/ForgotPassword/
+  ResetPassword, which share the properly-redesigned `AuthLayout.jsx`) is a bespoke page
+  using old hardcoded hex colors and typography classes, NOT the shared design-system
+  tokens (`bg-card`/`text-foreground`/`font-heading` etc.) used throughout the rest of the
+  redesigned app — visually inconsistent with the rest of the product. Not redesigned this
+  pass (large, sensitive, separate undertaking) — flagged for a future phase.
+- **Pastel Customer Import (item 10) hardened significantly** after actually running the
+  exact kind of synthetic test file the user's own spec calls for (1 valid, 1 exact
+  duplicate, 1 missing-optional-fields, 1 missing-required-data, 1 possible-duplicate-with-
+  different-formatting) through the real `xlsx` parse -> map -> preview pipeline — this
+  found 2 real gaps, not just confirmed the happy path: (1) **intra-file duplicates were
+  never checked at all** — only DB-vs-row, not row-vs-earlier-row-in-the-same-file; two
+  identical rows in one spreadsheet would both have imported as separate new clients. Fixed
+  via a growing "known pool" in `buildPreview()` that includes already-processed
+  new rows. (2) **name-similarity matching was too strict** — "XYZ Air Con (Pty) Ltd" vs an
+  existing "XYZ Aircon (Pty) Ltd" (a realistic real-world spacing variant) wasn't flagged.
+  Fixed via a new `normalizeNameLoose()` (strips all whitespace/punctuation) used only for
+  the possible_duplicate signal, never exact_match. Also added explicit named mapping
+  targets for `mobile`/`postal_address`/`vat_number` (previously only reachable via a
+  generic "keep extra column" mechanism that `ImportCustomers.jsx` never actually wired
+  up — meaning any unmapped column, including VAT numbers, was silently dropped until this
+  fix) — all three now route into clearly labelled lines in the existing `notes` column
+  (no new clients columns invented, per instruction). Re-ran the exact synthetic file after
+  fixing: now correctly reports new:2, exact_match:1, invalid:1, possible_duplicate:1 —
+  matching the user's own spec exactly. 13/13 unit tests pass (was 11, +2 new). Real
+  Pastel file still not provided — nothing imported into production.
+- **Android (item 9): audit confirmed genuinely healthy, then delegated the real redesign**
+  (not just another audit) to `android-ui-bee`. Verified directly (build artifacts, not
+  agent self-report): `assembleDebug` succeeded (real APK present), 4/4 unit tests pass,
+  lint 0 errors/28 warnings, zero Supabase references anywhere in `mobile-android/app/src`.
+  **Real architecture finding**: the entire app UI lives in ONE 2321-line `MainActivity.kt`
+  (~35 Composables), not separate per-screen files. Found a partially-built, UNUSED
+  design-system starter kit already sitting in the repo (`ui/theme/Cap*.kt` — colors
+  explicitly extracted from the real web app's Tailwind tokens — `ui/components/Cap*.kt`,
+  `ui/navigation/Cap*.kt` including bottom nav scaffolding) — real, usable groundwork,
+  not something to rebuild from scratch. Also found (flagged, not fixed — too risky
+  mid-redesign): `Color.kt` declares `package com.CAPDATABASE.capdatabase.ui.theme` but
+  lives under a `za.co.connoisseurauto.capmobile` directory tree — inconsistent but
+  evidently harmless (build succeeds). Delegated the actual visual redesign (leverage the
+  existing Cap* kit, apply it screen-by-screen across MainActivity.kt, proper mobile-native
+  UX, optionally split into separate screen files if low-risk) to a new `android-ui-bee`
+  agent — running in the background, results not in as of this entry.
+- **Process note on subagents this session**: attempting to "continue" a previously-spawned
+  agent by calling Agent again with the same `name` does NOT resume it in this environment
+  — it spawns an entirely new agent (`android-audit-bee` -> `-2` -> `-2-2`), restarting
+  whatever it was doing. Stopped retrying after noticing this and instead verified the
+  Android audit's real results directly from build output artifacts
+  (`app/build/test-results/`, `app/build/reports/lint-results-debug.xml`,
+  `app/build/outputs/apk/debug/`) rather than trusting/re-requesting an agent self-report.
+  Worth remembering: prefer checking real artifacts over re-spawning when an agent seems
+  stuck/idle.
+- **Verified, every step, throughout**: `frontend` lint/typecheck/test(13/13)/build clean,
+  repeated after every file group. Live Supabase QA re-run at the end of the session,
+  still 18/18 (no regression from the later Jobs/MachineForm/Settings changes, which don't
+  touch anything that suite covers directly, but re-run for confidence anyway). Cleaned up
+  ~12 more stray shell-artifact files from inline node -e commands with special characters
+  (same longstanding recurring pattern, not application code).
+- **Not done / explicitly deferred**: migration 0020 application still pending user
+  confirmation; migration 0021 not yet applied either; Notes end-to-end blocked on Cloud
+  Functions billing (not a code fix); Login.jsx's design-system inconsistency not resolved;
+  responsive audit not exhaustive (Dashboard/Clients/MachineDetail/UpcomingServices/
+  UserAdmin/KnowledgeBase not individually walked page-by-page this pass, only grepped for
+  the specific anti-patterns); Android redesign in progress, not complete; real Pastel file
+  still not provided/imported; no browser-based visual/click-through QA anywhere (still no
+  browser tool this session, disclosed throughout rather than assumed away).
+
+## 2026-08-13 (cont. yet again) — Live QA (18/18 pass), Calendar phase reviewed+fixed, 2 more real photo bugs found+fixed, responsive audit
+- Continuation of the same-day redesign-resume session, user: "continue with all the phases."
+- **Confirmed migrations `0018`/`0019` were applied by the user** (live read-only check via
+  new `supabase/scripts/qa-check-0018-0019-applied.mjs` — all 6 checks OK).
+- **Ran real scripted QA against live Supabase** (new, reusable
+  `supabase/scripts/qa-verify-2026-08-13-fixes.mjs`; no browser tool available): throwaway
+  admin + technician test users, throwaway client/machine/job card. **18/18 checks pass**
+  after fixing 2 test-methodology mistakes (Postgres RLS denies SELECT/no-op UPDATE
+  silently, not always via a thrown error — re-verified via the service-role client
+  instead of just checking for `error`). Confirmed live: the Job Card line-item fix (add 2
+  lines, refetch exactly as `JobCardDetail.jsx` does, both present; delete 1, refetch,
+  correctly 1 remains; total calculates correctly); `products_services`/
+  `job_card_settings` RLS (technician can read both, cannot write either; admin can write
+  both via `is_admin()` bypass); `dashboard_notes` correctly still deny-all even for an
+  admin-role authenticated client (only the still-undeployed Cloud Function can reach it —
+  known, unrelated blocker); `client_imports`/`legacy_pastel_customer_code` (duplicate
+  code correctly rejected by the new unique index; technician correctly denied writing
+  import history). Full residual-data sweep after: zero leftover QA rows/users.
+- **Calendar (Phase 8 / section H) reviewed against the user's specific checklist — found
+  already substantially done** (nav/Today/date header/event styling/service-record data/
+  client-machine context/status badges/no Google code/mobile toolbar wrapping were all
+  already present from the earlier Phase 8 commit). **One real, small gap found+fixed**:
+  `CalendarPage.jsx`'s `initialView` (list view on mobile vs. grid on desktop) was only
+  ever evaluated once at mount — resizing/rotating past the 640px breakpoint never
+  switched view. Fixed via FullCalendar's `windowResize` hook.
+- **Phase 9 (Forms/Modals) audit found 2 more real, pre-existing bugs matching Bug B's
+  exact class** (display code already existed expecting data that was never written) —
+  both previously flagged-not-fixed in the 2026-08-06 migration investigation
+  (`docs/ai-memory/PROJECT_STATE.md`), now actually closed: `service_records.photos` and
+  `job_cards.arrival_photos` never had Postgres columns; `LogServiceModal.jsx`'s
+  `handleSubmit()` uploaded photos but never included them in the create payload;
+  `BookIn.jsx` stuffed photo URLs into `technician_notes` as plain text instead of the
+  dedicated field `JobCardDetail.jsx` already renders as a gallery. New
+  `supabase/migrations/0020_service_and_job_card_photos.sql` (NOT yet applied) adds both
+  columns; both write paths fixed to actually use them. `AddClient.jsx` reviewed — already
+  well-built (sectioned, labelled, responsive, proper error/disabled states), no changes
+  needed.
+- **Responsive audit (Phase 10, code-level only — no browser tool this session, disclosed
+  explicitly rather than claiming visual verification) found 2 real overflow bugs**, not
+  assumed from Tailwind classes alone: `InvoiceQueue.jsx`'s line-items table wrapper used
+  `overflow-hidden` (clips a 5-column table on narrow phones instead of scrolling);
+  `ImportCustomers.jsx`'s preview table wrapper combined `overflow-hidden` with
+  `overflow-y-auto` on the same element, which only frees the y-axis in CSS — the x-axis
+  stayed clipped. Both fixed with a nested `overflow-x-auto` wrapper.
+- **Delegated to `testing-bee` (background, in progress as of this entry)**: Android build/
+  health audit — `gradlew.bat testDebugUnitTest lintDebug assembleDebug`, a scan for any
+  accidental Supabase reference leaking into `mobile-android/`, and a current
+  screens/navigation inventory — the correct bounded first step of Phase 11 before any
+  visual redesign work, per the user's own instructions (verify build/Firebase/auth/CRUD
+  first). Results not yet in as of this entry — check the agent's report before assuming
+  Android is healthy.
+- **Verified, every step**: `frontend` lint/typecheck/build clean after every file group
+  this session (multiple full passes); live Supabase QA 18/18 (above). Cleaned up 2 more
+  stray shell-artifact files (`supabase/u.email))`, `supabase/{})`).
+- **Explicitly NOT done yet**: migration `0020` not applied; no live QA of the new photo
+  fields (can't test until applied); no actual visual/browser confirmation of the
+  responsive fixes (code-level reasoning only, disclosed); Android testing-bee results
+  pending; phases 9's remaining forms (MachineForm.jsx, EditClientForm, etc.) not
+  individually audited beyond AddClient.jsx; Phase 12 (final polish) not started; real
+  Pastel spreadsheet still not provided/imported.
+
+## 2026-08-13 (cont. again) — UX redesign resumed: 2 real functional bugs found+fixed, Job Card Settings/Products & Services/Customer Import built
+- Objective: user resumed the paused UI redesign (paused for the Firebase->Supabase
+  migration) with a large combined instruction set (dashboard greeting, a Job Card
+  line-item bug, a Notes bug, new Job Card/Products&Services Settings, a Customer Import
+  feature, continue redesign phases, later Android). Worked through as much as was
+  genuinely verifiable in one session rather than fabricating completion of every item —
+  see below for what's real vs. what's still open.
+- **Found a real discrepancy worth flagging explicitly**: the user's framing said "already
+  completed: Phase 1-4" and asked to continue from Phase 5. `git log` shows Phases 5
+  (Jobs/Service Records/Job Card Detail), 6 (Knowledge Base), 7 (User Admin), and 8
+  (Calendar) all already have their own redesign commits, predating this session. Redesign
+  phases 5-8 are NOT starting points — they're already done. Only phases 9 (Forms/Modals),
+  10 (responsive pass), 11 (Android), 12 (final polish) are genuinely not started.
+- **Bug B (Job Card products/services not appearing) — root-caused and fixed, real bug
+  confirmed in code, not cosmetic.** `frontend/src/api/supabaseApiClient.js`'s
+  `entities.JobCard.get()` (and `JobCardService.get()` in `entities.js`) only ever return
+  the bare `job_cards` row — no auto-embedded `lines`/`job_card_lines`/`client`/`machine`
+  the way the old Firebase/base44 SDK layer implicitly provided. `JobCardDetail.jsx`'s
+  `load()` read `job.lines || job.job_card_lines`, always `undefined` post-cutover, so a
+  successfully-created `job_card_lines` row (the write itself was never broken) never
+  rendered, and the client/machine header info was blank too. **Fixed**: `load()` now
+  explicitly fetches `job_card_lines` via `JobCardLine.filter({job_card_id: id})` and
+  resolves `client`/`machine` from the already-loaded lists. Confirmed `InvoiceQueue.jsx`
+  was NOT affected — it already fetches `JobCardLine.list()` directly and filters
+  client-side, so invoices were already showing real persisted line items correctly; only
+  the Job Card Detail page itself was broken.
+- **Bug F (Notes not linked to customer) — root-caused and fixed.** Dashboard "Link
+  client" notes (`StickyNotes.jsx`) correctly persist `client_id` via the `dashboardNotes`
+  Cloud Function — the write path was never broken. But `ClientDetail.jsx` never queried
+  `dashboardNotesClient` at all, so a note linked to a client from the Dashboard was never
+  displayed back on that client's own page — a one-way link. **Fixed**: `ClientDetail.jsx`
+  now loads all dashboard notes, filters by `client_id === id`, displays them via the
+  shared `NoteRecord` component (author/date/body, no chat styling), and can create new
+  notes pre-linked to the client directly from the page. Edit/delete respects the same
+  creator-or-admin rule as the Dashboard's own notes.
+- **New: Products & Services catalogue + Job Card Settings (real schema gap closed, not
+  duplicated).** Confirmed via full migration review that no products/services table ever
+  existed — `job_card_lines` has always been entirely free-text. New
+  `supabase/migrations/0018_products_services_and_job_card_settings.sql` (NOT yet applied
+  — needs the SQL Editor): `products_services` table (type/name/description/sku/category/
+  unit_price/vat_rate/is_active), a nullable `job_card_lines.catalog_item_id` traceability
+  FK (line items already store their own description/price independently, so editing or
+  archiving a catalogue item never rewrites historical lines/invoices), a singleton
+  `job_card_settings` row (numbering_prefix/default_status/default_line_quantity/
+  allow_products/allow_services — every field is read by real frontend code, not a
+  placeholder), and a new `settings.access` permission (admins get it automatically via
+  `is_admin()`'s bypass in `has_permission()`; every other role is denied by default).
+  Frontend: new `/settings` route + nav item (permission-gated), `Settings.jsx` hub with
+  General/Job Cards/Products & Services/Data Management/Users & Roles/System tabs (empty
+  sections say so honestly, no fake toggles), `JobCardSettingsPanel.jsx`,
+  `ProductsServicesSettings.jsx` (full CRUD, archive instead of delete). Wired into real
+  behavior: `JobCardDetail.jsx`'s `AddLineForm` now has an optional catalogue picker
+  (respects `allow_products`/`allow_services`, still allows full custom entry);
+  `BookIn.jsx` now uses `numbering_prefix`/`default_status` for new job numbers/status
+  instead of a hardcoded `"JOB-"`/`"Booked In"`.
+- **New: Customer Import (Settings > Data Management > Import Customers) — built as a
+  permanent, reusable feature, not a one-off script**, per explicit instruction. No real
+  Pastel spreadsheet was provided this session, so nothing was actually imported — this is
+  the tooling, tested against synthetic data only. `frontend/src/lib/customerImport.js`
+  (pure logic, framework-free): header-synonym column-mapping guesser, row normalization
+  (trims whitespace, lower-cases email, doesn't rewrite legitimate text), conservative
+  3-tier duplicate classification (new / possible_duplicate on name-only match /
+  exact_match only on customer-code, email, or normalized-phone match) — 11/11 new unit
+  tests in `frontend/tests/customerImport.test.js` (this repo's first test file with real
+  content since the Firebase-compat test was deleted in the cutover). UI wizard
+  (`ImportCustomers.jsx`): Upload -> Map Columns (auto-pre-selected, editable) -> Preview
+  (per-row status + reason, checkboxes, nothing writes yet) -> Import -> summary. New
+  `supabase/migrations/0019_client_imports.sql` (NOT yet applied): `client_imports`
+  history table (one row per run) + `clients.legacy_pastel_customer_code` (nullable,
+  unique-when-present, the strongest repeat-import dedup signal) + reused `clients.import`
+  permission. Added `xlsx` (SheetJS) as a new frontend dependency.
+- **Verified, every step, not just written**: `frontend` `npm run lint`/`typecheck` clean
+  after every file group; `npm test` 11/11 (new); 3 separate full `npm run build`s (exit 0)
+  at different points in the session. Cleaned up 7 more stray 0-byte shell-redirection
+  artifacts (`frontend/Data`, `frontend/Job`, `frontend/m.id`, `frontend/r.status`,
+  `frontend/updatePassword(newPassword)`, `frontend/{,+`, `{,`) — same recurring pattern
+  flagged repeatedly in past sessions, not application code, not committed.
+- **Explicitly NOT done this session** (see KNOWN_ISSUES.md/ROADMAP.md for the full list):
+  migrations `0018`/`0019` not applied (needs the user via SQL Editor — nothing in this
+  entry is live yet); no live click-through QA (no browser tool available, no scripted
+  Supabase QA run either — should be the very next step before trusting this beyond
+  code-level verification); Calendar phase review against section H's specific checklist;
+  redesign phases 9-12; Android audit/redesign (section L); real Pastel spreadsheet
+  inspection/import (needs the user to actually provide the file).
+
 ## 2026-08-13 (cont.) — FULL PRODUCTION CUTOVER TO SUPABASE, live and deployed
 - Objective: explicit user override during an unrelated UI-redesign session ("can you
   please get every single thing off firebase... im dont wiht firebase... i override you

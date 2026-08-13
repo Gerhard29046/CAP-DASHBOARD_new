@@ -1,6 +1,43 @@
 # Roadmap
 
 ## In progress
+- **UX redesign resumed (2026-08-13, after the Supabase cutover), functional fixes +
+  Settings/Products & Services/Customer Import.** See SESSION_LOG.md's matching entry for
+  full detail. Status:
+  - Done, verified (lint/typecheck/test/build): Dashboard greeting (time-aware, real user
+    name, live date/time); Job Card line-item display bug (JobCardDetail.jsx wasn't
+    fetching job_card_lines/client/machine at all post-cutover); Notes-not-linked-to-
+    customer bug (ClientDetail.jsx never read back Dashboard-linked notes); new
+    `products_services` catalogue + `job_card_settings` + `/settings` hub (Job Cards,
+    Products & Services tabs real and wired; General/System intentionally empty, no fake
+    toggles); new Customer Import feature (Settings > Data Management), 11/11 unit tests,
+    reusable for future Pastel exports.
+  - **0018/0019 applied, live-QA verified 18/18** (later the same day) — see
+    SESSION_LOG.md's matching entry. **New `0020` (service_records.photos/
+    job_cards.arrival_photos) not yet applied.**
+  - **Done (same day, cont.)**: Calendar reviewed against section H's checklist — already
+    substantially satisfied by the earlier Phase 8 commit; one real gap found+fixed
+    (mobile/desktop view didn't react to window resize after mount). 2 more real
+    pre-existing bugs found+fixed (Phase 9 forms audit): service/job-card photo uploads
+    were never actually persisted (display code existed, write path + column didn't) — see
+    new migration `0020`. 2 real responsive/overflow bugs found+fixed via code-level
+    reasoning (Phase 10, partial): `InvoiceQueue.jsx`/`ImportCustomers.jsx` table wrappers
+    clipped horizontal overflow on narrow widths instead of scrolling.
+  - **In progress**: Phase 11 first step (Android build/health audit) delegated to
+    `testing-bee` — verifying build/lint/tests still pass and no Supabase reference leaked
+    into `mobile-android/`, plus a current screens inventory, before any visual redesign
+    work starts.
+  - **Not yet done**: no browser-based visual/click-through QA (still no browser tool);
+    `0020` not applied/QA'd; Phase 9's remaining forms beyond AddClient.jsx/
+    LogServiceModal.jsx/BookIn.jsx not individually audited; Phase 10's remaining pages
+    beyond InvoiceQueue/ImportCustomers not audited; Android visual redesign itself (only
+    the pre-redesign health-check has started); Phase 12 (final polish); real Pastel
+    spreadsheet inspection/import (needs the user to provide the file).
+  - **Discrepancy found (still open)**: the user's framing said phases 1-4 were "already
+    completed" and asked to continue from Phase 5 — `git log` shows phases 5-8 already
+    have dedicated redesign commits. Treated as substantially done this session (Calendar
+    reviewed and gap-fixed); still worth the user's explicit confirmation.
+
 - Firebase -> Supabase migration (Phase 0 done, see PROJECT_STATE.md / DECISIONS.md
   2026-08-03 entries):
   - Done: Postgres schema + RLS migration files (`supabase/migrations/`), client/auth/

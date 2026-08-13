@@ -40,8 +40,20 @@ export default function BookIn() {
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [previousJobs, setPreviousJobs] = useState([]);
+  const [jobCardSettings, setJobCardSettings] = useState(null);
 
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
+
+  // Job Card numbering prefix (Settings > Job Cards) -- real effect, not a placeholder.
+  useEffect(() => {
+    apiClient.entities.JobCardSettings.get()
+      .then((settings) => {
+        setJobCardSettings(settings);
+        const prefix = settings?.numbering_prefix || "JOB-";
+        setForm((prev) => ({ ...prev, job_number: `${prefix}${Date.now().toString().slice(-6)}` }));
+      })
+      .catch((e) => console.error("Failed to load Job Card settings:", e));
+  }, []);
 
   useEffect(() => {
     if (presetMachineId) {
@@ -103,19 +115,25 @@ export default function BookIn() {
   client_id: String(client.id),
   machine_id: String(selectedMachineId),
   job_number: form.job_number,
-  status: "Booked In",
+  status: jobCardSettings?.default_status || "Booked In",
   date_received: form.date_booked_in,
 
   fault_description: form.problem_description,
   technician_name: form.technician,
+  // BUG FIX (2026-08-13): the "Machine Type" input has always existed on this form and
+  // InvoiceQueue.jsx has always displayed it, but job_cards had no such column and this
+  // payload never included it -- every job card silently discarded whatever was typed
+  // here. See supabase/migrations/0022_job_cards_machine_type.sql.
+  machine_type: form.machine_type,
 
   accessories_received: form.accessories_received,
   arrival_condition: form.condition_on_arrival,
   arrival_condition_notes: form.condition_notes,
 
-  technician_notes: photos.length
-    ? `Arrival Photos: ${photos.join(", ")}`
-    : "",
+  // BUG FIX (2026-08-13): photo URLs were being stuffed into technician_notes as plain
+  // text instead of the dedicated arrival_photos field JobCardDetail.jsx actually renders
+  // as a photo gallery -- see docs/ai-memory/PROJECT_STATE.md's 2026-08-06 entry.
+  arrival_photos: photos,
 });
     navigate(`/job-cards/${card.id}`);
   } catch (error) {

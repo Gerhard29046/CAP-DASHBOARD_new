@@ -61,9 +61,13 @@ export default function LogServiceModal({ onClose, onDone }) {
   const handleSubmit = async () => {
     if (!selectedMachine || !form.service_date) return;
     setSaving(true);
+    // BUG FIX (2026-08-13): photos were uploaded to Storage and shown in this modal for
+    // review, but the create payload never actually included them -- see
+    // docs/ai-memory/PROJECT_STATE.md's 2026-08-06 entry. Now persisted for real.
     await apiClient.entities.ServiceRecord.create({
       machine_id: selectedMachine.id,
       ...form,
+      photos,
     });
     setSaving(false);
     onDone?.();

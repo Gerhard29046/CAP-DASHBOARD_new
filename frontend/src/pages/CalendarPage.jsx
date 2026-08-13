@@ -98,6 +98,18 @@ export default function CalendarPage() {
           eventClick={({ event }) => setSelected(event)}
           eventClassNames={eventClass}
           noEventsContent="No calendar events in this date range."
+          // Real fix (2026-08-13 redesign resume, section H): initialView was only ever
+          // evaluated once at mount -- resizing/rotating past the 640px breakpoint (e.g.
+          // a tablet rotated, or a desktop window narrowed) never switched the view, so a
+          // month grid could stay squeezed into a narrow width instead of switching to the
+          // list view designed for it. windowResize is FullCalendar's own resize hook.
+          windowResize={(arg) => {
+            const api = arg.view.calendar;
+            const isNarrow = window.innerWidth < 640;
+            const isListView = api.view.type === "listMonth";
+            if (isNarrow && !isListView) api.changeView("listMonth");
+            else if (!isNarrow && isListView) api.changeView("dayGridMonth");
+          }}
         />
       </div>
 

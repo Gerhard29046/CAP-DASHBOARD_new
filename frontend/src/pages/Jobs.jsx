@@ -64,9 +64,26 @@ export default function Jobs() {
   const loadJobs = async () => {
     setLoading(true);
     try {
-      const data = await apiClient.entities.JobCard.list();
-      setJobs(data || []);
-      if (data?.length > 0) setSelectedJob(data[0]);
+      // BUG FIX (2026-08-13): JobCard.list() only ever returns bare job_cards rows --
+      // Supabase has no auto-embedded client/machine the way the old Firebase/base44 SDK
+      // layer implicitly provided (same root cause as the earlier JobCardDetail.jsx fix).
+      // Every job showed "Unknown Client"/"Unknown Machine" regardless of whether the
+      // underlying client_id/machine_id FKs were actually valid -- fetch clients/machines
+      // once and join them client-side, same pattern as JobCardDetail.jsx.
+      const [data, clients, machines] = await Promise.all([
+        apiClient.entities.JobCard.list(),
+        apiClient.entities.Client.list(),
+        apiClient.entities.Machine.list(),
+      ]);
+      const clientById = Object.fromEntries((clients || []).map((c) => [c.id, c]));
+      const machineById = Object.fromEntries((machines || []).map((m) => [m.id, m]));
+      const joined = (data || []).map((job) => ({
+        ...job,
+        client: job.client_id ? clientById[job.client_id] : null,
+        machine: job.machine_id ? machineById[job.machine_id] : null,
+      }));
+      setJobs(joined);
+      if (joined.length > 0) setSelectedJob(joined[0]);
     } catch (error) {
       console.error("Failed to load jobs:", error);
       setJobs([]);
@@ -192,9 +209,27 @@ export default function Jobs() {
                     {filteredJobs.map((job) => (
                       <TableRow
                         key={job.id}
-                        onClick={() => setSelectedJob(job)}
-                        aria-label={`Select ${job.job_number || `job ${job.id}`} to preview`}
-                        className={`cursor-pointer ${selectedJob?.id === job.id ? "bg-primary/5" : ""}`}
+                        // BUG FIX (2026-08-13): clicking used to only call setSelectedJob(),
+                        // which fed a preview panel that ONLY renders at the 2xl breakpoint
+                        // (>=1536px) -- on any narrower desktop width (most real monitors),
+                        // clicking a row visibly did nothing. Click now always navigates
+                        // directly to the Job Card, matching the mobile card list below and
+                        // the user's explicit requirement. Hover/focus still drives the 2xl
+                        // preview panel as a genuine bonus for wide screens, without click
+                        // depending on it.
+                        onClick={() => navigate(`/job-cards/${job.id}`)}
+                        onMouseEnter={() => setSelectedJob(job)}
+                        onFocus={() => setSelectedJob(job)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            navigate(`/job-cards/${job.id}`);
+                          }
+                        }}
+                        tabIndex={0}
+                        role="link"
+                        aria-label={`Open job ${job.job_number || job.id}`}
+                        className={`cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset ${selectedJob?.id === job.id ? "bg-primary/5" : ""}`}
                       >
                         <TableCell className="pl-4 font-medium text-foreground py-3.5">{job.job_number || `JOB-${job.id}`}</TableCell>
                         <TableCell>{job.client?.company_name || job.client?.name || "Unknown Client"}</TableCell>
@@ -206,8 +241,9 @@ export default function Jobs() {
                         <TableCell className="text-muted-foreground">{formatDate(job.date_received)}</TableCell>
                         <TableCell className="text-muted-foreground">{job.technician_name || "Unassigned"}</TableCell>
                         <TableCell>
-                          {/* Decorative only -- the whole row above is the click target (onClick
-                              on TableRow). Not a second, smaller, differently-behaved button. */}
+                          {/* Decorative only -- the whole row above is the real click/keyboard
+                              target (onClick/onKeyDown on TableRow). Not a second, smaller,
+                              differently-behaved control. */}
                           <ChevronRight className="w-4 h-4 text-muted-foreground" aria-hidden="true" />
                         </TableCell>
                       </TableRow>

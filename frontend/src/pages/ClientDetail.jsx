@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from "react";
 import { apiClient } from "@/api/apiClient";
+import { dashboardNotesClient } from "@/api/dashboardNotesClient";
+import { useAuth } from "@/lib/AuthContext";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import {
   ArrowLeft, Plus, Pencil, Trash2, Phone, Mail, MapPin,
-  Building2, Cpu, Wind, Hash, ChevronRight, StickyNote
+  Building2, Cpu, Wind, Hash, ChevronRight, StickyNote, X, Check
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -82,12 +84,23 @@ function InfoRow({ icon: Icon, label, value, href }) {
 export default function ClientDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [client, setClient] = useState(null);
   const [machines, setMachines] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showEdit, setShowEdit] = useState(false);
   const [showAddMachine, setShowAddMachine] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  // Notes linked to this specific client (see StickyNotes.jsx -- the Dashboard's "Link
+  // client" note flow persists client_id correctly, but nothing previously read it back
+  // here, so a note created against a client never appeared on that client's own page.
+  // Real bug fix, 2026-08-13: fetch + display + allow managing this client's linked notes.
+  const [clientNotes, setClientNotes] = useState([]);
+  const [notesLoading, setNotesLoading] = useState(true);
+  const [addingNote, setAddingNote] = useState(false);
+  const [noteDraft, setNoteDraft] = useState("");
+  const [savingNote, setSavingNote] = useState(false);
 
   const load = async () => {
     const c = await apiClient.entities.Client.get(id);
@@ -96,8 +109,21 @@ export default function ClientDetail() {
     setLoading(false);
   };
 
+  const loadNotes = async () => {
+    setNotesLoading(true);
+    try {
+      const all = await dashboardNotesClient.list();
+      setClientNotes(all.filter((n) => String(n.client_id) === String(id)));
+    } catch (e) {
+      console.error("Failed to load client notes:", e);
+    } finally {
+      setNotesLoading(false);
+    }
+  };
+
   useEffect(() => {
     load();
+    loadNotes();
     const unsubscribeClient = apiClient.entities.Client.watch(id, (record) => {
       if (record) setClient(record);
     });
@@ -109,6 +135,32 @@ export default function ClientDetail() {
       unsubscribeMachines();
     };
   }, [id]);
+
+  const addClientNote = async () => {
+    const content = noteDraft.trim();
+    if (!content) { setAddingNote(false); return; }
+    setSavingNote(true);
+    try {
+      const created = await dashboardNotesClient.create({ content, color: "yellow", client_id: id });
+      setClientNotes((prev) => [created, ...prev]);
+      setNoteDraft("");
+      setAddingNote(false);
+    } catch (e) {
+      console.error("Failed to add client note:", e);
+    } finally {
+      setSavingNote(false);
+    }
+  };
+
+  const deleteClientNote = async (noteId) => {
+    setClientNotes((prev) => prev.filter((n) => n.id !== noteId));
+    try {
+      await dashboardNotesClient.remove(noteId);
+    } catch (e) {
+      console.error("Failed to delete client note:", e);
+      loadNotes();
+    }
+  };
 
   const handleEdit = async (form) => {
     setSaving(true);
@@ -285,6 +337,74 @@ export default function ClientDetail() {
               </NoteRecord>
             ) : (
               <p className="text-sm text-muted-foreground py-4">No notes yet.</p>
+            )}
+          </div>
+
+          {/* Team notes linked to this client (from Dashboard "Link client" notes) */}
+          <div className="bg-card border border-border rounded-xl px-5">
+            <div className="flex items-center justify-between pt-4 pb-1">
+              <h2 className="font-heading font-semibold text-foreground text-sm flex items-center gap-1.5">
+                <StickyNote className="w-3.5 h-3.5 text-muted-foreground" /> Team Notes
+              </h2>
+              {!addingNote && (
+                <button
+                  onClick={() => setAddingNote(true)}
+                  className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Add
+                </button>
+              )}
+            </div>
+
+            {addingNote && (
+              <div className="py-3 border-b border-border space-y-2">
+                <Textarea
+                  autoFocus
+                  value={noteDraft}
+                  onChange={(e) => setNoteDraft(e.target.value)}
+                  placeholder={`Add a note about ${client.company_name}…`}
+                  rows={3}
+                  className="text-sm"
+                />
+                <div className="flex justify-end gap-2">
+                  <Button type="button" variant="ghost" size="sm" onClick={() => { setAddingNote(false); setNoteDraft(""); }}>
+                    <X className="w-3.5 h-3.5 mr-1" /> Cancel
+                  </Button>
+                  <Button type="button" size="sm" disabled={savingNote || !noteDraft.trim()} onClick={addClientNote}>
+                    <Check className="w-3.5 h-3.5 mr-1" /> {savingNote ? "Saving…" : "Save Note"}
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {notesLoading ? (
+              <p className="text-sm text-muted-foreground py-4">Loading notes…</p>
+            ) : clientNotes.length === 0 && !addingNote ? (
+              <p className="text-sm text-muted-foreground py-4">
+                No team notes linked to this client yet.
+              </p>
+            ) : (
+              <div>
+                {clientNotes.map((note) => (
+                  <div key={note.id} className="group relative">
+                    <NoteRecord
+                      author={note.created_by_name || "Someone"}
+                      date={note.created_at ? moment(note.created_at).format("D MMM YYYY") : undefined}
+                    >
+                      {note.content}
+                    </NoteRecord>
+                    {(user?.id === note.created_by || user?.role === "admin") && (
+                      <button
+                        onClick={() => deleteClientNote(note.id)}
+                        aria-label="Delete note"
+                        className="absolute top-3 right-0 w-5 h-5 rounded-full flex items-center justify-center text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-destructive transition-opacity duration-150"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         </div>

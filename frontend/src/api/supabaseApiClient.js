@@ -47,6 +47,8 @@ const routeCollections = {
   "knowledge-media": "knowledge_media",
   "knowledge-documents": "knowledge_documents",
   permissions: "permissions",
+  "products-services": "products_services",
+  "client-imports": "client_imports",
 };
 
 function applyListOptions(items, sort, limit) {
@@ -263,6 +265,28 @@ async function request(path, options = {}) {
   throw Object.assign(new Error("Unsupported Supabase operation."), { status: 405 });
 }
 
+// Singleton settings row (public.job_card_settings, id boolean primary key default true) --
+// not a plain entity list/get-by-id table, so it gets its own tiny accessor instead of
+// makeEntity(). Every field here is read by real UI (Settings > Job Cards, BookIn.jsx,
+// JobCardDetail.jsx) -- see 0018_products_services_and_job_card_settings.sql's header.
+const jobCardSettingsApi = {
+  get: async () => {
+    const { data, error } = await supabase.from("job_card_settings").select("*").eq("id", true).single();
+    if (error) throw error;
+    return data;
+  },
+  update: async (patch) => {
+    const { data, error } = await supabase
+      .from("job_card_settings")
+      .update(patch)
+      .eq("id", true)
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  },
+};
+
 export const supabaseApiClient = {
   request,
   entities: {
@@ -273,6 +297,9 @@ export const supabaseApiClient = {
     JobCardLine: makeEntity("job_card_lines"),
     Site: makeEntity("sites"),
     User: makeEntity("users"),
+    ProductService: makeEntity("products_services"),
+    JobCardSettings: jobCardSettingsApi,
+    ClientImport: makeEntity("client_imports"),
     // Dashboard notes are NOT exposed via a plain table entity here -- see
     // supabase/migrations/0017_dashboard_notes.sql: RLS has zero policies (deny-all for
     // anon/authenticated), so a direct .from("dashboard_notes") call would always fail
