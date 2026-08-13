@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
-  Search, ClipboardCheck, Calendar, Building2, Wrench, Camera, X, CheckCircle2,
+  Search, ClipboardCheck, Calendar, Building2, Wrench, Camera, X, CheckCircle2, ChevronRight,
 } from "lucide-react";
 import { apiClient } from "@/api/apiClient";
 import { Input } from "@/components/ui/input";
@@ -125,6 +125,7 @@ export default function ServiceRecords() {
                       <TableHead>Service Date</TableHead>
                       <TableHead>Technician</TableHead>
                       <TableHead>Photos</TableHead>
+                      <TableHead className="w-10" aria-label="Opens details" />
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -135,6 +136,7 @@ export default function ServiceRecords() {
                         <TableRow
                           key={record.id}
                           onClick={() => setSelectedRecord(record)}
+                          aria-label={`View details for ${client?.company_name || client?.name || "this service record"}`}
                           className={`cursor-pointer ${selectedRecord?.id === record.id ? "bg-primary/5" : ""}`}
                         >
                           <TableCell className="pl-5 py-3.5">
@@ -161,6 +163,11 @@ export default function ServiceRecords() {
                               <span className="text-muted-foreground">—</span>
                             )}
                           </TableCell>
+                          <TableCell>
+                            {/* Decorative only -- the whole row (onClick above) is the
+                                click target, matching every other list in the app. */}
+                            <ChevronRight className="w-4 h-4 text-muted-foreground" aria-hidden="true" />
+                          </TableCell>
                         </TableRow>
                       );
                     })}
@@ -177,6 +184,7 @@ export default function ServiceRecords() {
                     <button
                       key={record.id}
                       onClick={() => setSelectedRecord(record)}
+                      aria-label={`View details for ${client?.company_name || client?.name || "this service record"}`}
                       className={`w-full text-left flex items-start gap-3 p-4 transition-colors duration-150 ${selectedRecord?.id === record.id ? "bg-primary/5" : "active:bg-secondary/60"}`}
                     >
                       <div className="flex-1 min-w-0">
@@ -189,6 +197,7 @@ export default function ServiceRecords() {
                         </p>
                         <p className="text-xs text-muted-foreground mt-0.5">{formatDate(record.service_date)}</p>
                       </div>
+                      <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0 mt-1" aria-hidden="true" />
                     </button>
                   );
                 })}
@@ -218,7 +227,7 @@ export default function ServiceRecords() {
 function ServiceDetailPanel({ record, onPhotoClick }) {
   if (!record) {
     return (
-      <div className="bg-card border border-border rounded-xl p-6 hidden 2xl:block">
+      <div className="bg-card border border-border rounded-xl p-6">
         <p className="text-sm text-muted-foreground">Select a service record to view details.</p>
       </div>
     );
@@ -228,7 +237,7 @@ function ServiceDetailPanel({ record, onPhotoClick }) {
   const photos = getPhotos(record);
 
   return (
-    <div className="bg-card border border-border rounded-xl overflow-hidden hidden 2xl:block">
+    <div className="bg-card border border-border rounded-xl overflow-hidden">
       <div className="p-5 border-b border-border">
         <h2 className="text-lg font-heading font-bold text-foreground">Service Record</h2>
         <p className="text-sm text-muted-foreground mt-1">{formatDate(record.service_date)}</p>

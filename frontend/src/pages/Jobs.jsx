@@ -185,7 +185,7 @@ export default function Jobs() {
                       <TableHead>Status</TableHead>
                       <TableHead>Received</TableHead>
                       <TableHead>Technician</TableHead>
-                      <TableHead className="w-16" />
+                      <TableHead className="w-10" aria-label="Opens job card" />
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -193,6 +193,7 @@ export default function Jobs() {
                       <TableRow
                         key={job.id}
                         onClick={() => setSelectedJob(job)}
+                        aria-label={`Select ${job.job_number || `job ${job.id}`} to preview`}
                         className={`cursor-pointer ${selectedJob?.id === job.id ? "bg-primary/5" : ""}`}
                       >
                         <TableCell className="pl-4 font-medium text-foreground py-3.5">{job.job_number || `JOB-${job.id}`}</TableCell>
@@ -205,12 +206,9 @@ export default function Jobs() {
                         <TableCell className="text-muted-foreground">{formatDate(job.date_received)}</TableCell>
                         <TableCell className="text-muted-foreground">{job.technician_name || "Unassigned"}</TableCell>
                         <TableCell>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); navigate(`/job-cards/${job.id}`); }}
-                            className="w-8 h-8 rounded-lg hover:bg-secondary inline-flex items-center justify-center transition-colors"
-                          >
-                            <ChevronRight className="w-4 h-4 text-muted-foreground" />
-                          </button>
+                          {/* Decorative only -- the whole row above is the click target (onClick
+                              on TableRow). Not a second, smaller, differently-behaved button. */}
+                          <ChevronRight className="w-4 h-4 text-muted-foreground" aria-hidden="true" />
                         </TableCell>
                       </TableRow>
                     ))}
@@ -218,13 +216,16 @@ export default function Jobs() {
                 </Table>
               </div>
 
-              {/* Mobile card list */}
+              {/* Mobile card list -- tapping the whole card opens the job card directly
+                  (no side panel exists on this breakpoint, so "select only" would be a
+                  dead end with no visible result). */}
               <div className="lg:hidden divide-y divide-border">
                 {filteredJobs.map((job) => (
                   <button
                     key={job.id}
-                    onClick={() => setSelectedJob(job)}
-                    className={`w-full text-left flex items-start gap-3 p-4 transition-colors duration-150 ${selectedJob?.id === job.id ? "bg-primary/5" : "active:bg-secondary/60"}`}
+                    onClick={() => navigate(`/job-cards/${job.id}`)}
+                    aria-label={`Open ${job.job_number || `job ${job.id}`}`}
+                    className="w-full flex items-start gap-3 p-4 text-left active:bg-secondary/60 transition-colors duration-150"
                   >
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between gap-2">
@@ -236,6 +237,7 @@ export default function Jobs() {
                         {[job.machine?.brand, job.machine?.model].filter(Boolean).join(" ") || "Unknown Machine"} &middot; {formatDate(job.date_received)}
                       </p>
                     </div>
+                    <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0 mt-1" aria-hidden="true" />
                   </button>
                 ))}
               </div>
@@ -243,14 +245,19 @@ export default function Jobs() {
           )}
         </div>
 
-        <JobDetailsPanel
-          job={selectedJob}
-          onClose={() => setSelectedJob(null)}
-          onOpen={() => selectedJob && navigate(`/job-cards/${selectedJob.id}`)}
-          onEdit={() => selectedJob && navigate(`/job-cards/${selectedJob.id}`)}
-          onComplete={markCompleted}
-          updating={updating}
-        />
+        {/* Desktop-only preview panel (master/detail) -- its own explicit "Open Job
+            Card" button (below) is the real navigation action; row clicks in the
+            table above only update this preview, they don't navigate away. */}
+        <div className="hidden 2xl:block">
+          <JobDetailsPanel
+            job={selectedJob}
+            onClose={() => setSelectedJob(null)}
+            onOpen={() => selectedJob && navigate(`/job-cards/${selectedJob.id}`)}
+            onEdit={() => selectedJob && navigate(`/job-cards/${selectedJob.id}`)}
+            onComplete={markCompleted}
+            updating={updating}
+          />
+        </div>
       </div>
     </div>
   );
@@ -259,14 +266,14 @@ export default function Jobs() {
 function JobDetailsPanel({ job, onClose, onOpen, onEdit, onComplete, updating }) {
   if (!job) {
     return (
-      <div className="bg-card border border-border rounded-xl p-6 hidden 2xl:block">
+      <div className="bg-card border border-border rounded-xl p-6">
         <p className="text-muted-foreground text-sm">Select a job to view details.</p>
       </div>
     );
   }
 
   return (
-    <div className="bg-card border border-border rounded-xl overflow-hidden hidden 2xl:block">
+    <div className="bg-card border border-border rounded-xl overflow-hidden">
       <div className="flex items-start justify-between p-5 border-b border-border">
         <div>
           <h2 className="text-lg font-heading font-bold text-foreground">{job.job_number || `JOB-${job.id}`}</h2>
