@@ -1,14 +1,18 @@
 # Phase 2 Cutover Checklist — Firebase → Supabase
 
-_Last updated: 2026-08-06. Status: schema/RLS/storage live and verified (`0001`-`0013`
-applied — see `docs/ai-memory/PROJECT_STATE.md`/`KNOWN_ISSUES.md` for the full list, most
-recently `0013` correcting the 4 knowledge-base sub-collection schemas to their real
-Firestore field names). **All data-migration phases (entities, relink, users, storage) are
-now fully complete and verified** against the real project — all 10 collections match
-Firestore, real row content and every FK relationship spot-checked with zero orphans (not
-just counts), the 1 real user has a working Supabase Auth account + profile row with
-content-verified role/permissions, and the storage phase is confirmed a genuine no-op (0
-real files exist anywhere to copy yet). See `docs/ai-memory/PROJECT_STATE.md`'s 2026-08-06
+_Last updated: 2026-08-12. Status: schema/RLS/storage live and verified (`0001`-`0014`
+applied — see `docs/ai-memory/PROJECT_STATE.md`/`KNOWN_ISSUES.md` for the full list).
+**All data-migration phases (entities, relink, users, storage, permissions) are now fully
+complete and verified** against the real project — all collections match Firestore, real
+row content and every FK relationship spot-checked with zero orphans (not just counts), the
+1 real user has a working Supabase Auth account + profile row with content-verified
+role/permissions, the storage phase is confirmed a genuine no-op (0 real files exist
+anywhere to copy yet), and `permissions`/`role_permissions` (76/124 rows) are migrated and
+verified through the real RLS-protected client path (2026-08-12). Every item in section 1
+below has been investigated with live evidence as of 2026-08-12 — see that section and
+`docs/ai-memory/KNOWN_ISSUES.md` for what's resolved vs. still an open, accepted risk (a
+genuine, newly-found realtime-publication gap; a generic-storage-bucket RLS gap; the
+Android-Firebase data-divergence risk). See `docs/ai-memory/PROJECT_STATE.md`'s 2026-08-12
 entry for full detail.
 **No frontend/Android cutover step below has been executed.** Firebase remains the sole
 active production backend for web and Android. This document exists so "proceed with the
@@ -35,39 +39,90 @@ Each task is tagged:
 These aren't blocking further prep, but a cutover date shouldn't be picked until they're
 resolved:
 
-- **[decision] `sites` migration.** Postgres has a `sites` table but Firestore has no
-  dedicated `sites` collection (nested under clients in the current model, per
-  `KNOWN_ISSUES.md`). Confirm whether any real site-level data exists anywhere that needs
-  manual migration, or whether `sites` genuinely starts empty in Postgres.
-- **[decision] Generic storage buckets.** `documents`/`photos`/`attachments` buckets
-  (`0004_storage_buckets.sql`) default to "any active profile" RLS since no dedicated
-  permission/feature exists for them yet. Confirm this is acceptable before cutover, or
-  tighten it first.
+- **[decision] `sites` migration — investigated 2026-08-12, evidence supports "leave empty".**
+  `Site`/`SiteService`/`apiClient.entities.Site` exist in the mapping layer (both Firebase
+  and Supabase sides) but no page component anywhere calls them — grepped the whole
+  frontend, only hit is unrelated copy text in `Clients.jsx` ("...manage sites and
+  machines"). `machines.site_id` is nullable with `on delete set null`, and
+  `entityMappings.mjs` never references `site_id`/`sites` at all, so there was never a
+  migration path that could have populated it. Confirmed live: `sites` table is 0 rows, all
+  6 real `machines` rows have `site_id IS NULL`. No FK-orphan risk, no silent data loss —
+  `sites` is genuinely dead/unbuilt feature scaffolding, not a migration gap. Leaving it
+  empty is correct; no action needed unless the "sites" feature is ever actually built.
+- **[RESOLVED 2026-08-13] Generic storage buckets** — `0016_storage_generic_buckets_owner_or_admin.sql`
+  applied and empirically re-verified live (admin full access; owner-or-admin enforced;
+  cross-user access denied and confirmed via ground truth, not just error presence). Original
+  2026-08-12 investigation preserved below for context.
+- **[decision] Generic storage buckets — inspected 2026-08-12, current behavior reported (not changed).**
+  `documents`/`photos`/`attachments` policies (`0004_storage_buckets.sql`) use `for all
+  using (bucket_id = '<x>' and public.has_active_profile()) with check (same)` —
+  `has_active_profile()` is `exists (select 1 from public.users where id = auth.uid() and
+  is_active = true)`, i.e. **any signed-in user with an active profile row can
+  select/insert/update/delete ANY object in these 3 buckets**, with zero per-owner,
+  per-client, or per-role scoping — a user can read or delete another (active) user's
+  uploads in these buckets. No path-prefix convention is enforced by policy (unlike
+  `profile-images`, which correctly restricts to `{auth.uid()}/...` via
+  `storage.foldername(name)`). `invoices` is properly gated on `invoices.*` permission keys.
+  Confirmed live: all 5 buckets exist, all private (`public: false`), all currently 0 files
+  — so today this is a latent policy gap, not an active data-exposure incident (nothing to
+  leak yet). **Acceptability call**: with exactly 1 real active user (the admin) in
+  production today, this is currently equivalent in practice to "admin-only," so the gap
+  has zero real impact right now — but it will matter the moment a second non-admin active
+  user exists and any of these 3 buckets gets real files. Not tightened this session (no
+  policy change made) — this is a decision for the user, not inferred.
 - **[no-approval, not yet built] Password-reset delivery for migrated users.** Phase C of
   `migrate-firestore-to-postgres.mjs` creates Supabase Auth users with no usable password
   (Firebase password hashes can't be imported). The script only *reminds* about this — no
   code exists yet to actually trigger reset emails for every migrated user. Needs a small
   script (e.g. loop `supabase.auth.admin.generateLink({ type: 'recovery', email })` or
   `resetPasswordForEmail` per user) before real users can log in post-cutover.
-- **[decision] Android timing.** Android (`Core.kt`, `GoogleCalendarRepository.kt`) has zero
-  Supabase awareness today and building that parity is a separate, unscoped, unestimated
-  piece of work. Decide: does Android cut over in lockstep with web, or run against Firebase
-  for a longer transitional period after web cuts over? The rest of this checklist assumes
-  **web-only cutover, Android stays on Firebase** unless told otherwise — that assumption
-  should be confirmed, not defaulted into silently.
-- **[decision] Realtime semantics.** `supabaseApiClient.js`'s `subscribe()`/`watch()`
-  re-query the full filtered list on every `postgres_changes` event rather than replicating
-  Firestore's per-listener snapshot semantics exactly. Needs a quick check of which pages
-  actually rely on `apiClient.js`'s `subscribe`/`watch` (Dashboard? CalendarPage? — not
-  audited this session) and whether the re-query behavior is acceptable for them.
-- **[decision] Staging target.** There is currently one Supabase project (`CAPDATABASE`).
-  Testing the flag-enabled frontend end-to-end either means testing against this same
-  project (fine right now since it holds no real data, but stops being fine once real data
-  is migrated into it) or provisioning a second Supabase project for ongoing staging.
-  Decide before real data migration, not after. **Superseded in part**: the entities/relink
-  phases have since actually been run against `CAPDATABASE` (real business data now lives
-  there, content-verified — see `PROJECT_STATE.md` 2026-08-04 entries), so this project is
-  no longer "empty of real data" — re-decide this before any further test writes against it.
+- **[decision] Android timing — investigated 2026-08-12, no technical objection found to the
+  default assumption.** Confirmed via a full grep of `mobile-android/`: zero Supabase
+  references anywhere in the Android codebase (`Core.kt` is 100% Firebase Auth/Firestore).
+  Web's `VITE_AUTH_BACKEND` flag lives entirely in the frontend build/bundle — flipping it
+  has no code-level effect on Android whatsoever; Android will keep working against Firebase
+  exactly as it does today regardless of what web does. **The real risk isn't Android
+  breaking — it's data divergence**: once web writes to Postgres, those writes do NOT
+  propagate to Firestore (no bidirectional sync exists, confirmed — the migration script is
+  a one-time bulk copy only, already documented in section 4 above), so Android would keep
+  reading/writing Firestore data that silently stops being the source of truth for anything
+  web touches post-cutover. This is a data-consistency decision already implicit in "web-
+  only cutover," not a newly-found blocker — confirms rather than overturns the existing
+  default assumption (Android stays on Firebase). Not changed this session.
+- **[RESOLVED 2026-08-13] Realtime semantics** — `0015_enable_realtime_clients_machines.sql`
+  applied and empirically re-verified live (real subscribe + real insert/update on both
+  `clients` and `machines`, events confirmed actually received). Original 2026-08-12
+  investigation preserved below for context.
+- **[decision] Realtime semantics — investigated 2026-08-12, a real defect found (not just a
+  semantics difference).** Grepped the whole frontend: the only real page-level consumers of
+  `apiClient.entities.*.watch()`/`.subscribe()` are `ClientDetail.jsx` and
+  `MachineDetail.jsx` (`Dashboard.jsx`/`CalendarPage.jsx` only load once on mount, no
+  realtime dependency either way). The re-query-vs-snapshot semantics difference itself is
+  fine (`supabaseApiClient.js`'s implementation is correct, re-queries the affected
+  row/list). **But empirically confirmed live** (two real tests: a real insert into
+  `clients`, a real update on an existing `machines` row, both with an actively `SUBSCRIBED`
+  channel listening) that **zero realtime events are delivered** — no migration ever adds
+  `clients`/`machines` to the `supabase_realtime` publication, so `postgres_changes` never
+  fires for them. See `docs/ai-memory/KNOWN_ISSUES.md`'s 2026-08-12 entry for full detail.
+  Impact is bounded (initial page load still works, only live auto-refresh is missing;
+  single-admin-today usage limits real-world exposure) but this is a genuine, verified,
+  currently-unfixed gap — not resolved this session, needs its own DDL approval
+  (`alter publication supabase_realtime add table ...`) like any other schema change.
+- **[decision] Staging target — re-investigated 2026-08-12, still the same real project.**
+  Confirmed `supabase/.env`'s `SUPABASE_URL` and `frontend/.env.production`'s
+  `VITE_SUPABASE_URL` point at the exact same project (`cjvrquipmnoihksijful`,
+  i.e. `CAPDATABASE`) — there is no separate staging project, and the entities/relink/users/
+  storage phases plus this session's permissions migration have all been run for real
+  against it. **This is technically acceptable for continued QA**, with an explicit caveat:
+  every QA script in `supabase/scripts/qa-*.mjs` that writes anything (throwaway clients,
+  throwaway auth users, realtime test writes) is writing into the actual pre-cutover
+  production dataset, not an isolated sandbox — cleanup discipline matters more than it
+  would against a real staging project (this session found and cleaned up one unexplained
+  leftover throwaway QA user as a direct example of that risk materializing in practice, see
+  `docs/ai-memory/PROJECT_STATE.md`'s 2026-08-12 entry). No new Supabase project was created
+  or recommended — provisioning one now, this late with real data already migrated, would be
+  more disruptive than continuing carefully against `CAPDATABASE` with the existing
+  throwaway-tagged/cleanup-verified QA pattern already in use.
 - **[decision, newly found 2026-08-05] Google Calendar's callable-function auth is
   Firebase-ID-token-specific, not just Firestore-specific.** `frontend/src/api/
   functionsClient.js` attaches `auth.currentUser`'s Firebase ID token as a bearer token to
@@ -224,16 +279,36 @@ users.
 ## 6. Verification checklist
 
 **Before scheduling a cutover date:**
-- [ ] All items in section 1 resolved or explicitly accepted as-is (including the newly
-      found 2026-08-05 Google Calendar auth-token gap — see section 1)
-- [ ] Password-reset-email script built and dry-run tested
+- [x] All items in section 1 investigated 2026-08-12 and either resolved (`sites`: confirmed
+      genuinely empty by design, no action needed; `permissions`/`role_permissions`: migrated
+      and verified) or explicitly reported as an accepted/open risk, not silently ignored
+      (generic storage bucket RLS, realtime publication gap, Android data-divergence risk,
+      staging-target reality — see section 1 for full detail on each). The 2026-08-05 Google
+      Calendar auth-token gap is now moot — Google Calendar sync was removed entirely
+      2026-08-12 (cost decision, see `DECISIONS.md`), so this item no longer applies.
+- [ ] Password-reset-email script built and dry-run tested — **still not built as a
+      general/repeatable script**; the 1 real migrated user currently has a real working
+      password only via the one-off `qa-set-admin-password.mjs` workaround (2026-08-11,
+      explicit user approval), not a tested self-service reset-email flow. The real
+      reset-email flow (`ResetPassword.jsx`'s Supabase branch) has still never been clicked
+      end-to-end by a human — see `docs/ai-memory/KNOWN_ISSUES.md`.
 - [ ] Frontend flag wiring (section 3) built and manually QA'd end-to-end on a
-      local/staging build, both as an admin and a limited-permission user
-- [ ] Android decision (lockstep vs. deferred) confirmed
+      local/staging build, both as an admin and a limited-permission user — flag wiring is
+      built and unit/script-QA'd (`qa-clickthrough.mjs` 21/21 as an admin-equivalent
+      throwaway user), but not yet manually clicked through in a real browser with the flag
+      flipped, and never as a limited-permission (non-admin) user specifically.
+- [x] Android decision (lockstep vs. deferred) confirmed — investigated 2026-08-12, no
+      technical objection found: Android has zero Supabase references, is unaffected by the
+      web flag by construction. Default assumption (Android stays on Firebase) holds; the
+      real residual risk is data divergence post-cutover (see section 1), not Android
+      breaking.
 - [x] `users`/`storage` migration phases run — **fully done and verified (2026-08-06)**: all
       four data-migration phases (entities/relink/users/storage) complete, content- and
       relationship-verified, zero FK orphans, storage confirmed a genuine no-op (no real
       files exist yet)
+- [x] `permissions`/`role_permissions` migrated — **done and verified (2026-08-12)**: 76
+      permissions + 124 role_permissions rows, content- and FK-verified against Firestore,
+      re-confirmed through the real RLS-protected client path.
 
 **Immediately before cutover:**
 - [x] Dry-run of the full migration script reviewed with no unexplained anomalies — done
@@ -255,8 +330,8 @@ users.
 - [ ] Error logs (Cloudflare + Supabase) monitored, no unexplained spike
 - [ ] A few real users confirm normal login/data access
 - [ ] File upload/download confirmed working across all 5 buckets
-- [ ] Google Calendar integration confirmed unaffected (contingent on resolving the
-      auth-token gap in section 1 first — this check is meaningless until that's designed)
+- [x] Google Calendar integration — **moot, removed entirely 2026-08-12** (cost decision, see
+      `DECISIONS.md`); no longer a cutover consideration.
 - [ ] Android app confirmed still functioning normally against Firebase (no regression from
       an unrelated change)
 

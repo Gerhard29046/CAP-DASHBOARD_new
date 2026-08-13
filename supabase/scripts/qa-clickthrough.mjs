@@ -3,9 +3,12 @@
 // admin-equivalent QA test user (created by qa-test-user.mjs) using the ANON key (the same
 // client-side auth path the real frontend uses), then exercises the exact same
 // read/write/list/filter calls frontend/src/services/supabase/database.js + entities.js +
-// supabaseApiClient.js make for every page in the app, plus a call to the live Google
-// Calendar Cloud Function using the resulting Supabase access_token as a bearer (proving
-// the issuer-routed auth redesign accepts a real Supabase session in production).
+// supabaseApiClient.js make for every page in the app.
+//
+// The Google Calendar Cloud Function check (issuer-routed Supabase-session auth) was removed
+// 2026-08-12 along with the rest of Google Calendar sync (see CLAUDE.md section 7 / DECISIONS.md
+// — cost decision). That check is gone, not skipped, since the function it tested no longer
+// exists.
 //
 // Does NOT touch any real business data -- all writes are to throwaway rows created and
 // deleted by this script, tagged distinctively so they're easy to spot if cleanup ever
@@ -39,7 +42,6 @@ function loadEnv(path) {
 const fileEnv = loadEnv(join(__dirname, "..", ".env"));
 const SUPABASE_URL = process.env.SUPABASE_URL || fileEnv.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || fileEnv.SUPABASE_ANON_KEY;
-const FUNCTIONS_BASE_URL = "https://africa-south1-capdatabasefb2.cloudfunctions.net";
 
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
   console.error("Missing SUPABASE_URL / SUPABASE_ANON_KEY in supabase/.env");
@@ -79,7 +81,6 @@ async function main() {
     process.exit(1);
   }
   record("sign in with password", true, `uid=${signInData.user.id}`);
-  const accessToken = signInData.session.access_token;
 
   console.log("\n=== auth.me() equivalent: load own profile (used by AuthContext on every page) ===");
   try {
@@ -175,23 +176,6 @@ async function main() {
     }
   } catch (e) {
     record("knowledge_service_codes reveal", false, e.message);
-  }
-
-  console.log("\n=== Google Calendar Cloud Function under a real Supabase session (issuer-routed auth redesign) ===");
-  try {
-    const res = await fetch(`${FUNCTIONS_BASE_URL}/googleCalendarStatus`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-    const body = await res.json().catch(() => null);
-    // Any authenticated (non-401/403) response proves the Supabase branch of requireUser()
-    // genuinely authorized this real session end-to-end against the live deployed function.
-    record(
-      "googleCalendarStatus accepts real Supabase session",
-      res.status !== 401 && res.status !== 403,
-      `status=${res.status} body=${JSON.stringify(body)}`
-    );
-  } catch (e) {
-    record("googleCalendarStatus accepts real Supabase session", false, e.message);
   }
 
   console.log("\n=== calendar/events equivalent (service-record-derived events, no Google) ===");

@@ -1,5 +1,184 @@
 # Session Log
 
+## 2026-08-13 — 0015/0016 applied by user, both empirically re-verified live; both real defects now RESOLVED
+- Objective: user applied both prepared migrations via the SQL Editor; verify both fixes work
+  for real, using the same empirical method that originally found each defect, then report
+  cutover readiness with browser/email QA still explicitly separated as untested.
+- **0015 (realtime) verification**: real `postgres_changes` subscriptions on `clients` and
+  `machines`, real insert/update, checked for actual event delivery. First combined run showed
+  a `clients` false-negative (event arrived but after an 8s timeout, under concurrent-channel
+  load) — investigated rather than accepted at face value: an isolated retest with a longer
+  wait proved the event does arrive; a final clean combined run with generous timing (15s)
+  passed 100% for both tables. Traced the consumer code path in `ClientDetail.jsx`/
+  `MachineDetail.jsx` down to the exact `setClient`/`setMachine`/`setMachines` calls. All test
+  data cleaned up. **RESULT: PASS, real events confirmed received.**
+- **0016 (storage RLS) verification**: first attempt used `text/plain` content against the
+  `documents` bucket's real MIME allow-list (`pdf`/`png`/`jpeg`/`webp` only) — every op failed
+  before RLS was even relevant, a test-setup bug, not a real finding; recognized this from the
+  error text ("mime type ... is not supported") and re-ran correctly with `application/pdf`.
+  Full matrix with 2 throwaway QA accounts (admin + real technician permission set): admin
+  upload/read/update all succeeded on own file; technician upload/read/update/delete all
+  succeeded on own file; technician's read/update/delete of the admin's file all correctly
+  denied, verified via ground truth (re-read as admin afterward, confirmed file still existed
+  and content unchanged) not just absence of an error; admin's read/update/delete of the
+  technician's file all succeeded (admin bypass working). All test files + both QA accounts
+  deleted and verified gone. **RESULT: PASS, all 12 checks, including 3 ground-truth-verified
+  denials.**
+- **4th occurrence of the unexplained duplicate-QA-user pattern** found and cleaned up during
+  this verification pass — same ~7s-delay shape as the prior 3. Strengthened the
+  `KNOWN_ISSUES.md` entry since this is now a clearly reproducible pattern (4/4 same shape),
+  even though root cause remains unidentified and no real-data impact has ever been found.
+- **Final baseline confirmed**: exactly 1 real user, 6 clients, 6 machines, 4 job_cards, 76
+  permissions, 0 files in all 5 storage buckets — matches every prior verified count.
+- **Docs updated**: `KNOWN_ISSUES.md` (both defect entries marked RESOLVED with verification
+  detail, duplicate-QA-user entry strengthened), `PROJECT_STATE.md`/`SESSION_LOG.md` (this
+  entry), `PHASE2_CUTOVER_CHECKLIST.md` (updated to reflect both fixes applied+verified).
+- **Not done, explicitly separated per instruction**: real browser QA (still no browser tool
+  available in this environment), real email-inbox password-reset delivery test (deferred
+  until a real receivable address is available), any production change.
+
+## 2026-08-12 (cont. 3) — realtime/storage-RLS fixes prepared, password-reset mechanism verified, RLS allow/deny matrix tested, browser QA limitation disclosed
+- Objective: fix the two real defects from the prior readiness report (realtime publication
+  gap, generic storage bucket RLS) with evidence-first design, verify the password-reset flow
+  without touching the real admin, and perform manual browser QA — all pre-cutover, no
+  production changes.
+- **Realtime fix**: wrote `supabase/migrations/0015_enable_realtime_clients_machines.sql`
+  (exactly `alter publication supabase_realtime add table public.clients, public.machines;`,
+  scoped to only these 2 tables per instruction). **Not applied** — no DDL execution
+  capability exists in this environment (same hard constraint as every prior migration
+  including `0014`); needs the SQL Editor.
+- **Storage RLS fix**: investigated real bucket usage first (traced all 3 real consumers of
+  the generic upload path — `BookIn.jsx`/`LogServiceModal.jsx`/`KnowledgeMachineDetail.jsx`
+  — confirmed the app already uploads to `{auth.uid()}/...` paths, and confirmed no
+  currently-working feature needs cross-non-admin-user file visibility). Designed and wrote
+  `supabase/migrations/0016_storage_generic_buckets_owner_or_admin.sql` (owner-or-admin,
+  matching `profile-images`' existing precedent and the project-wide `is_admin()` bypass
+  pattern). Presented current/proposed/security-boundary before writing the file, per
+  instruction. **Not applied** — same DDL constraint as above.
+- **Password reset**: full mechanism verified live via script against a throwaway Supabase
+  Auth user (not the real admin) — `resetPasswordForEmail()`, `admin.generateLink()`,
+  hash-fragment token capture + `setSession()` (mirrors `detectSessionInUrl`),
+  `updateUser({password})` (mirrors `ResetPassword.jsx`), old-password-rejected,
+  new-password-works. All PASS. Honestly could NOT verify: real SMTP delivery to a real
+  inbox (throwaway `@invalid.local` addresses are actually rejected by Supabase's real send
+  path, discovered live) and the actual React `ResetPassword.jsx` UI rendering (no browser
+  tool available — confirmed via a direct capability check, not assumed).
+- **RLS allow/deny matrix**: created a second throwaway QA user with the real `technician`
+  role's actual 29-key permission set (pulled from live `role_permissions`, not guessed).
+  Verified via real signed-in calls: allowed ops succeed (select clients/machines, insert/
+  update job_cards), denied ops correctly rejected by RLS itself, not just hidden UI (insert/
+  update/delete clients, insert knowledge_machines, update permissions, self-role-escalation
+  — all correctly blocked). One false-positive FAIL was investigated and resolved: a
+  `job_cards` delete initially looked like it succeeded, but was actually silently filtered
+  to 0 rows by RLS (correct) — my own test script didn't check the affected-row count;
+  verified the row still existed via a service-role read, confirming RLS was correct and the
+  test methodology was the bug, not the app. Also spot-checked static UI-level gating
+  (`RoleGuard` route guards + `hasPermission()` inline checks) as a partial (non-browser)
+  substitute for "restricted UI is hidden."
+- **Manual browser QA (item 4)**: confirmed, via a direct capability check of every
+  available tool, that **no browser automation tool exists in this session** despite the
+  system prompt referencing one — could not perform literal browser click-through QA.
+  Substituted the deepest available script-level equivalent (RLS matrix above +
+  `qa-clickthrough.mjs`/`qa-diff-clients.mjs` from the prior session) but this is explicitly
+  NOT the same as real browser QA (UI rendering, responsive layout, real click/keyboard
+  interaction, page-refresh/session-persistence in an actual browser tab were never tested)
+  — reported honestly as a remaining manual action, not claimed as done.
+- **Found a 3rd occurrence of the unexplained-duplicate-QA-user pattern** (see new
+  `KNOWN_ISSUES.md` entry) — cleaned up, root cause still not identified.
+- Local dev: created a gitignored `frontend/.env.local` (`VITE_AUTH_BACKEND=supabase`,
+  local-only, never touched `.env.production`) to run the app locally against Supabase for
+  planned browser QA; deleted it again at the end since no browser tool ended up using it.
+  Ran `npm run dev` locally, confirmed serving (200 OK), stopped it at the end (killed the
+  actual listening process by PID after `pkill -f vite` alone didn't work on Windows).
+- **Verified all QA accounts/test data fully cleaned up** at the end: 3 total throwaway auth
+  users deleted+verified-gone this session (2 intentional + 1 more duplicate-pattern
+  occurrence), 1 stray test `job_cards` row deleted+verified-gone, `users` table back to
+  exactly 1 real row, `clients`/`job_cards` counts back to the known-real baseline (6/4).
+- **Docs updated**: `KNOWN_ISSUES.md` (2 new entries: duplicate-QA-user pattern,
+  password-reset verification detail; realtime/storage-RLS entries updated with "fix
+  prepared, not applied" status), `PROJECT_STATE.md`/`SESSION_LOG.md` (this entry). New
+  files: `supabase/migrations/0015_enable_realtime_clients_machines.sql`,
+  `supabase/migrations/0016_storage_generic_buckets_owner_or_admin.sql` (both prepared,
+  neither applied).
+- **Not done**: applying 0015/0016 (needs the user via SQL Editor); post-apply empirical
+  re-verification of both fixes (needs them applied first); real browser QA; real
+  email-inbox click-through; any production change.
+
+## 2026-08-12 (cont. 2) — permissions/role_permissions migration applied+verified, full pre-cutover readiness investigation
+- Objective: apply the previously-blocked `0014` migration once the user ran it via the SQL
+  Editor, run the full permissions-migration + QA workflow without re-asking at each step
+  (explicit user instruction to stop treating every sub-step as its own approval gate), then
+  investigate the 5 remaining documented cutover decisions (`sites`, generic storage bucket
+  RLS, Android timing, realtime semantics, staging target) with live evidence, not inference.
+- **Permissions migration**: re-verified `0014` live (schema confirmed changed), ran
+  `migrate-permissions.mjs --apply` (76 permissions + 124 role_permissions inserted),
+  independently verified counts/per-role breakdown/FK integrity/duplicate-check/content
+  spot-checks all match Firestore exactly. Removed the stale Google Calendar check from
+  `qa-clickthrough.mjs` (Calendar was removed in the prior session) — `node --check` clean,
+  no leftover references. Ran `qa-clickthrough.mjs` (21/21 pass, incl. real RLS-protected
+  reads of the new `permissions`/`role_permissions` tables) and `qa-diff-clients.mjs`
+  (6/6 clients, all with `legacy_firestore_id`). `supabase npm test` 18/18 unchanged.
+- **Found and cleaned up a genuine anomaly**: after creating 1 throwaway QA test user, the
+  `users` table showed 3 rows instead of the expected 2 — a second unexplained throwaway
+  user existed, created ~7s after mine, same script's naming pattern. Root cause not
+  conclusively identified. Verified it touched no real data (role=admin, no
+  `legacy_firebase_uid`), deleted both throwaway users via `qa-test-user.mjs delete` +
+  `verify-gone` (both auth + profile rows confirmed gone for each). `users` back to exactly
+  1 real row. Also removed a stray 0-byte `supabase/null)` artifact (shell-redirection
+  mishap from a scratch script).
+- **Real admin auth-path verification**: ran `qa-verify-users.mjs`/`qa-check-admin-password
+  .mjs` (both read-only, inspected first) — exactly 1 user in Firestore/Postgres/
+  `auth.users`, all IDs/roles match; admin has a real working password (`last_sign_in_at`/
+  `email_confirmed_at` both set from the 2026-08-11 verification). **Did not** attempt a
+  fresh live `signInWithPassword` against the real admin this session — the plaintext
+  password isn't stored anywhere retrievable (correctly, per security policy), and
+  resetting it again to test would mutate the real production-bound credential, which
+  wasn't asked for. The equivalent full sign-in/RLS-access/logout flow was already proven
+  this session via `qa-clickthrough.mjs` against a throwaway admin-equivalent user
+  exercising the identical code path.
+- **5 cutover decisions investigated with live evidence** (full detail in
+  `docs/migration/PHASE2_CUTOVER_CHECKLIST.md` section 1 and `KNOWN_ISSUES.md`):
+  - **`sites`**: confirmed dead/unbuilt — no page references `SiteService`/`apiClient
+    .entities.Site` anywhere, `machines.site_id` nullable and never populated by the
+    migration mapper, live: 0 sites rows, 0/6 machines with a non-null `site_id`. No FK
+    risk. Leaving it empty is correct, not a gap.
+  - **Generic storage buckets**: read `0004_storage_buckets.sql` + `has_active_profile()` —
+    `documents`/`photos`/`attachments` grant full CRUD to ANY active signed-in user, no
+    owner/client scoping, unlike `profile-images` (correctly self-scoped) and `invoices`
+    (correctly permission-gated). Confirmed live: all 5 buckets private, all 0 files today.
+    Zero real impact with 1 admin user today; will matter once a second non-admin active
+    user + real files exist. Not changed — reported for the user's decision.
+  - **Android timing**: confirmed zero Supabase references anywhere in `mobile-android/` —
+    the web flag has no code-level effect on Android. Real risk is data divergence (no
+    bidirectional sync, one-time bulk copy only), not Android breaking. Default assumption
+    (Android stays on Firebase) holds, no technical objection found.
+  - **Realtime semantics — found a real, previously-unverified defect**: `ClientDetail.jsx`/
+    `MachineDetail.jsx` are the only real page consumers of `.watch()`/`.subscribe()`.
+    `supabaseApiClient.js`'s re-query implementation is correct, but **two live empirical
+    tests** (real insert on `clients`, real update on `machines`, both with an actively
+    `SUBSCRIBED` channel) received **zero realtime events** — no migration ever adds these
+    tables to the `supabase_realtime` publication. Confirmed, not fixed (needs its own DDL
+    approval). New `KNOWN_ISSUES.md` entry.
+  - **Staging target**: confirmed `supabase/.env` and `frontend/.env.production` point at
+    the identical project (`cjvrquipmnoihksijful`/`CAPDATABASE`) — there is no separate
+    staging project; all QA (including this session's) runs against the real pre-cutover
+    dataset. Reported as technically acceptable to continue against, with the cleanup-
+    discipline caveat the leftover-QA-user anomaly above just demonstrated in practice. No
+    new project created (not asked for, would be more disruptive this late).
+- **Docs updated**: `KNOWN_ISSUES.md` (permissions issue marked resolved, new realtime-gap
+  entry added), `PHASE2_CUTOVER_CHECKLIST.md` (all 5 section-1 decision items updated with
+  evidence, verification-checklist checkboxes updated, header status refreshed, stale Google
+  Calendar checkbox marked moot), `PROJECT_STATE.md` (this entry).
+- **Verified, not just written**: every claim above backed by a live read/write/query this
+  session, not carried over from memory. Firebase remains the sole live-serving backend
+  throughout (`VITE_AUTH_BACKEND=firebase` unchanged in every committed config) — no
+  production auth config, no Cloudflare deploy, no flag flip.
+- **Not done, explicitly deferred**: fixing the realtime-publication gap or the
+  storage-bucket RLS gap (both need explicit approval, this was an investigation pass, not a
+  fix pass); building a real password-reset-email script; a real browser click-through with
+  the flag flipped as both an admin and a limited-permission user; the actual production
+  cutover itself.
+
 ## 2026-08-12 (cont.) — Google Calendar sync removed entirely (user: cost)
 - Objective: user said "i dont want to connect to google calender anymore. it cost me too
   much money", then, after Queen Bee asked for scope, "make that the calender doesnt sync to

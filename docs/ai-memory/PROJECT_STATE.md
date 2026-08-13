@@ -1,5 +1,20 @@
 # Project State
-_Last verified: 2026-08-12. **Google Calendar sync was removed entirely this session** (user
+_Last verified: 2026-08-13 (0015/0016 applied by user + empirically re-verified live). Both
+real defects found during the 2026-08-12 pre-cutover readiness pass are now **RESOLVED**:
+realtime (`clients`/`machines` now genuinely deliver `postgres_changes` events, proven via a
+real subscribe+write test, not just publication membership) and generic storage bucket RLS
+(`documents`/`photos`/`attachments` now owner-or-admin, proven via a real cross-user
+denied-access test with ground-truth verification, not just absence of an error). See
+`KNOWN_ISSUES.md` for full verification detail and `SESSION_LOG.md`'s 2026-08-13 entry for
+the narrative. The `permissions`/`role_permissions` migration (`0014`) remains applied and
+verified (76/124 rows). **Still explicitly untested, not claimed as done**: real browser QA
+(no browser automation tool available in this environment, confirmed via a direct capability
+check) and real email-inbox password-reset delivery (throwaway test addresses are rejected by
+Supabase's real send path; needs a real receivable address). **Still nothing live**:
+`VITE_AUTH_BACKEND` remains `firebase` in every committed/production config; Firebase is
+still the sole production backend. Earlier work follows below.
+
+**Google Calendar sync was removed entirely this session** (user
 decision: cost) — see the dated entry below and `docs/ai-memory/DECISIONS.md`. Web UI
 (`SystemSettings.jsx` deleted, `/settings` route/nav gone), `apiClient`/`supabaseApiClient`
 Google routes, and all 8 Cloud Functions' code are removed; the in-app Calendar page
@@ -14,8 +29,8 @@ above. **Phase 3 scripted QA (2026-08-07) passed for the core auth/data/RLS laye
 (throwaway-admin-test-user script-driven, since no browser tool was available). A real,
 pre-existing (not migration-caused) `AuthLayout.jsx` UI bug was found+fixed 2026-08-11 (auth
 pages rendered with no heading). A real migration gap (`permissions`/`role_permissions`
-never migrated, plus a column-name mismatch) was found+fixed via a new unapplied migration
-(`0014`) ~2026-08-11.
+never migrated, plus a column-name mismatch) was found+fixed via a new migration (`0014`,
+~2026-08-11) — **applied and fully verified live 2026-08-12**, see the top of this file.
 **~23 files / ~1240 lines of this work sat uncommitted in the working tree** on branch
 `supabase-phase3-cutover-prep` until 2026-08-12. **Nothing is live** — `VITE_AUTH_BACKEND`
 still defaults to `firebase` everywhere in every committed/production config. Password-reset

@@ -1,5 +1,115 @@
 # Known Issues
 
+## Repeated pattern: unexplained duplicate throwaway QA test users appear ~7s after intentional creation (observed 4x across 2026-08-12/13) — cause NOT identified
+- Across three separate work sessions/days, creating exactly one throwaway QA user via
+  `qa-test-user.mjs create` was followed, consistently ~7 seconds later, by a SECOND
+  throwaway user appearing in `auth.users`/`public.users` with the same script's naming
+  pattern (`phase3-qa-test+<timestamp>@invalid.local`) that was never intentionally created.
+  Happened 4 times total now (2026-08-12 x3, 2026-08-13 x1, during 0016 storage-RLS
+  verification). The ~7s timing has been consistent every single time, which argues against
+  pure coincidence. Each time: verified it carried no real data (role/permissions matched a
+  fresh throwaway default, no `legacy_firebase_uid`), deleted via `qa-test-user.mjs delete` +
+  `verify-gone` (both auth + profile rows confirmed gone every time).
+- **Root cause still not identified**, despite now being a clearly reproducible pattern (4/4
+  same-shape occurrences, consistent ~7s delay). No retry logic exists in `qa-test-user.mjs`
+  itself (read directly, confirmed, again). Leading hypothesis remains a tool-execution-layer
+  artifact (e.g. a Bash command being dispatched twice in this environment) rather than the
+  script or Supabase itself, but this has not been proven. **No security impact confirmed in
+  any occurrence** (every duplicate was a fresh, permission-less throwaway with no real data
+  ever touched) — but the consistency of the pattern means it should not be dismissed as a
+  one-off any longer. Worth a future session investigating the tool-execution layer directly
+  if it recurs a 5th time, rather than just cleaning up again.
+- **Practical mitigation already in place and repeatedly proven effective**: always re-check
+  `auth.users`/`public.users` row counts after creating any QA test account, before assuming
+  exactly what you created is what exists — this is what caught all 4 occurrences before any
+  report was finalized.
+
+## Password reset / recovery flow — mechanism fully verified live via script; real email-inbox delivery and real browser UI remain untested (2026-08-12)
+- Full recovery mechanism tested end-to-end for real, against a throwaway Supabase Auth user,
+  using the exact same API calls the real frontend code makes (`resetPasswordForEmail()`,
+  `admin.generateLink()` to obtain a real actionable link without needing an inbox,
+  `setSession()` from the link's real hash-fragment tokens exactly as `detectSessionInUrl`
+  would on page load, `updateUser({password})` exactly as `ResetPassword.jsx`'s
+  `handleSubmit` calls). **All PASS**: link generated correctly with the right
+  `redirect_to`, link redirects to the expected local route with `access_token`/
+  `refresh_token`/`type=recovery` in the hash fragment (matches `ResetPassword.jsx`'s
+  documented assumption), session established from those tokens, password changed, **old
+  password confirmed rejected**, **new password confirmed working** with a real
+  `signInWithPassword()` session.
+- **Two things NOT verified, reported honestly rather than assumed**: (1) real SMTP email
+  delivery / a human clicking a real inbox link — throwaway QA accounts deliberately use a
+  non-deliverable `@invalid.local` domain (by design, to avoid real inbox side effects),
+  and Supabase's real `resetPasswordForEmail()` send path actually rejects that domain
+  outright ("Email address is invalid") even though `admin.generateLink()` (which doesn't
+  send) accepts it — so the literal "does a real email land in a real inbox" question
+  remains genuinely untested and can only be tested with a real receivable address, which is
+  a manual-only step. (2) `ResetPassword.jsx`'s actual React UI (rendering, loading state,
+  form validation, redirect-to-`/login` behavior) was never rendered in a browser this
+  session — no browser automation tool was available (confirmed via a direct capability
+  check partway through this session, despite the system prompt referencing one) — only the
+  underlying Supabase Auth API calls the page depends on were exercised directly via script.
+- Did NOT touch the real admin's credential — used only a throwaway QA account, deleted and
+  verified gone afterward.
+
+## `ClientDetail.jsx`/`MachineDetail.jsx`'s live `watch()`/`subscribe()` calls receive zero realtime events on Supabase — RESOLVED, fixed and empirically re-verified live (found 2026-08-12, fixed 2026-08-13)
+- `PHASE2_CUTOVER_CHECKLIST.md` section 1 already flagged realtime semantics as an
+  undecided item (re-query vs. snapshot merge) but had not actually tested whether events
+  fire at all. Investigated as part of pre-cutover readiness: `apiClient.entities.Client
+  .watch(id, ...)` (`ClientDetail.jsx`) and `apiClient.entities.Machine.watch(id, ...)`/
+  `.subscribe({}, ...)` (`MachineDetail.jsx`/`ClientDetail.jsx`) are the only real page-level
+  consumers of realtime (`Dashboard.jsx`/`CalendarPage.jsx` only load-once-on-mount, no
+  realtime dependency, unaffected by anything below).
+- `supabaseApiClient.js`'s `makeEntity().watch()`/`.subscribe()` are implemented correctly
+  (subscribe to `postgres_changes`, re-query the affected row/list on any event — a
+  reasonable design, not what's broken) via `database.js`'s `subscribeToTable()`.
+- **The actual gap, confirmed live via two real empirical tests** (not just static review):
+  opened a real `postgres_changes` channel against `clients` (`status: SUBSCRIBED` confirmed)
+  then did a real `insert` — zero event received within 8s. Repeated against `machines` with
+  a real `update` on a real existing row — same result, zero event received. No migration
+  file anywhere runs `alter publication supabase_realtime add table ...` for any table, which
+  is what actually turns on `postgres_changes` delivery in Supabase (a table isn't realtime-
+  enabled just by existing). The subscribe call itself succeeds (no error, no exception) —
+  it just silently never fires, which is the worse failure mode since nothing surfaces to the
+  user or the console.
+- **Impact**: `ClientDetail.jsx`/`MachineDetail.jsx` will still load correctly on
+  navigation/mount (their initial `get()`/`filter()` calls are unaffected), but won't
+  auto-refresh if the same record is edited elsewhere (e.g. another browser tab, or — once
+  Android gets Supabase awareness someday — another device) until the user manually
+  re-navigates or reloads. Single-admin-today usage makes this a low-severity stale-data
+  risk, not a data-loss or security issue.
+- **RESOLVED — fixed and applied**: `supabase/migrations/0015_enable_realtime_clients_machines.sql`
+  applied via the SQL Editor 2026-08-13. **Empirically re-verified live**, same method that
+  found the bug: real `postgres_changes` subscriptions on both tables (`SUBSCRIBED`
+  confirmed), a real insert on `clients` and a real update on `machines` — both events
+  received (one initial false-negative on `clients` from too-short a timeout under
+  concurrent-channel load, resolved by an isolated retest and a final clean 100%-pass combined
+  run with generous timing). Consumer code path traced end-to-end: `.watch()`/`.subscribe()`
+  callbacks call `setClient`/`setMachine`/`setMachines` directly. Test data cleaned up.
+
+## Generic storage bucket RLS (`documents`/`photos`/`attachments`) — RESOLVED, fixed and empirically re-verified live (2026-08-12, fixed 2026-08-13)
+- Full investigation (buckets, policies, path conventions, real feature usage) documented in
+  `docs/migration/PHASE2_CUTOVER_CHECKLIST.md` section 1. Prior policy (`has_active_profile()`
+  only) granted any active signed-in user full CRUD on any object in these 3 buckets, no
+  ownership/path scoping — a user could read/overwrite/delete another active user's files.
+- **Fixed and applied**: `supabase/migrations/0016_storage_generic_buckets_owner_or_admin.sql`
+  — tightens to "owner (`{auth.uid()}/...` path prefix, matching the app's own existing upload
+  convention) or admin (`is_admin()`, same bypass pattern used everywhere else in
+  `0002_rls_policies.sql`)". Zero real files exist in any of these buckets today, so this
+  cannot break existing data; the one real generic-upload code path
+  (`supabaseApiClient.js`'s `integrations.Core.UploadFile`) already writes to
+  `{auth.uid()}/...`, so it continues to work identically for its own uploader after this
+  change. Applied via the SQL Editor 2026-08-13.
+- **Empirically re-verified live** against the `documents` bucket (representative of all 3 —
+  same policy shape applied to all): throwaway admin QA account upload/read(signed
+  URL)/update all succeeded on its own file. Throwaway technician QA account
+  upload/read/update/delete all succeeded on its OWN file. Cross-user: technician's attempts
+  to read/update/delete the admin's file were all denied (verified via ground truth, not just
+  absence of an error — re-read the admin's file afterward as the admin to confirm it still
+  existed and its content was unchanged by the denied update). Admin's read/update/delete of
+  the technician's file all succeeded (admin-bypass working as designed). All test files and
+  both QA accounts deleted and verified gone afterward; real bucket contents confirmed back
+  to 0 files across all 5 buckets.
+
 ## Google Calendar sync removed 2026-08-12 — 3 follow-up actions still needed
 - See `docs/ai-memory/DECISIONS.md`'s 2026-08-12 entry for the full removal record. Web UI,
   `apiClient`/`supabaseApiClient` integration, and all 8 Cloud Functions' code are removed.
@@ -96,7 +206,7 @@
   residue.mjs` exists for exactly this. Always do a full sweep after using throwaway test
   data, not just delete-by-known-id.
 
-## `permissions`/`role_permissions` were never migrated at all, plus a real column-name mismatch vs. the live UI — fixed via new migration, NOT yet applied (found ~2026-08-11)
+## `permissions`/`role_permissions` were never migrated at all, plus a real column-name mismatch vs. the live UI — RESOLVED, applied and verified live (2026-08-12)
 - `migrate-firestore-to-postgres.mjs`'s entity mappings never covered the `permissions`
   (flat catalog) or `role_permissions` (per-role permission arrays) Firestore collections at
   all — confirmed live: 0 rows in both real Postgres tables. Even once populated, two
@@ -106,13 +216,19 @@
   `0001_initial_schema.sql` only ever gave `permissions` a `label` column and no `group`
   column at all. Real Firestore data: 76 `permissions` docs (`name`/`group` fields, e.g.
   `group="Calendar"`), 4 `role_permissions` docs (one per role, each a permissions array).
-- **Fixed, not yet applied**: `supabase/migrations/0014_permissions_name_and_group.sql`
-  (renames `label`→`name`, adds `group` column — safe since both tables are still empty
-  live, confirmed immediately before writing the file) + new
-  `supabase/scripts/migrate-permissions.mjs` (dry-run by default, fans each
-  `role_permissions` doc's array out into normalized `(role, permission_key)` rows matching
-  the existing Postgres shape). **`0014` needs the user to run it via the SQL Editor before
-  `migrate-permissions.mjs --apply`** — same pattern as every prior migration.
+- **Fixed and applied**: `supabase/migrations/0014_permissions_name_and_group.sql` (renames
+  `label`→`name`, adds `group` column) applied by the user via the SQL Editor 2026-08-12,
+  re-verified live immediately after (read-only column probe: `name`/`group` selectable,
+  `label` genuinely gone). `supabase/scripts/migrate-permissions.mjs --apply` then run for
+  real: 76 permissions + 124 role_permissions rows inserted.
+- **Verified independently, not just the script's own success output**: row counts match
+  Firestore exactly (76/124), per-role breakdown matches exactly (accountant 19, admin 76,
+  technician 29, custom 0), 0 FK orphans (`role_permissions.permission_key` against
+  `permissions.key`), 0 duplicate `permissions.key` values, 3/3 content spot-checks
+  (`name`/`group`/`description`) match Firestore verbatim. Re-confirmed end-to-end through
+  the real RLS-protected client path via `qa-clickthrough.mjs` (21/21 checks pass, including
+  `list permissions`/`list role_permissions` returning the correct row counts as a real
+  signed-in user, not the service-role client).
 
 ## `AuthLayout.jsx` silently dropped every caller's `icon`/`title`/`subtitle`/`footer` props — pre-existing since file creation (2026-07-14), unrelated to the migration, fixed 2026-08-11
 - Found directly during Supabase auth QA click-through: every auth page (Login, Register,
