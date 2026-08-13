@@ -4,80 +4,113 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ==========================================================================
+   Design system tokens (Phase 1 of the 2026-08-13 UX/UI redesign)
+   -----------------------------------------------------------------------
+   Calm, light-first, professional business palette. Replaces the previous
+   forced-dark theme (:root and .dark used to hold identical dark values,
+   so the app was permanently dark regardless of the `.dark` class). Now:
+     - :root  = the default, light theme (used everywhere today -- nothing
+       currently toggles the `.dark` class onto <html>, confirmed via a
+       repo-wide search before this change).
+     - .dark  = a real, distinct dark variant, kept available for a future
+       theme toggle, not identical to light anymore.
+   One restrained accent color (blue) is used for primary actions and
+   focus states -- not decoration. Status colors (success/warning/info) are
+   new semantic tokens for badges, kept muted rather than neon.
+   ========================================================================== */
 @layer base {
   :root {
-    --background: 222 47% 6%;
-    --foreground: 210 40% 96%;
-    --card: 222 40% 10%;
-    --card-foreground: 210 40% 96%;
-    --popover: 222 40% 10%;
-    --popover-foreground: 210 40% 96%;
-    --primary: 213 94% 56%;
+    --background: 210 20% 98%;
+    --foreground: 222 47% 11%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+    --primary: 217 91% 45%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 222 30% 16%;
-    --secondary-foreground: 210 40% 90%;
-    --muted: 222 30% 14%;
-    --muted-foreground: 215 20% 55%;
-    --accent: 213 94% 56%;
+    --secondary: 210 25% 95%;
+    --secondary-foreground: 222 30% 22%;
+    --muted: 210 25% 95%;
+    --muted-foreground: 215 16% 47%;
+    --accent: 217 91% 45%;
     --accent-foreground: 0 0% 100%;
-    --destructive: 0 72% 51%;
+    --destructive: 0 72% 42%;
     --destructive-foreground: 0 0% 100%;
-    --border: 222 30% 18%;
-    --input: 222 30% 18%;
-    --ring: 213 94% 56%;
-    --chart-1: 213 94% 56%;
-    --chart-2: 160 60% 45%;
-    --chart-3: 30 80% 55%;
-    --chart-4: 280 65% 60%;
-    --chart-5: 340 75% 55%;
-    --radius: 0.75rem;
+    --success: 152 60% 32%;
+    --success-foreground: 0 0% 100%;
+    --warning: 32 85% 44%;
+    --warning-foreground: 0 0% 100%;
+    --info: 217 91% 45%;
+    --info-foreground: 0 0% 100%;
+    --border: 214 20% 89%;
+    --input: 214 20% 89%;
+    --ring: 217 91% 45%;
+    --chart-1: 217 91% 45%;
+    --chart-2: 160 60% 38%;
+    --chart-3: 30 80% 50%;
+    --chart-4: 262 55% 55%;
+    --chart-5: 340 65% 50%;
+    --radius: 0.625rem;
     --font-heading: 'Inter', ui-sans-serif, system-ui, sans-serif;
     --font-body: 'Inter', ui-sans-serif, system-ui, sans-serif;
     --font-display: 'Inter', ui-sans-serif, system-ui, sans-serif;
     --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    --sidebar-background: 222 40% 8%;
-    --sidebar-foreground: 210 40% 90%;
-    --sidebar-primary: 213 94% 56%;
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 222 30% 22%;
+    --sidebar-primary: 217 91% 45%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 222 30% 14%;
-    --sidebar-accent-foreground: 210 40% 90%;
-    --sidebar-border: 222 30% 18%;
-    --sidebar-ring: 213 94% 56%;
+    --sidebar-accent: 210 25% 95%;
+    --sidebar-accent-foreground: 222 30% 22%;
+    --sidebar-border: 214 20% 89%;
+    --sidebar-ring: 217 91% 45%;
+
+    /* Motion tokens: 150-300ms for normal interactions, per design brief. */
+    --motion-fast: 150ms;
+    --motion-base: 200ms;
+    --motion-slow: 300ms;
+    --motion-ease: cubic-bezier(0.4, 0, 0.2, 1);
   }
 
   .dark {
-    --background: 222 47% 6%;
-    --foreground: 210 40% 96%;
-    --card: 222 40% 10%;
-    --card-foreground: 210 40% 96%;
-    --popover: 222 40% 10%;
-    --popover-foreground: 210 40% 96%;
-    --primary: 213 94% 56%;
-    --primary-foreground: 0 0% 100%;
-    --secondary: 222 30% 16%;
-    --secondary-foreground: 210 40% 90%;
-    --muted: 222 30% 14%;
-    --muted-foreground: 215 20% 55%;
-    --accent: 213 94% 56%;
-    --accent-foreground: 0 0% 100%;
-    --destructive: 0 72% 51%;
+    --background: 222 40% 7%;
+    --foreground: 210 30% 94%;
+    --card: 222 35% 10%;
+    --card-foreground: 210 30% 94%;
+    --popover: 222 35% 10%;
+    --popover-foreground: 210 30% 94%;
+    --primary: 213 90% 60%;
+    --primary-foreground: 222 47% 8%;
+    --secondary: 222 25% 15%;
+    --secondary-foreground: 210 25% 88%;
+    --muted: 222 25% 15%;
+    --muted-foreground: 215 16% 62%;
+    --accent: 213 90% 60%;
+    --accent-foreground: 222 47% 8%;
+    --destructive: 0 70% 55%;
     --destructive-foreground: 0 0% 100%;
-    --border: 222 30% 18%;
-    --input: 222 30% 18%;
-    --ring: 213 94% 56%;
-    --chart-1: 213 94% 56%;
-    --chart-2: 160 60% 45%;
-    --chart-3: 30 80% 55%;
-    --chart-4: 280 65% 60%;
-    --chart-5: 340 75% 55%;
-    --sidebar-background: 222 40% 8%;
-    --sidebar-foreground: 210 40% 90%;
-    --sidebar-primary: 213 94% 56%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 222 30% 14%;
-    --sidebar-accent-foreground: 210 40% 90%;
-    --sidebar-border: 222 30% 18%;
-    --sidebar-ring: 213 94% 56%;
+    --success: 152 50% 45%;
+    --success-foreground: 222 47% 8%;
+    --warning: 32 80% 55%;
+    --warning-foreground: 222 47% 8%;
+    --info: 213 90% 60%;
+    --info-foreground: 222 47% 8%;
+    --border: 222 25% 18%;
+    --input: 222 25% 18%;
+    --ring: 213 90% 60%;
+    --chart-1: 213 90% 60%;
+    --chart-2: 160 55% 48%;
+    --chart-3: 30 80% 58%;
+    --chart-4: 262 55% 65%;
+    --chart-5: 340 65% 60%;
+    --sidebar-background: 222 40% 9%;
+    --sidebar-foreground: 210 25% 88%;
+    --sidebar-primary: 213 90% 60%;
+    --sidebar-primary-foreground: 222 47% 8%;
+    --sidebar-accent: 222 25% 15%;
+    --sidebar-accent-foreground: 210 25% 88%;
+    --sidebar-border: 222 25% 18%;
+    --sidebar-ring: 213 90% 60%;
   }
 }
 
@@ -87,6 +120,43 @@
   }
   body {
     @apply bg-background text-foreground font-body;
+  }
+}
+
+/* Motion primitives (Phase 1). Subtle by design -- 150-300ms, no bounce.
+   Applied selectively per-component, never globally, so the app never feels
+   "constantly moving". */
+@layer utilities {
+  .animate-fade-in {
+    animation: fade-in var(--motion-slow) var(--motion-ease) both;
+  }
+  .animate-slide-up {
+    animation: slide-up var(--motion-slow) var(--motion-ease) both;
+  }
+  .stagger-in > * {
+    animation: slide-up var(--motion-slow) var(--motion-ease) both;
+  }
+  .stagger-in > *:nth-child(1) { animation-delay: 0ms; }
+  .stagger-in > *:nth-child(2) { animation-delay: 40ms; }
+  .stagger-in > *:nth-child(3) { animation-delay: 80ms; }
+  .stagger-in > *:nth-child(4) { animation-delay: 120ms; }
+  .stagger-in > *:nth-child(5) { animation-delay: 160ms; }
+  .stagger-in > *:nth-child(6) { animation-delay: 200ms; }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-in, .animate-slide-up, .stagger-in > * {
+    animation: none;
   }
 }
 

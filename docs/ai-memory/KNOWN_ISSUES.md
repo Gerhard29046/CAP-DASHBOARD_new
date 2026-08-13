@@ -1,5 +1,29 @@
 # Known Issues
 
+## `apiClient.js`'s static Supabase import ships `@supabase/supabase-js` in the production bundle even in Firebase mode — bundle-size issue, NOT a runtime/security issue (found 2026-08-13)
+- A past session's memory claimed a real production build with `VITE_AUTH_BACKEND=firebase`
+  showed "zero Supabase-related code" in the output bundle via `grep`. Re-checked directly
+  during this session's UI redesign work (unrelated change, found incidentally while
+  verifying a real build): `dist/assets/*.js` **does** contain `@supabase/supabase-js` and
+  other Supabase-related strings today. Root cause: `apiClient.js` imports
+  `supabaseApiClient` via a top-level **static** `import` (not inside the `VITE_AUTH_BACKEND
+  === "supabase"` branch) — ES module imports are hoisted and always evaluated regardless of
+  a runtime ternary, so esbuild/Vite cannot tree-shake the whole `supabaseApiClient.js`
+  module graph away just because the ternary picks the Firebase branch at runtime. The
+  earlier "zero Supabase code" claim was either testing a different code state before this
+  or was simply inaccurate — not re-litigated further, not worth the archaeology.
+- **Not a runtime or security regression**: `services/supabase/client.js`'s Supabase client
+  construction is itself lazy (a `Proxy`, deferred to first real `supabase.*` call, not
+  import time — this part of the design is real and correct), and nothing else in Firebase
+  mode ever calls into `supabaseApiClient`. So Supabase code is present but inert/unexecuted
+  when `VITE_AUTH_BACKEND=firebase` — no network calls, no behavior change.
+- **Real cost**: unnecessary bundle size (the production bundle is ~1.6MB, larger than it
+  needs to be for a Firebase-only deploy). Not fixed this session — out of scope for a UI
+  redesign pass; would need either a real dynamic `import()` for the Supabase branch (the
+  exact thing a past session avoided due to a `vite.config.js` top-level-await build error)
+  or a build-time `define`-based dead code elimination approach. Flagged for whoever next
+  works on bundle size or the eventual real cutover.
+
 ## Repeated pattern: unexplained duplicate throwaway QA test users appear ~7s after intentional creation (observed 4x across 2026-08-12/13) — cause NOT identified
 - Across three separate work sessions/days, creating exactly one throwaway QA user via
   `qa-test-user.mjs create` was followed, consistently ~7 seconds later, by a SECOND

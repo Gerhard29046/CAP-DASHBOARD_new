@@ -1,13 +1,24 @@
 import React, { useState, useEffect } from "react";
 import { apiClient } from "@/api/apiClient";
+import { useAuth } from "@/lib/AuthContext";
 import { Link } from "react-router-dom";
 import { Users, Cpu, Wrench, CalendarClock, ChevronRight, Plus, ClipboardList } from "lucide-react";
 import StatCard from "@/components/StatCard";
+import EmptyState from "@/components/EmptyState";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import LogServiceModal from "@/components/LogServiceModal";
 import moment from "moment";
 
+function greeting() {
+  const hour = moment().hour();
+  if (hour < 12) return "Good morning";
+  if (hour < 18) return "Good afternoon";
+  return "Good evening";
+}
+
 export default function Dashboard() {
+  const { user } = useAuth();
   const [stats, setStats] = useState({ clients: 0, machines: 0, services: 0, activeJobs: 0 });
   const [upcoming, setUpcoming] = useState([]);
   const [recentClients, setRecentClients] = useState([]);
@@ -55,17 +66,28 @@ export default function Dashboard() {
 
   useEffect(() => { loadData(); }, []);
 
+  const firstName = (user?.name || user?.full_name || user?.email || "").split(/[\s@]/)[0];
+
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-32">
-        <div className="w-8 h-8 border-4 border-secondary border-t-primary rounded-full animate-spin" />
+      <div className="max-w-7xl mx-auto space-y-6">
+        <div className="space-y-2">
+          <Skeleton className="h-8 w-64" />
+          <Skeleton className="h-4 w-96" />
+        </div>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+          {[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-20 rounded-xl" />)}
+        </div>
+        <div className="grid lg:grid-cols-2 gap-4">
+          <Skeleton className="h-72 rounded-xl" />
+          <Skeleton className="h-72 rounded-xl" />
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="max-w-lg mx-auto">
-      {/* Log Service Modal */}
+    <div className="max-w-7xl mx-auto">
       {showLogService && (
         <LogServiceModal
           onClose={() => setShowLogService(false)}
@@ -73,79 +95,112 @@ export default function Dashboard() {
         />
       )}
 
-      <div className="mb-6">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-heading font-bold text-foreground">Dashboard</h1>
-            <p className="text-sm text-muted-foreground mt-0.5">Overview of your HVAC operations</p>
-          </div>
-          <Button onClick={() => setShowLogService(true)} className="rounded-xl h-11 px-4 gap-2 shrink-0">
-            <Plus className="w-4 h-4" />
-            <span className="hidden sm:inline">Log New Service</span>
-            <span className="sm:hidden">Log</span>
-          </Button>
+      {/* Welcome / context header */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8 animate-fade-in">
+        <div>
+          <h1 className="text-2xl md:text-3xl font-heading font-bold text-foreground">
+            {greeting()}{firstName ? `, ${firstName}` : ""}
+          </h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            {upcoming.length > 0
+              ? `${upcoming.length} service${upcoming.length === 1 ? "" : "s"} due in the next 30 days.`
+              : "Here's what needs attention today."}
+          </p>
         </div>
+        <Button onClick={() => setShowLogService(true)} className="gap-2 shrink-0 self-start sm:self-auto">
+          <Plus className="w-4 h-4" />
+          Log New Service
+        </Button>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
-        <StatCard icon={Users} label="Clients" value={stats.clients} />
-        <StatCard icon={Cpu} label="Machines" value={stats.machines} accent="bg-amber-500/15 text-amber-400" />
-        <StatCard icon={Wrench} label="Services" value={stats.services} accent="bg-violet-500/15 text-violet-400" />
-        <StatCard icon={ClipboardList} label="Active Jobs" value={stats.activeJobs} accent="bg-emerald-500/15 text-emerald-400" />
+      {/* Key operational stats */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-8 stagger-in">
+        <StatCard icon={Users} label="Clients" value={stats.clients} accent="primary" />
+        <StatCard icon={Cpu} label="Machines" value={stats.machines} accent="warning" />
+        <StatCard icon={Wrench} label="Services logged" value={stats.services} accent="info" />
+        <StatCard icon={ClipboardList} label="Active jobs" value={stats.activeJobs} accent="success" />
       </div>
 
-      {/* Upcoming Services */}
-      <div className="bg-card rounded-2xl border border-border p-5 mb-4">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="font-heading font-semibold text-foreground flex items-center gap-2">
-            <CalendarClock className="w-5 h-5 text-primary" /> Upcoming Services
-          </h2>
-          <Link to="/upcoming-services" className="text-xs text-primary hover:underline">View all</Link>
-        </div>
-        {upcoming.length === 0 ? (
-          <p className="text-sm text-muted-foreground py-4 text-center">No upcoming services in the next 30 days</p>
-        ) : (
-          <div className="space-y-2">
-            {upcoming.map(s => (
-              <Link key={s.id} to={`/machines/${s.machine_id}`} className="flex items-center justify-between p-3 rounded-xl bg-secondary/50 hover:bg-secondary transition-colors group">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-foreground truncate">
-                    {s.machine ? `${s.machine.brand} ${s.machine.model}` : "Machine"}
-                  </p>
-                  <p className="text-xs text-muted-foreground truncate">
-                    {s.client?.company_name || "—"} · {moment(s.next_service_due).format("MMM D, YYYY")}
-                  </p>
-                </div>
-                <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-foreground shrink-0" />
-              </Link>
-            ))}
+      {/* Primary + secondary panels */}
+      <div className="grid lg:grid-cols-2 gap-4 lg:gap-6">
+        <section className="bg-card rounded-xl border border-border animate-slide-up" style={{ animationDelay: "80ms" }}>
+          <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+            <h2 className="font-heading font-semibold text-foreground flex items-center gap-2">
+              <CalendarClock className="w-4.5 h-4.5 text-primary" />
+              Upcoming work
+            </h2>
+            <Link to="/upcoming-services" className="text-xs font-medium text-primary hover:underline">
+              View all
+            </Link>
           </div>
-        )}
-      </div>
+          {upcoming.length === 0 ? (
+            <EmptyState
+              icon={CalendarClock}
+              title="Nothing due soon"
+              description="No services are scheduled in the next 30 days."
+            />
+          ) : (
+            <div className="divide-y divide-border">
+              {upcoming.map(s => (
+                <Link
+                  key={s.id}
+                  to={`/machines/${s.machine_id}`}
+                  className="flex items-center justify-between gap-3 px-5 py-3.5 hover:bg-secondary/60 transition-colors duration-150 group"
+                >
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-foreground truncate">
+                      {s.machine ? `${s.machine.brand} ${s.machine.model}` : "Machine"}
+                    </p>
+                    <p className="text-xs text-muted-foreground truncate mt-0.5">
+                      {s.client?.company_name || "—"} &middot; {moment(s.next_service_due).format("MMM D, YYYY")}
+                    </p>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-foreground group-hover:translate-x-0.5 transition-all duration-150 shrink-0" />
+                </Link>
+              ))}
+            </div>
+          )}
+        </section>
 
-      {/* Recent Clients */}
-      <div className="bg-card rounded-2xl border border-border p-5">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="font-heading font-semibold text-foreground flex items-center gap-2">
-            <Users className="w-5 h-5 text-primary" /> Recent Clients
-          </h2>
-          <Link to="/clients" className="text-xs text-primary hover:underline">View all</Link>
-        </div>
-        {recentClients.length === 0 ? (
-          <p className="text-sm text-muted-foreground py-4 text-center">No clients yet</p>
-        ) : (
-          <div className="space-y-2">
-            {recentClients.map(c => (
-              <Link key={c.id} to={`/clients/${c.id}`} className="flex items-center justify-between p-3 rounded-xl bg-secondary/50 hover:bg-secondary transition-colors group">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-foreground truncate">{c.company_name}</p>
-                  <p className="text-xs text-muted-foreground truncate">{c.contact_person || "No contact"}</p>
-                </div>
-                <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-foreground shrink-0" />
-              </Link>
-            ))}
+        <section className="bg-card rounded-xl border border-border animate-slide-up" style={{ animationDelay: "140ms" }}>
+          <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+            <h2 className="font-heading font-semibold text-foreground flex items-center gap-2">
+              <Users className="w-4.5 h-4.5 text-primary" />
+              Recent clients
+            </h2>
+            <Link to="/clients" className="text-xs font-medium text-primary hover:underline">
+              View all
+            </Link>
           </div>
-        )}
+          {recentClients.length === 0 ? (
+            <EmptyState
+              icon={Users}
+              title="No clients yet"
+              description="Add your first client to start tracking machines and service history."
+              action={
+                <Button asChild size="sm">
+                  <Link to="/clients/new">Add Client</Link>
+                </Button>
+              }
+            />
+          ) : (
+            <div className="divide-y divide-border">
+              {recentClients.map(c => (
+                <Link
+                  key={c.id}
+                  to={`/clients/${c.id}`}
+                  className="flex items-center justify-between gap-3 px-5 py-3.5 hover:bg-secondary/60 transition-colors duration-150 group"
+                >
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-foreground truncate">{c.company_name}</p>
+                    <p className="text-xs text-muted-foreground truncate mt-0.5">{c.contact_person || "No contact"}</p>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-foreground group-hover:translate-x-0.5 transition-all duration-150 shrink-0" />
+                </Link>
+              ))}
+            </div>
+          )}
+        </section>
       </div>
     </div>
   );

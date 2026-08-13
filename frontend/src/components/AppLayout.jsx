@@ -114,7 +114,7 @@ export default function AppLayout() {
       )}
 
       <div className="flex">
-        <aside className="hidden md:flex flex-col w-60 min-h-screen border-r border-border bg-card/50 p-4 sticky top-0 h-screen">
+        <aside className="hidden md:flex flex-col w-60 min-h-screen border-r border-border bg-sidebar p-4 sticky top-0 h-screen">
           <div className="flex items-center gap-2 px-2 mb-6">
             <Wind className="w-7 h-7 text-primary" />
             <span className="font-heading font-bold text-xl text-foreground">
