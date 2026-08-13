@@ -17,6 +17,7 @@ import {
   AlertDialogTitle, AlertDialogTrigger
 } from "@/components/ui/alert-dialog";
 import EmptyState from "@/components/EmptyState";
+import NoteRecord from "@/components/NoteRecord";
 import MachineForm from "@/components/MachineForm";
 import moment from "moment";
 
@@ -74,24 +75,6 @@ function InfoRow({ icon: Icon, label, value, href }) {
           <p className="text-sm text-foreground">{value}</p>
         )}
       </div>
-    </div>
-  );
-}
-
-// Reusable note-record treatment (design system pattern, shared with Machine
-// Detail). Today a client only has one free-text `notes` field -- this
-// component presents it as a single record so the same visual pattern can
-// later host a real list of author/date-stamped notes without a redesign.
-// Deliberately NOT chat-bubble styling -- author + timestamp + body, like a
-// business record.
-function NoteRecord({ author, date, children }) {
-  return (
-    <div className="py-4 border-b border-border last:border-0">
-      <div className="flex items-baseline gap-2 mb-1.5">
-        {author && <span className="text-sm font-medium text-foreground">{author}</span>}
-        {date && <span className="text-xs text-muted-foreground">{date}</span>}
-      </div>
-      <p className="text-sm text-foreground/90 leading-relaxed whitespace-pre-wrap">{children}</p>
     </div>
   );
 }

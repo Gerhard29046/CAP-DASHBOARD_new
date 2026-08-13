@@ -16,6 +16,7 @@ import {
   AlertDialogTitle, AlertDialogTrigger
 } from "@/components/ui/alert-dialog";
 import EmptyState from "@/components/EmptyState";
+import NoteRecord from "@/components/NoteRecord";
 import MachineForm from "@/components/MachineForm";
 import ServiceForm from "@/components/ServiceForm";
 import moment from "moment";
@@ -29,17 +30,6 @@ function InfoRow({ icon: Icon, label, value, highlight }) {
         <p className="text-xs text-muted-foreground mb-0.5">{label}</p>
         <p className={`text-sm ${highlight ? "text-success font-medium" : "text-foreground"}`}>{value}</p>
       </div>
-    </div>
-  );
-}
-
-// Same note-record pattern as ClientDetail.jsx -- deliberately shared visual
-// language so equipment notes and client notes feel like the same system.
-function NoteRecord({ date, children }) {
-  return (
-    <div className="py-4 border-b border-border last:border-0">
-      {date && <p className="text-xs text-muted-foreground mb-1.5">{date}</p>}
-      <p className="text-sm text-foreground/90 leading-relaxed whitespace-pre-wrap">{children}</p>
     </div>
   );
 }
