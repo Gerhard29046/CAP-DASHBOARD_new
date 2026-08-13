@@ -273,10 +273,11 @@ export const supabaseApiClient = {
     JobCardLine: makeEntity("job_card_lines"),
     Site: makeEntity("sites"),
     User: makeEntity("users"),
-    // Mirrors apiClient.js's Firebase DashboardNote entity + the new
-    // supabase/migrations/0017_dashboard_notes.sql table (not yet applied) -- kept in
-    // parity even though this backend is dormant (VITE_AUTH_BACKEND=firebase).
-    DashboardNote: makeEntity("dashboard_notes"),
+    // Dashboard notes are NOT exposed via a plain table entity here -- see
+    // supabase/migrations/0017_dashboard_notes.sql: RLS has zero policies (deny-all for
+    // anon/authenticated), so a direct .from("dashboard_notes") call would always fail
+    // regardless of backend. Real access goes through the dashboardNotes Cloud Function
+    // (functions/lib/dashboardNotes.js), called directly from StickyNotes.jsx.
   },
   integrations: {
     Core: {
