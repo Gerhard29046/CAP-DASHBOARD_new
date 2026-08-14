@@ -1,5 +1,8 @@
 import { supabase } from "@/services/supabase/client";
 import { optimizeImageForUpload } from "@/lib/imageOptimize";
+import { RECORD_PHOTO_NAMESPACES, buildRecordPhotoPath } from "@/lib/recordPhotoPath";
+
+export { RECORD_PHOTO_NAMESPACES, buildRecordPhotoPath };
 
 // Supabase Storage helpers, mirroring apiClient.js's Firebase Storage upload path
 // (frontend/src/api/apiClient.js's `integrations.Core.UploadFile`, now sharing the same
@@ -50,4 +53,42 @@ export async function getSignedUrl(bucket, path, expiresInSeconds = 60 * 60) {
 export async function deleteFile(bucket, path) {
   const { error } = await supabase.storage.from(bucket).remove([path]);
   if (error) throw error;
+}
+
+// Record-scoped, PERMANENT-path photo storage for service_records.photos /
+// job_cards.arrival_photos (Phase 3 -- see docs/ai-memory/DECISIONS.md's matching entry and
+// supabase/migrations/0024_photos_bucket_record_scoped_rls.sql). These two columns must store
+// a permanent Storage object path, never a signed URL -- the previous implementation stored a
+// 7-day signed URL directly (via apiClient.integrations.Core.UploadFile), which silently went
+// stale after a week even though the underlying file was still safely in Storage. That is not
+// acceptable for a service-history/liability record that must remain useful indefinitely.
+// Callers must call getRecordPhotoSignedUrl() fresh at display time and must NEVER write its
+// result back into service_records.photos / job_cards.arrival_photos.
+//
+// RECORD_PHOTO_NAMESPACES / buildRecordPhotoPath() live in lib/recordPhotoPath.js (pure, no
+// Supabase dependency, unit-tested directly) and are re-exported here for convenience.
+
+// Uploads to the private `photos` bucket under a record-scoped path. Returns the PERMANENT
+// object path -- the caller is responsible for persisting this (never a signed URL) into the
+// relevant record's photos/arrival_photos jsonb array via a normal entity update()/create().
+export async function uploadRecordPhoto(namespace, recordId, file) {
+  const optimized = await optimizeImageForUpload(file);
+  const path = buildRecordPhotoPath(namespace, recordId, optimized.name);
+  await uploadFile(BUCKETS.photos, path, optimized, { optimizeImage: false });
+  return path;
+}
+
+// Fresh signed URL for displaying a stored path -- call this at render/display time, never
+// persist the result back into the database (it expires; the stored path does not).
+export async function getRecordPhotoSignedUrl(path, expiresInSeconds = 60 * 60) {
+  return getSignedUrl(BUCKETS.photos, path, expiresInSeconds);
+}
+
+// Best-effort Storage delete for a record photo. Callers must remove the path from the
+// record's jsonb array via their own update() regardless of whether this succeeds -- a
+// Storage-delete failure (e.g. permission edge case) must never block the database update.
+// See buildRecordPhotoPath()'s namespace/path-shape contract above; this does not construct a
+// path, it only removes an already-known one.
+export async function deleteRecordPhoto(path) {
+  await deleteFile(BUCKETS.photos, path);
 }

@@ -27,6 +27,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import EmptyState from "@/components/EmptyState";
+import RecordPhotoGallery from "@/components/RecordPhotoGallery";
 import moment from "moment";
 
 const LINE_TYPES = ["Labour", "Part / Product", "Diagnosis", "Other"];
@@ -672,17 +673,11 @@ export default function JobCardDetail() {
                 Arrival Photos
               </h2>
 
-              <div className="flex flex-wrap gap-2">
-                {jobCard.arrival_photos.map((url, index) => (
-                  <a key={index} href={url} target="_blank" rel="noopener noreferrer">
-                    <img
-                      src={url}
-                      alt=""
-                      className="w-24 h-24 rounded-xl object-cover border border-border hover:border-primary/50 transition-colors"
-                    />
-                  </a>
-                ))}
-              </div>
+              <RecordPhotoGallery
+                photos={jobCard.arrival_photos}
+                containerClassName="flex flex-wrap gap-2"
+                imgClassName="w-24 h-24 rounded-xl object-cover border border-border hover:border-primary/50 transition-colors"
+              />
             </div>
           )}
 

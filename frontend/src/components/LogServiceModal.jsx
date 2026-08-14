@@ -5,6 +5,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
+import { uploadRecordPhoto, deleteRecordPhoto, RECORD_PHOTO_NAMESPACES } from "@/services/supabase/storage";
+import { useSignedPhotoUrls } from "@/hooks/useSignedPhotoUrls";
 
 const STEPS = ["Select Client", "Select Machine", "Service Details"];
 
@@ -22,9 +24,18 @@ export default function LogServiceModal({ onClose, onDone }) {
     notes: "",
     next_service_due: "",
   });
+  // Phase 3 (permanent Storage paths, not signed URLs -- see docs/ai-memory/DECISIONS.md and
+  // migration 0024_photos_bucket_record_scoped_rls.sql): `photos` holds Storage object PATHS,
+  // never a URL. `recordId` is the service_records.id created as soon as a machine is picked
+  // (create-then-update design), so photo uploads have a real record to scope their path
+  // under. Persisted to the database immediately after each upload/removal via update() --
+  // never held only in local state until final submit.
+  const [recordId, setRecordId] = useState(null);
   const [photos, setPhotos] = useState([]);
   const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState(null);
   const [saving, setSaving] = useState(false);
+  const { urls: photoUrls } = useSignedPhotoUrls(photos);
 
   useEffect(() => {
     apiClient.entities.Client.list().then(setClients);
@@ -42,33 +53,67 @@ export default function LogServiceModal({ onClose, onDone }) {
 
   const setField = (k, v) => setForm(p => ({ ...p, [k]: v }));
 
+  // Machine selection is the earliest point machine_id is known -- create the service record
+  // here (create-then-update design, per docs/ai-memory/DECISIONS.md's Phase 2 sequencing
+  // resolution) so photo uploads in the next step have a real id to scope their path under.
+  // Invisible to the user: no extra button, no spinner, fires exactly where they're already
+  // navigating.
+  const handleSelectMachine = async (m) => {
+    setSelectedMachine(m);
+    setStep(2);
+    try {
+      const created = await apiClient.entities.ServiceRecord.create({ machine_id: m.id });
+      setRecordId(created.id);
+    } catch (err) {
+      setUploadError("Could not start this service record. Photos cannot be added right now.");
+    }
+  };
+
   const handleUploadPhoto = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (!recordId) {
+      setUploadError("This service record hasn't been created yet. Please try again.");
+      e.target.value = "";
+      return;
+    }
     setUploading(true);
+    setUploadError(null);
     try {
-      const { file_url } = await apiClient.integrations.Core.UploadFile({ file });
-      setPhotos(prev => [...prev, file_url]);
-    } catch (err) { /* silently fail */ }
+      const path = await uploadRecordPhoto(RECORD_PHOTO_NAMESPACES.serviceRecord, recordId, file);
+      const next = [...photos, path];
+      setPhotos(next);
+      await apiClient.entities.ServiceRecord.update(recordId, { photos: next });
+    } catch (err) {
+      setUploadError(err?.message || "Photo upload failed. Please try again.");
+    }
     setUploading(false);
     e.target.value = "";
   };
 
-  const removePhoto = (url) => {
-    setPhotos(prev => prev.filter(p => p !== url));
+  const removePhoto = async (path) => {
+    const next = photos.filter(p => p !== path);
+    setPhotos(next);
+    if (recordId) {
+      try {
+        await apiClient.entities.ServiceRecord.update(recordId, { photos: next });
+      } catch (err) {
+        setUploadError(err?.message || "Could not remove that photo. Please try again.");
+        setPhotos(photos); // roll back local state if the database update itself failed
+        return;
+      }
+    }
+    // Best-effort Storage cleanup -- must not block/undo the database update above, which is
+    // already the source of truth for what the user asked for (per the approved delete design).
+    deleteRecordPhoto(path).catch(() => {});
   };
 
   const handleSubmit = async () => {
-    if (!selectedMachine || !form.service_date) return;
+    if (!selectedMachine || !form.service_date || !recordId) return;
     setSaving(true);
-    // BUG FIX (2026-08-13): photos were uploaded to Storage and shown in this modal for
-    // review, but the create payload never actually included them -- see
-    // docs/ai-memory/PROJECT_STATE.md's 2026-08-06 entry. Now persisted for real.
-    await apiClient.entities.ServiceRecord.create({
-      machine_id: selectedMachine.id,
-      ...form,
-      photos,
-    });
+    // Photos are already persisted incrementally (see handleUploadPhoto) -- finalize the
+    // remaining fields via update(), not a second create().
+    await apiClient.entities.ServiceRecord.update(recordId, { ...form });
     setSaving(false);
     onDone?.();
   };
@@ -149,7 +194,7 @@ export default function LogServiceModal({ onClose, onDone }) {
                 machines.map(m => (
                   <button
                     key={m.id}
-                    onClick={() => { setSelectedMachine(m); setStep(2); }}
+                    onClick={() => handleSelectMachine(m)}
                     className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-secondary transition-colors text-left"
                   >
                     <div className="min-w-0">
@@ -200,11 +245,18 @@ export default function LogServiceModal({ onClose, onDone }) {
               {/* Photos */}
               <div>
                 <Label>Photos</Label>
+                {uploadError && <p className="text-xs text-destructive mt-1">{uploadError}</p>}
                 <div className="flex flex-wrap gap-2 mt-1">
-                  {photos.map((url, i) => (
-                    <div key={i} className="relative w-20 h-20 rounded-xl overflow-hidden bg-secondary border border-border">
-                      <img src={url} alt="" className="w-full h-full object-cover" />
-                      <button onClick={() => removePhoto(url)} className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/60 flex items-center justify-center">
+                  {photos.map((path, i) => (
+                    <div key={path + i} className="relative w-20 h-20 rounded-xl overflow-hidden bg-secondary border border-border">
+                      {photoUrls[path] ? (
+                        <img src={photoUrls[path]} alt="" className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center">
+                          <Camera className="w-4 h-4 text-muted-foreground animate-pulse" />
+                        </div>
+                      )}
+                      <button onClick={() => removePhoto(path)} className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/60 flex items-center justify-center">
                         <X className="w-3 h-3 text-white" />
                       </button>
                     </div>

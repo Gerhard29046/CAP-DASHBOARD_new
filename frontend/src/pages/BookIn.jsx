@@ -8,6 +8,8 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import moment from "moment";
+import { uploadRecordPhoto, deleteRecordPhoto, RECORD_PHOTO_NAMESPACES } from "@/services/supabase/storage";
+import { useSignedPhotoUrls } from "@/hooks/useSignedPhotoUrls";
 
 
 const CONDITIONS = ["Good", "Fair", "Poor", "Damaged"];
@@ -36,13 +38,33 @@ export default function BookIn() {
     technician: "",
     job_number: `JOB-${Date.now().toString().slice(-6)}`,
   });
+  // Phase 3 (permanent Storage paths, not signed URLs -- see docs/ai-memory/DECISIONS.md and
+  // migration 0024_photos_bucket_record_scoped_rls.sql): `photos` holds Storage object PATHS,
+  // never a URL. `jobCardId` is the job_cards.id created as soon as client+machine are both
+  // known (create-then-update design), so photo uploads have a real record to scope their
+  // path under. Persisted immediately after each upload/removal via update().
+  const [jobCardId, setJobCardId] = useState(null);
   const [photos, setPhotos] = useState([]);
   const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState(null);
   const [saving, setSaving] = useState(false);
   const [previousJobs, setPreviousJobs] = useState([]);
   const [jobCardSettings, setJobCardSettings] = useState(null);
+  const { urls: photoUrls } = useSignedPhotoUrls(photos);
 
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
+
+  // Fires exactly once, the moment both client and machine are known -- covers both entry
+  // paths (the presetMachineId query-param resolution and the client/machine picker flow),
+  // guarded by `!jobCardId` so it can't double-create on a re-render. Invisible to the user:
+  // no extra button, no spinner.
+  useEffect(() => {
+    if (selectedMachineId && client?.id && !jobCardId) {
+      apiClient.entities.JobCard.create({ client_id: String(client.id), machine_id: String(selectedMachineId) })
+        .then((created) => setJobCardId(created.id))
+        .catch(() => setUploadError("Could not start this job card. Photos cannot be added right now."));
+    }
+  }, [selectedMachineId, client, jobCardId]);
 
   // Job Card numbering prefix (Settings > Job Cards) -- real effect, not a placeholder.
   useEffect(() => {
@@ -93,17 +115,45 @@ export default function BookIn() {
   const handleUploadPhoto = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (!jobCardId) {
+      setUploadError("This job card hasn't been created yet. Please try again.");
+      e.target.value = "";
+      return;
+    }
     setUploading(true);
-    const { file_url } = await apiClient.integrations.Core.UploadFile({ file });
-    setPhotos(prev => [...prev, file_url]);
+    setUploadError(null);
+    try {
+      const path = await uploadRecordPhoto(RECORD_PHOTO_NAMESPACES.jobCard, jobCardId, file);
+      const next = [...photos, path];
+      setPhotos(next);
+      await apiClient.entities.JobCard.update(jobCardId, { arrival_photos: next });
+    } catch (err) {
+      setUploadError(err?.message || "Photo upload failed. Please try again.");
+    }
     setUploading(false);
     e.target.value = "";
+  };
+
+  const removePhoto = async (path) => {
+    const next = photos.filter(p => p !== path);
+    setPhotos(next);
+    if (jobCardId) {
+      try {
+        await apiClient.entities.JobCard.update(jobCardId, { arrival_photos: next });
+      } catch (err) {
+        setUploadError(err?.message || "Could not remove that photo. Please try again.");
+        setPhotos(photos); // roll back local state if the database update itself failed
+        return;
+      }
+    }
+    // Best-effort Storage cleanup -- must not block/undo the database update above.
+    deleteRecordPhoto(path).catch(() => {});
   };
 
  const handleSubmit = async (e) => {
   e.preventDefault();
 
-  if (!selectedMachineId || !client?.id) {
+  if (!selectedMachineId || !client?.id || !jobCardId) {
     alert("Please select a client and machine first.");
     return;
   }
@@ -111,9 +161,9 @@ export default function BookIn() {
   setSaving(true);
 
   try {
-   const card = await apiClient.entities.JobCard.create({
-  client_id: String(client.id),
-  machine_id: String(selectedMachineId),
+   // Photos are already persisted incrementally (see handleUploadPhoto) -- finalize the
+   // remaining fields via update(), not a second create().
+   const card = await apiClient.entities.JobCard.update(jobCardId, {
   job_number: form.job_number,
   status: jobCardSettings?.default_status || "Booked In",
   date_received: form.date_booked_in,
@@ -129,11 +179,6 @@ export default function BookIn() {
   accessories_received: form.accessories_received,
   arrival_condition: form.condition_on_arrival,
   arrival_condition_notes: form.condition_notes,
-
-  // BUG FIX (2026-08-13): photo URLs were being stuffed into technician_notes as plain
-  // text instead of the dedicated arrival_photos field JobCardDetail.jsx actually renders
-  // as a photo gallery -- see docs/ai-memory/PROJECT_STATE.md's 2026-08-06 entry.
-  arrival_photos: photos,
 });
     navigate(`/job-cards/${card.id}`);
   } catch (error) {
@@ -277,11 +322,18 @@ export default function BookIn() {
           </div>
           <div>
             <Label>Arrival Photos</Label>
+            {uploadError && <p className="text-xs text-destructive mt-1">{uploadError}</p>}
             <div className="flex flex-wrap gap-2 mt-2">
-              {photos.map((url, i) => (
-                <div key={i} className="relative w-20 h-20 rounded-xl overflow-hidden bg-secondary border border-border">
-                  <img src={url} alt="" className="w-full h-full object-cover" />
-                  <button type="button" onClick={() => setPhotos(p => p.filter((_, j) => j !== i))} className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/60 flex items-center justify-center">
+              {photos.map((path, i) => (
+                <div key={path + i} className="relative w-20 h-20 rounded-xl overflow-hidden bg-secondary border border-border">
+                  {photoUrls[path] ? (
+                    <img src={photoUrls[path]} alt="" className="w-full h-full object-cover" />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center">
+                      <Camera className="w-4 h-4 text-muted-foreground animate-pulse" />
+                    </div>
+                  )}
+                  <button type="button" onClick={() => removePhoto(path)} className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/60 flex items-center justify-center">
                     <X className="w-3 h-3 text-white" />
                   </button>
                 </div>

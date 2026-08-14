@@ -1,8 +1,12 @@
 package com.CAPDATABASE.capdatabase
 
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
@@ -12,6 +16,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
@@ -19,6 +24,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -68,6 +75,7 @@ import com.CAPDATABASE.capdatabase.ui.theme.CapSuccessGreen
 import com.CAPDATABASE.capdatabase.ui.theme.CapTheme
 import com.CAPDATABASE.capdatabase.ui.theme.CapWarningAmber
 import com.CAPDATABASE.capdatabase.ui.theme.Spacing
+import coil3.compose.AsyncImage
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.text.DecimalFormat
@@ -88,7 +96,8 @@ class MainViewModel @Inject constructor(
     private val auth: AuthRepository,
     private val statusRepo: StatusRepository,
     private val recordsRepository: RecordsRepository,
-    private val googleCalendarRepository: GoogleCalendarRepository
+    private val googleCalendarRepository: GoogleCalendarRepository,
+    private val storageRepository: SupabaseStorageRepository
 ) : ViewModel() {
     var state by mutableStateOf(AuthState())
         private set
@@ -178,6 +187,42 @@ class MainViewModel @Inject constructor(
             .onSuccess { actionMessage = "$label deleted." }
             .onFailure { actionMessage = it.message ?: "Unable to delete $label." }
     }
+
+    /**
+     * E2 Photo Upload (service_records.photos / job_cards.arrival_photos, record-scoped
+     * permanent Storage paths per migration 0024). Creates a record immediately and returns its
+     * id -- used by the Log New Service / Book In screens to establish a real service_records/
+     * job_cards row before any photo can be uploaded (a photo's Storage path is scoped under
+     * the record's own id). Unlike [save], this is a direct suspend call rather than
+     * fire-and-forget, so the caller can use the returned id right away; the caller is
+     * responsible for catching failures (matches [uploadRecordPhoto]/[createPhotoSignedUrl]/
+     * [deleteRecordPhoto] below -- these are thin, propagating wrappers, not another
+     * fire-and-forget layer).
+     */
+    suspend fun createRecordNow(collection: String, fields: Map<String, Any?>): String =
+        recordsRepository.create(collection, fields)
+
+    /** Sibling of [createRecordNow] for the incremental photos/arrival_photos array update
+     *  after each upload -- a direct suspend call, deliberately NOT routed through [save], so
+     *  it doesn't touch [actionMessage]/trigger a stray "saved" toast on every single photo
+     *  add. The screen's own final submit still uses [save] for its existing success-message
+     *  UX, now as an update (non-null id) instead of a create. */
+    suspend fun updateRecordNow(collection: String, id: String, fields: Map<String, Any?>) =
+        recordsRepository.update(collection, id, fields)
+
+    /** Uploads a photo to a record-scoped Storage path and returns the PERMANENT path. The
+     *  caller must persist this path into the record's photos/arrival_photos array via [save]
+     *  (as an update) -- never persist the result of [createPhotoSignedUrl]. */
+    suspend fun uploadRecordPhoto(namespace: String, recordId: String, bytes: ByteArray, contentType: String, fileName: String): String =
+        storageRepository.uploadPhoto(namespace, recordId, bytes, contentType, fileName)
+
+    /** Fresh signed URL for displaying an already-stored path -- never persist the result, it
+     *  expires; the stored path does not. */
+    suspend fun createPhotoSignedUrl(path: String): String = storageRepository.createSignedUrl(path)
+
+    /** Best-effort Storage delete. Callers must remove the path from the record's array via
+     *  [save] regardless of whether this succeeds. */
+    suspend fun deleteRecordPhoto(path: String) = storageRepository.deletePhoto(path)
 
     fun clearMessage() { actionMessage = null }
     fun checkHealth() = viewModelScope.launch { statusRepo.checkHealth() }
@@ -498,8 +543,8 @@ private fun ScreenContent(selected: String, vm: MainViewModel, user: CapUser, on
         "Dashboard" -> DashboardScreen(data, user, onNavigate)
         "Clients" -> ClientsScreen(data, user, vm::save)
         "Machines" -> MachinesScreen(data, user, vm::save)
-        "Services" -> ServicesScreen(data, user, vm::save)
-        "Jobs" -> JobsScreen(data, user, vm::save)
+        "Services" -> ServicesScreen(data, user, vm::save, vm)
+        "Jobs" -> JobsScreen(data, user, vm::save, vm)
         "Calendar" -> CalendarScreen(data, user, vm)
         "Knowledge Base" -> KnowledgeBaseScreen(data, user, vm::save)
         "Invoices" -> InvoiceScreen(data)
@@ -507,8 +552,8 @@ private fun ScreenContent(selected: String, vm: MainViewModel, user: CapUser, on
         "Status" -> StatusScreen(vm)
         "More" -> MoreScreen(user, onNavigate, vm::logout)
         "Account" -> AccountScreen(user, vm::logout)
-        "LogNewService" -> LogNewServiceScreen(data.collection("clients"), data.collection("machines"), vm::save, vm.actionMessage, { onNavigate("Dashboard") }) { onNavigate("Dashboard") }
-        "BookIn" -> BookInScreen(data.collection("clients"), data.collection("machines"), vm::save, vm.actionMessage, { onNavigate("Dashboard") }) { onNavigate("Dashboard") }
+        "LogNewService" -> LogNewServiceScreen(data.collection("clients"), data.collection("machines"), vm::save, vm.actionMessage, vm, { onNavigate("Dashboard") }) { onNavigate("Dashboard") }
+        "BookIn" -> BookInScreen(data.collection("clients"), data.collection("machines"), vm::save, vm.actionMessage, vm, { onNavigate("Dashboard") }) { onNavigate("Dashboard") }
     }
 }
 
@@ -1123,6 +1168,7 @@ private fun ServiceRecordDetailScreen(
     client: CapRecord?,
     user: CapUser,
     save: (String, String?, Map<String, Any?>, String) -> Unit,
+    vm: MainViewModel,
     onBack: () -> Unit,
     onEdit: () -> Unit
 ) {
@@ -1152,6 +1198,15 @@ private fun ServiceRecordDetailScreen(
                             ).forEach { (label, value) -> CapDetailField(label, value) }
                         }
                     }
+                    val photos = stringList(service.fields["photos"])
+                    if (photos.isNotEmpty()) {
+                        CapCard {
+                            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                                CapSectionHeader("Photos")
+                                SignedPhotoStrip(photos, vm)
+                            }
+                        }
+                    }
                     if (user.hasPermission("services.edit")) {
                         CapSecondaryButton(
                             text = "Edit",
@@ -1159,6 +1214,35 @@ private fun ServiceRecordDetailScreen(
                             modifier = Modifier.padding(top = Spacing.sm)
                         )
                     }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Read-only display of already-uploaded record photos (E2 Photo Upload): [paths] are PERMANENT
+ * Storage paths (service_records.photos / job_cards.arrival_photos), never a signed URL. A
+ * fresh signed URL is resolved per path on composition and held only in memory for display --
+ * never persisted back into the record. Shared by [ServiceRecordDetailScreen]/[JobDetailScreen]
+ * rather than duplicated.
+ */
+@Composable
+private fun SignedPhotoStrip(paths: List<String>, vm: MainViewModel) {
+    var urls by remember(paths) { mutableStateOf<Map<String, String>>(emptyMap()) }
+    LaunchedEffect(paths) {
+        val resolved = mutableMapOf<String, String>()
+        paths.forEach { path ->
+            runCatching { vm.createPhotoSignedUrl(path) }.getOrNull()?.let { resolved[path] = it }
+        }
+        urls = resolved
+    }
+    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+        paths.forEach { path ->
+            Box(Modifier.size(88.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) {
+                val url = urls[path]
+                if (url != null) {
+                    AsyncImage(model = url, contentDescription = null, modifier = Modifier.fillMaxSize())
                 }
             }
         }
@@ -1176,6 +1260,7 @@ private fun LogNewServiceScreen(
     machines: List<CapRecord>,
     save: (String, String?, Map<String, Any?>, String) -> Unit,
     actionMessage: String?,
+    vm: MainViewModel,
     onBack: () -> Unit,
     onSaved: () -> Unit
 ) {
@@ -1189,6 +1274,65 @@ private fun LogNewServiceScreen(
     var nextServiceDue by remember { mutableStateOf("") }
     var attemptedSubmit by remember { mutableStateOf(false) }
     var submitting by remember { mutableStateOf(false) }
+
+    // E2 Photo Upload (service_records.photos, record-scoped permanent Storage paths per
+    // migration 0024 -- see SupabaseStorage.kt). `recordId` is created lazily, the first time
+    // the technician actually adds a photo (not proactively on machine selection, unlike the
+    // web stepper modal -- this screen has no distinct "steps" to hook a create into, so the
+    // photo action itself is the natural trigger). `photos` holds PERMANENT Storage PATHS,
+    // never a signed URL; `photoUrls` holds freshly-generated signed URLs purely for on-screen
+    // preview, resolved once per upload and never persisted.
+    var recordId by remember { mutableStateOf<String?>(null) }
+    var photos by remember { mutableStateOf<List<String>>(emptyList()) }
+    var photoUrls by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var uploadingPhoto by remember { mutableStateOf(false) }
+    var photoError by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+
+    suspend fun uploadPickedPhoto(uri: Uri) {
+        if (machineId.isBlank()) {
+            photoError = "Please select a machine before adding photos."
+            return
+        }
+        uploadingPhoto = true
+        photoError = null
+        try {
+            val id = recordId ?: vm.createRecordNow("service_records", mapOf("machine_id" to machineId)).also { recordId = it }
+            val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                ?: throw IllegalStateException("Could not read the selected photo.")
+            val contentType = context.contentResolver.getType(uri) ?: "image/jpeg"
+            val fileName = "photo-${System.currentTimeMillis()}.${contentType.substringAfterLast('/', "jpg")}"
+            val path = vm.uploadRecordPhoto(RecordPhotoNamespace.SERVICE_RECORD, id, bytes, contentType, fileName)
+            val next = photos + path
+            vm.updateRecordNow("service_records", id, mapOf("photos" to next))
+            photos = next
+            val signedUrl = runCatching { vm.createPhotoSignedUrl(path) }.getOrNull()
+            if (signedUrl != null) photoUrls = photoUrls + (path to signedUrl)
+        } catch (error: Exception) {
+            photoError = error.message ?: "Photo upload failed. Please try again."
+        }
+        uploadingPhoto = false
+    }
+
+    fun removePickedPhoto(path: String) {
+        val id = recordId ?: return
+        val next = photos.filter { it != path }
+        scope.launch {
+            try {
+                vm.updateRecordNow("service_records", id, mapOf("photos" to next))
+                photos = next
+            } catch (error: Exception) {
+                photoError = error.message ?: "Could not remove that photo. Please try again."
+                return@launch
+            }
+            runCatching { vm.deleteRecordPhoto(path) } // best-effort, must not undo the DB update above
+        }
+    }
+
+    val pickPhotoLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) scope.launch { uploadPickedPhoto(uri) }
+    }
 
     // MainViewModel.save() is fire-and-forget: it sets actionMessage = null as the first
     // statement inside its viewModelScope.launch block, then assigns a non-null message
@@ -1261,6 +1405,35 @@ private fun LogNewServiceScreen(
                 CapTextField(label = "Next service due", value = nextServiceDue, onValueChange = { nextServiceDue = it })
             }
         }
+        CapCard {
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                CapSectionHeader("Photos")
+                if (photoError != null) {
+                    Text(photoError!!, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                }
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                    photos.forEach { path ->
+                        Box(Modifier.size(80.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) {
+                            val url = photoUrls[path]
+                            if (url != null) {
+                                AsyncImage(model = url, contentDescription = null, modifier = Modifier.fillMaxSize())
+                            }
+                            IconButton(
+                                onClick = { removePickedPhoto(path) },
+                                modifier = Modifier.align(Alignment.TopEnd).size(24.dp)
+                            ) {
+                                Icon(Icons.Outlined.Close, contentDescription = "Remove photo", tint = MaterialTheme.colorScheme.onSurface)
+                            }
+                        }
+                    }
+                    CapOutlinedButton(
+                        text = if (uploadingPhoto) "Uploading…" else "Add Photo",
+                        onClick = { pickPhotoLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                        enabled = !uploadingPhoto && machineId.isNotBlank()
+                    )
+                }
+            }
+        }
         CapPrimaryButton(
             text = "Save Service Record",
             onClick = {
@@ -1269,7 +1442,7 @@ private fun LogNewServiceScreen(
                 submitting = true
                 save(
                     "service_records",
-                    null,
+                    recordId,
                     mapOf(
                         "machine_id" to machineId,
                         "service_date" to date,
@@ -1292,6 +1465,7 @@ private fun BookInScreen(
     machines: List<CapRecord>,
     save: (String, String?, Map<String, Any?>, String) -> Unit,
     actionMessage: String?,
+    vm: MainViewModel,
     onBack: () -> Unit,
     onSaved: () -> Unit
 ) {
@@ -1304,6 +1478,64 @@ private fun BookInScreen(
     var fault by remember { mutableStateOf("") }
     var attemptedSubmit by remember { mutableStateOf(false) }
     var submitting by remember { mutableStateOf(false) }
+
+    // E2 Photo Upload (job_cards.arrival_photos) -- see LogNewServiceScreen for the identical
+    // rationale. `recordId` is created lazily the first time the technician adds an arrival
+    // photo, requiring both client and machine to already be selected.
+    var recordId by remember { mutableStateOf<String?>(null) }
+    var photos by remember { mutableStateOf<List<String>>(emptyList()) }
+    var photoUrls by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var uploadingPhoto by remember { mutableStateOf(false) }
+    var photoError by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+
+    suspend fun uploadPickedPhoto(uri: Uri) {
+        if (clientId.isBlank() || machineId.isBlank()) {
+            photoError = "Please select a client and machine before adding photos."
+            return
+        }
+        uploadingPhoto = true
+        photoError = null
+        try {
+            val id = recordId ?: vm.createRecordNow(
+                "job_cards",
+                mapOf("client_id" to clientId, "machine_id" to machineId)
+            ).also { recordId = it }
+            val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                ?: throw IllegalStateException("Could not read the selected photo.")
+            val contentType = context.contentResolver.getType(uri) ?: "image/jpeg"
+            val fileName = "arrival-${System.currentTimeMillis()}.${contentType.substringAfterLast('/', "jpg")}"
+            val path = vm.uploadRecordPhoto(RecordPhotoNamespace.JOB_CARD, id, bytes, contentType, fileName)
+            val next = photos + path
+            vm.updateRecordNow("job_cards", id, mapOf("arrival_photos" to next))
+            photos = next
+            val signedUrl = runCatching { vm.createPhotoSignedUrl(path) }.getOrNull()
+            if (signedUrl != null) photoUrls = photoUrls + (path to signedUrl)
+        } catch (error: Exception) {
+            photoError = error.message ?: "Photo upload failed. Please try again."
+        }
+        uploadingPhoto = false
+    }
+
+    fun removePickedPhoto(path: String) {
+        val id = recordId ?: return
+        val next = photos.filter { it != path }
+        scope.launch {
+            try {
+                vm.updateRecordNow("job_cards", id, mapOf("arrival_photos" to next))
+                photos = next
+            } catch (error: Exception) {
+                photoError = error.message ?: "Could not remove that photo. Please try again."
+                return@launch
+            }
+            runCatching { vm.deleteRecordPhoto(path) }
+        }
+    }
+
+    val pickPhotoLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) scope.launch { uploadPickedPhoto(uri) }
+    }
 
     // See LogNewServiceScreen for the rationale behind this actionMessage-transition pattern:
     // MainViewModel.save() resets actionMessage to null synchronously before assigning the
@@ -1377,6 +1609,35 @@ private fun BookInScreen(
                 }
             }
         }
+        CapCard {
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                CapSectionHeader("Arrival Photos")
+                if (photoError != null) {
+                    Text(photoError!!, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                }
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                    photos.forEach { path ->
+                        Box(Modifier.size(80.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) {
+                            val url = photoUrls[path]
+                            if (url != null) {
+                                AsyncImage(model = url, contentDescription = null, modifier = Modifier.fillMaxSize())
+                            }
+                            IconButton(
+                                onClick = { removePickedPhoto(path) },
+                                modifier = Modifier.align(Alignment.TopEnd).size(24.dp)
+                            ) {
+                                Icon(Icons.Outlined.Close, contentDescription = "Remove photo", tint = MaterialTheme.colorScheme.onSurface)
+                            }
+                        }
+                    }
+                    CapOutlinedButton(
+                        text = if (uploadingPhoto) "Uploading…" else "Add Photo",
+                        onClick = { pickPhotoLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                        enabled = !uploadingPhoto && clientId.isNotBlank() && machineId.isNotBlank()
+                    )
+                }
+            }
+        }
         CapPrimaryButton(
             text = "Book In Machine",
             onClick = {
@@ -1385,7 +1646,7 @@ private fun BookInScreen(
                 submitting = true
                 save(
                     "job_cards",
-                    null,
+                    recordId,
                     mapOf(
                         "job_number" to "JOB-${System.currentTimeMillis().toString().takeLast(6)}",
                         "client_id" to clientId,
@@ -1405,7 +1666,7 @@ private fun BookInScreen(
 }
 
 @Composable
-private fun ServicesScreen(data: RecordsState, user: CapUser, save: (String, String?, Map<String, Any?>, String) -> Unit) {
+private fun ServicesScreen(data: RecordsState, user: CapUser, save: (String, String?, Map<String, Any?>, String) -> Unit, vm: MainViewModel) {
     val machines = data.collection("machines")
     val machinesById = machines.associateBy { it.id }
     val clientsById = data.collection("clients").associateBy { it.id }
@@ -1425,6 +1686,7 @@ private fun ServicesScreen(data: RecordsState, user: CapUser, save: (String, Str
             client = client,
             user = user,
             save = save,
+            vm = vm,
             onBack = { selectedService = null },
             onEdit = { editing = activeService }
         )
@@ -1491,7 +1753,7 @@ private fun jobStatusTone(status: String): StatusTone = when (status) {
 }
 
 @Composable
-private fun JobsScreen(data: RecordsState, user: CapUser, save: (String, String?, Map<String, Any?>, String) -> Unit) {
+private fun JobsScreen(data: RecordsState, user: CapUser, save: (String, String?, Map<String, Any?>, String) -> Unit, vm: MainViewModel) {
     val clients = data.collection("clients")
     val machines = data.collection("machines")
     val jobs = data.collection("job_cards")
@@ -1508,6 +1770,7 @@ private fun JobsScreen(data: RecordsState, user: CapUser, save: (String, String?
             machines = machines,
             user = user,
             save = save,
+            vm = vm,
             onBack = { selectedJob = null }
         )
         return
@@ -1565,6 +1828,7 @@ private fun JobDetailScreen(
     machines: List<CapRecord>,
     user: CapUser,
     save: (String, String?, Map<String, Any?>, String) -> Unit,
+    vm: MainViewModel,
     onBack: () -> Unit
 ) {
     var editDialog by remember { mutableStateOf(false) }
@@ -1597,6 +1861,15 @@ private fun JobDetailScreen(
                                 job.text("fault_description").ifBlank { null }?.let { "Fault description" to it },
                                 job.text("technician_name").ifBlank { null }?.let { "Technician" to it }
                             ).forEach { (label, value) -> CapDetailField(label, value) }
+                        }
+                    }
+                    val arrivalPhotos = stringList(job.fields["arrival_photos"])
+                    if (arrivalPhotos.isNotEmpty()) {
+                        CapCard {
+                            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                                CapSectionHeader("Arrival Photos")
+                                SignedPhotoStrip(arrivalPhotos, vm)
+                            }
                         }
                     }
                     if (user.hasPermission("job_cards.edit")) {
@@ -1639,6 +1912,7 @@ private fun CalendarScreen(data: RecordsState, user: CapUser, vm: MainViewModel)
             client = client,
             user = user,
             save = save,
+            vm = vm,
             onBack = { selectedService = null },
             onEdit = { editing = activeService }
         )

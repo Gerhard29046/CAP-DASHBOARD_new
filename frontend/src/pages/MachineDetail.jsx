@@ -18,6 +18,7 @@ import {
 import EmptyState from "@/components/EmptyState";
 import NoteRecord from "@/components/NoteRecord";
 import MachineForm from "@/components/MachineForm";
+import RecordPhotoGallery from "@/components/RecordPhotoGallery";
 import ServiceForm from "@/components/ServiceForm";
 import moment from "moment";
 
@@ -308,15 +309,7 @@ export default function MachineDetail() {
                         <p className="text-xs text-muted-foreground italic">{s.notes}</p>
                       </div>
                     )}
-                    {s.photos && s.photos.length > 0 && (
-                      <div className="flex gap-2 overflow-x-auto pb-1 mb-1">
-                        {s.photos.map((url, i) => (
-                          <a key={i} href={url} target="_blank" rel="noopener noreferrer" className="shrink-0">
-                            <img src={url} alt="" className="w-24 h-24 rounded-lg object-cover border border-border hover:border-primary/50 transition-colors" />
-                          </a>
-                        ))}
-                      </div>
-                    )}
+                    <RecordPhotoGallery photos={s.photos} containerClassName="flex gap-2 overflow-x-auto pb-1 mb-1" />
                     {s.next_service_due && (
                       <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-border">
                         <Clock className="w-3.5 h-3.5 text-primary" />

@@ -10,6 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import PageHeader from "@/components/PageHeader";
 import EmptyState from "@/components/EmptyState";
 import StatCard from "@/components/StatCard";
+import RecordPhotoGallery from "@/components/RecordPhotoGallery";
 
 function formatDate(date) {
   if (!date) return "Not set";
@@ -268,17 +269,13 @@ function ServiceDetailPanel({ record, onPhotoClick }) {
           {photos.length === 0 ? (
             <p className="text-sm text-muted-foreground">No photos uploaded for this service.</p>
           ) : (
-            <div className="grid grid-cols-3 gap-2">
-              {photos.map((photo, index) => (
-                <button
-                  key={index}
-                  onClick={() => onPhotoClick(photo)}
-                  className="aspect-square rounded-lg overflow-hidden border border-border hover:border-primary/50 transition-colors duration-150"
-                >
-                  <img src={photo} alt="" className="w-full h-full object-cover" loading="lazy" />
-                </button>
-              ))}
-            </div>
+            <RecordPhotoGallery
+              photos={photos}
+              onPhotoClick={onPhotoClick}
+              containerClassName="grid grid-cols-3 gap-2"
+              itemClassName="aspect-square rounded-lg overflow-hidden border border-border hover:border-primary/50 transition-colors duration-150"
+              imgClassName="w-full h-full object-cover"
+            />
           )}
         </DetailSection>
       </div>
