@@ -4,7 +4,15 @@
 - **Android Firebase→Supabase migration (started 2026-08-13, separate project from the web
   cutover — explicitly authorized by the user).** Phase A (audit) + Phase B (mapping +
   Navigation-Compose foundation) + Phase C (authentication) + **Phase D (core data: Clients/
-  Machines/Service Records/Job Cards/Job Card Lines)** complete. **Phases E–J (secondary
+  Machines/Service Records/Job Cards/Job Card Lines)** + **Phase E1 (Knowledge Base +
+  Supabase-stream reliability + `"users"` Firestore listener isolation) — COMPLETE, E1 gate
+  PASSED 2026-08-14.** The architectural audit determined `"users"` is intentionally transitional
+  (Option C); `Core.kt`'s Firestore listener for it was fixed so its failure can no longer
+  terminate the shared data flow, independently verified by `testing-bee` (real Gradle build,
+  16/16 unit tests, unchanged regression baselines, unchanged QA-account count). No Users
+  migration/removal/Firebase removal was performed — that product decision remains open. See
+  `KNOWN_ISSUES.md`'s matching RESOLVED entry and `PROJECT_STATE.md`'s 2026-08-14 entry for full
+  detail. **Phases E2–J (remaining secondary
   features incl. photo upload, UI redesign, logo/icon, testing, Firebase removal, final
   build) explicitly NOT started** — user asked Queen Bee to "run through all the phases"
   unsupervised overnight; Queen Bee completed D (real, scoped, live-REST-verified) and

@@ -1,5 +1,47 @@
 # Decisions
 
+## 2026-08-14 — Android `"users"` Firestore listener gets a stricter-than-Supabase reliability policy (never closes, not even on cold start)
+- Decision: `RecordsRepository.observeFirestoreCollection("users")` (`Core.kt`) was fixed to
+  never call `close()` on a Firestore listener error — it degrades to last-known-good/empty data
+  and retries every 20s. This intentionally diverges from `SupabaseDataRepository.
+  observeCollection()`'s policy, which still closes on a failure before the first-ever emission
+  (cold start).
+- Reason: `"users"` is combined into the same shared `combine()` flow as every must-have Supabase
+  table, but is itself an optional, permission-gated legacy screen. Its real failure trigger —
+  `firestore.rules:31`'s `allow list: if isAdmin()` disagreeing with Android's Supabase-based
+  `users.view` permission check — is not transient; it fails identically on every attempt
+  including the first. Applying the Supabase cold-start-closes rule here would have reproduced
+  the exact cross-table blast-radius bug this fix exists to close, for the real account it
+  affects.
+- Affected files/systems: `mobile-android/.../Core.kt` only. No Firestore rules, Supabase schema,
+  or product behavior changed.
+- Consequences: the Users screen can now silently show stale/empty data indefinitely under a
+  permanent authorization failure, with no user-visible or logged signal beyond the empty list
+  (flagged by `testing-bee` as a non-blocking follow-up, not fixed this round). No backoff exists
+  under a permanent failure (retries every 20s indefinitely while the app is foregrounded) —
+  judged acceptable since denied reads are cheap and match the existing Supabase poller cadence.
+- Reversal conditions: revisit if `"users"` is ever migrated to Supabase (the whole function goes
+  away) or if telemetry/backoff is later deemed necessary.
+
+## 2026-08-14 — `"users"` Firestore collection determined to be an intentional transitional dependency (Option C), not a missed migration or obsolete
+- Decision/finding: a read-only architectural audit (Queen Bee, `migration-audit-bee` unavailable
+  this session) determined the Android `"users"` Firestore collection is intentionally retained
+  during the migration as a transitional dependency — not a forgotten/missed migration item (B),
+  and not obsolete/removable (D). The signed-in user's own profile/role/permissions have been
+  fully on Supabase (`public.users`) since Phase C; only the separate read-only "Users" admin-list
+  screen still reads Firestore.
+- Reason: `Core.kt`'s own pre-existing comment already documented this as "a known, disclosed,
+  temporary artifact... resolved once Firestore itself migrates in a later phase." The migration
+  doc maps `users → public.users` as a real planned equivalent (table already exists, already
+  used by web's `UserAdmin.jsx`), but no phase E–J explicitly owns finishing that migration, and
+  separately flags the feature as "web-only... borderline-unnecessary" for mobile.
+- Consequence: the eventual resolution (migrate the list to `public.users`, vs. remove the screen
+  entirely) is a genuine open product decision, deliberately NOT made as part of this finding or
+  the subsequent reliability fix.
+- Affected files/systems: none directly (audit only); informed the reliability-fix decision above.
+- Reversal conditions: n/a — this is a factual determination about current intent, not a policy;
+  supersede only if the user makes the migrate-vs-remove decision explicitly.
+
 ## 2026-08-14 — Worker-bee roster redesigned for the formal Android→Supabase migration; `integration-sync-bee` replaced by `supabase-android-bee`, new read-only `migration-audit-bee` added
 - Decision: `.claude/agents/integration-sync-bee.md` (previously scoped to Android's
   Firestore-only `Core.kt` connection/sync-status logic) was deleted and replaced by

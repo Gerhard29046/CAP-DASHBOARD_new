@@ -183,14 +183,57 @@ async function main() {
   cleanup.jobCardLineId = null; // already deleted
 
   // === Cleanup ===
+  // BUG FIX (2026-08-14): the old code fired these deletes with no error-checking at all (not
+  // even a captured `{ error }`) and NO verification step of any kind afterward -- "Cleanup
+  // complete." printed unconditionally, and cleanup status never fed into `results`/the exit
+  // code. A silently-failed deleteUser() (or any of the row deletes) was therefore
+  // indistinguishable from a real success. Fixed: capture each delete's own `{ error }`, then
+  // independently RE-QUERY every deleted row + the auth user afterward (fresh reads, not the
+  // delete calls' own return values) and record() each as a real pass/fail check so cleanup
+  // failure now actually fails the script (same pattern already proven correct in
+  // qa-verify-android-phase-e1-knowledge-rest-contract.mjs).
   console.log("\nCleaning up all QA fixture data...");
-  if (cleanup.jobCardLineId) await admin.from("job_card_lines").delete().eq("id", cleanup.jobCardLineId);
-  if (cleanup.jobCardId) await admin.from("job_cards").delete().eq("id", cleanup.jobCardId);
-  if (cleanup.serviceRecordId) await admin.from("service_records").delete().eq("id", cleanup.serviceRecordId);
-  if (cleanup.machineId) await admin.from("machines").delete().eq("id", cleanup.machineId);
-  if (cleanup.clientId) await admin.from("clients").delete().eq("id", cleanup.clientId);
-  if (cleanup.userId) await admin.auth.admin.deleteUser(cleanup.userId);
-  console.log("Cleanup complete.");
+  async function cleanupRow(table, id) {
+    if (!id) return;
+    const { error } = await admin.from(table).delete().eq("id", id);
+    if (error) console.error(`  cleanup call FAILED: ${table}.delete(${id}): ${error.message}`);
+  }
+  await cleanupRow("job_card_lines", cleanup.jobCardLineId);
+  await cleanupRow("job_cards", cleanup.jobCardId);
+  await cleanupRow("service_records", cleanup.serviceRecordId);
+  await cleanupRow("machines", cleanup.machineId);
+  await cleanupRow("clients", cleanup.clientId);
+  let deleteUserErr = null;
+  if (cleanup.userId) {
+    const { error } = await admin.auth.admin.deleteUser(cleanup.userId);
+    deleteUserErr = error;
+    if (error) console.error(`  cleanup call FAILED: deleteUser(${cleanup.userId}): ${error.message}`);
+  }
+  console.log("Cleanup calls issued -- independently re-verifying now...");
+
+  const rowChecks = [
+    ["job_card_lines", cleanup.jobCardLineId],
+    ["job_cards", cleanup.jobCardId],
+    ["service_records", cleanup.serviceRecordId],
+    ["machines", cleanup.machineId],
+    ["clients", cleanup.clientId],
+  ];
+  for (const [table, id] of rowChecks) {
+    if (!id) continue;
+    const { data } = await admin.from(table).select("id").eq("id", id);
+    record(`Cleanup verified: ${table} row gone`, (data?.length ?? -1) === 0, `remaining=${data?.length}`);
+  }
+  if (cleanup.userId) {
+    const { data: usersAfter, error: listErr } = await admin.auth.admin.listUsers({ perPage: 1000 });
+    const stillListed = listErr ? true : usersAfter.users.some((u) => u.id === cleanup.userId);
+    const { data: profileRow } = await admin.from("users").select("id").eq("id", cleanup.userId).maybeSingle();
+    record(
+      "Cleanup verified: throwaway Auth user + profile row gone (independently re-verified)",
+      !deleteUserErr && !stillListed && !profileRow,
+      `deleteError=${deleteUserErr ? deleteUserErr.message : "none"}, listUsersError=${listErr ? listErr.message : "none"}, stillListedInAuth=${stillListed}, profileRowExists=${!!profileRow}`
+    );
+  }
+  console.log("Cleanup verification complete.");
 
   const passed = results.filter((r) => r.pass).length;
   console.log(`\n${passed}/${results.length} checks passed.`);
@@ -202,12 +245,18 @@ async function main() {
 }
 
 main().catch(async (e) => {
+  // Crash-path (best-effort) cleanup -- this path already always exits 1, so it was never the
+  // source of the false-PASS bug (that only lived in the happy-path cleanup above). Still
+  // tightened per the same "never silently swallow a cleanup error" principle: log instead of
+  // fully discarding, so a real orphaned-account cause is visible in the output instead of
+  // silently disappearing into `.catch(() => {})`.
   console.error("QA script crashed:", e.message);
-  if (cleanup.jobCardLineId) await admin.from("job_card_lines").delete().eq("id", cleanup.jobCardLineId).catch(() => {});
-  if (cleanup.jobCardId) await admin.from("job_cards").delete().eq("id", cleanup.jobCardId).catch(() => {});
-  if (cleanup.serviceRecordId) await admin.from("service_records").delete().eq("id", cleanup.serviceRecordId).catch(() => {});
-  if (cleanup.machineId) await admin.from("machines").delete().eq("id", cleanup.machineId).catch(() => {});
-  if (cleanup.clientId) await admin.from("clients").delete().eq("id", cleanup.clientId).catch(() => {});
-  if (cleanup.userId) await admin.auth.admin.deleteUser(cleanup.userId).catch(() => {});
+  const logCleanupErr = (label) => (err) => { if (err) console.error(`  crash-path cleanup FAILED: ${label}: ${err.message || err}`); };
+  if (cleanup.jobCardLineId) await admin.from("job_card_lines").delete().eq("id", cleanup.jobCardLineId).then((r) => logCleanupErr("job_card_lines")(r.error), logCleanupErr("job_card_lines"));
+  if (cleanup.jobCardId) await admin.from("job_cards").delete().eq("id", cleanup.jobCardId).then((r) => logCleanupErr("job_cards")(r.error), logCleanupErr("job_cards"));
+  if (cleanup.serviceRecordId) await admin.from("service_records").delete().eq("id", cleanup.serviceRecordId).then((r) => logCleanupErr("service_records")(r.error), logCleanupErr("service_records"));
+  if (cleanup.machineId) await admin.from("machines").delete().eq("id", cleanup.machineId).then((r) => logCleanupErr("machines")(r.error), logCleanupErr("machines"));
+  if (cleanup.clientId) await admin.from("clients").delete().eq("id", cleanup.clientId).then((r) => logCleanupErr("clients")(r.error), logCleanupErr("clients"));
+  if (cleanup.userId) await admin.auth.admin.deleteUser(cleanup.userId).then((r) => logCleanupErr("deleteUser")(r.error), logCleanupErr("deleteUser"));
   process.exit(1);
 });

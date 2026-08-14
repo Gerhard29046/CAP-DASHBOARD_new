@@ -203,10 +203,27 @@ async function main() {
   } finally {
     console.log("\nCleaning up...");
     if (uid) {
-      await admin.auth.admin.deleteUser(uid).catch(() => {});
-      const { data: stillThere } = await admin.auth.admin.getUserById(uid).catch(() => ({ data: null }));
+      // BUG FIX (2026-08-14): the old code did `.deleteUser(uid).catch(() => {})` -- this
+      // discarded BOTH a thrown exception AND, more importantly, a normally-RESOLVED
+      // `{ error }` result (supabase-js resolves, it does not throw, for most API-level
+      // failures). The delete's own success/failure was never actually inspected.
+      const { error: deleteErr } = await admin.auth.admin.deleteUser(uid);
+      record("deleteUser() call reported no error", !deleteErr, deleteErr ? `deleteUser FAILED: ${deleteErr.message}` : "ok");
+
+      // Independent, fresh re-verification via listUsers() (same proven pattern as
+      // qa-verify-android-phase-e1-knowledge-rest-contract.mjs) instead of getUserById().
+      // BUG FIX: the old getUserById() call was wrapped in `.catch(() => ({ data: null }))`,
+      // which meant a VERIFICATION-CALL ERROR (rate limit, transient network failure -- nothing
+      // to do with whether the user still exists) was silently treated as "confirmed gone".
+      // Fail CLOSED instead: any inability to verify counts as NOT confirmed gone.
+      const { data: usersAfter, error: listErr } = await admin.auth.admin.listUsers({ perPage: 1000 });
+      const stillListed = listErr ? true : usersAfter.users.some((u) => u.id === uid);
       const { data: profileRow } = await admin.from("users").select("id").eq("id", uid).maybeSingle();
-      record("Full cleanup: throwaway test user and profile row both gone", !stillThere?.user && !profileRow, `authUserExists=${!!stillThere?.user}, profileRowExists=${!!profileRow}`);
+      record(
+        "Full cleanup: throwaway test user and profile row both gone (independently re-verified, not trusting deleteUser's own return value alone)",
+        !deleteErr && !stillListed && !profileRow,
+        `deleteError=${deleteErr ? deleteErr.message : "none"}, listUsersError=${listErr ? listErr.message : "none"}, stillListedInAuth=${stillListed}, profileRowExists=${!!profileRow}`
+      );
     }
   }
 

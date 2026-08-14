@@ -1,5 +1,128 @@
 # Project State
-_Last verified: 2026-08-14 (Android Phase D, core data — clients/machines/service_records/
+_Last verified: 2026-08-14 (Android Phase E1 — `"users"` Firestore listener reliability
+isolation implemented, independently `testing-bee`-verified, **E1 gate PASSED**). Full
+narrative:
+
+**E1 GATE: PASS.** The architectural audit (read-only, see `KNOWN_ISSUES.md`) determined the
+Firestore `"users"` collection is Option C — intentionally retained as a transitional
+dependency, not a missed migration, not obsolete. `RecordsRepository.observeFirestoreCollection
+("users")` (`Core.kt`) was fixed so a Firestore listener error on it can no longer close the
+shared `combine()` flow: it degrades to last-known-good/empty data and retries every 20s instead
+of calling `close(error)`. This is deliberately stricter than the existing Supabase-stream
+policy (never closes, not even on a cold-start failure) because the real trigger — `firestore.
+rules:31`'s `isAdmin()` vs. Android's Supabase `users.view` permission being two unsynchronized
+systems — is not transient. `testing-bee` independently verified via a real Gradle build (16/16
+unit tests, including 7 new deterministic tests proving no duplicate listeners, no coroutine
+leaks, no runaway retries, no shared-flow termination), unchanged live regression baselines
+(token-refresh 19/19, Phase D 21/21, E1 Knowledge Base 48/48), and unchanged QA-account count
+(4 before/after). No Users migration, no Users removal, no Firebase removal was performed — the
+underlying product question (does `"users"` eventually migrate to `public.users`, or get removed
+as a mobile feature per the migration doc's "web-only, borderline-unnecessary" framing) remains
+genuinely open and was not decided by this work. **E2/Photo Upload/Calendar remain NOT STARTED**
+— not authorized to begin without a fresh explicit go-ahead.
+
+**Agent-registration gap (real, unresolved, will likely recur)**: `supabase-android-bee` and
+`migration-audit-bee` both have definition files under `.claude/agents/` but were not invocable
+in this session's Agent tool (only `android-ui-bee`/`testing-bee` were). Queen Bee did not modify
+any agent definition to work around this (explicit user instruction); instead implemented the
+Core.kt fix directly (disclosed, not hidden) and performed the final-scope audit directly via
+git diff/status. Root cause not yet investigated.
+
+---
+
+_Prior verification: 2026-08-14 (Android Phase E1 reliability remediation — QA-script cleanup bug
+fixed, `testing-bee` independently verified, E1 still NOT COMPLETE pending an architectural
+determination). Full narrative:
+
+**QA cleanup false-PASS bug — investigated and fixed.** `qa-verify-android-token-refresh-
+contract.mjs` and `qa-verify-android-phase-d-rest-contract.mjs` could both report "cleanup
+PASS" while a throwaway Supabase Auth user was still live — proven by reading the actual
+code, not assumed. Script 1: `deleteUser(uid).catch(() => {})` never inspected the resolved
+`{ error }` (supabase-js resolves rather than throws on most API failures), and its
+verification step converted *any* `getUserById()` error — including a transient one
+unrelated to whether the user still exists — into "confirmed gone." Script 2: cleanup had
+zero error-checking and zero post-cleanup verification of any kind; `"Cleanup complete."`
+printed unconditionally and cleanup status never affected the exit code.
+`qa-verify-android-phase-e1-knowledge-rest-contract.mjs` was audited and needed no fix — it
+already does fresh independent re-verification, the pattern the other two now also use.
+Fixed and **live-verified**: Script 1 now 19/19 pass (was 18/18), Script 2 now 21/21 pass
+(was 16/16), both run for real against production Supabase, both scripts' own throwaway test
+users independently confirmed gone afterward via a fresh `listUsers()` call outside either
+script. See `KNOWN_ISSUES.md`'s matching entry for full detail.
+
+**`testing-bee` independent E1 verification — real, substantive, found a genuine gap.**
+Verified 9 of 14 required criteria as independently tested against live production Supabase
+(token expiry tracking, 401 detection, retry-loop prevention, failed-refresh behavior, token
+redaction, Phase A-D CRUD regression, Phase E1 Knowledge Base regression, no Firebase
+reintroduced, no service-role credential in Android) — real command output included in its
+report, not paraphrased. 3 more (single-flight refresh, concurrent-refresh protection,
+refresh-and-retry-once) verified only statically (structurally sound, genuinely can't be
+dynamically exercised in this environment — the auth/data layer isn't unit-testable as
+currently structured, no injectable base URL/session-store interface, flagged as a real
+follow-up if machine-enforced coverage is wanted later).
+
+**Real correction to a previously-documented environment constraint**: `gradlew.bat` CAN
+build here when `JAVA_HOME` is pointed at Android Studio's bundled JBR — `testing-bee` got a
+genuine `BUILD SUCCESSFUL` (`compileDebugKotlin`+`testDebugUnitTest`, 34/34 tasks executed
+not cached) and a real 25MB APK via `assembleDebug`. The TLS/CA gap is real but narrower than
+documented — it only blocks *uncached* dependency artifacts; `lintDebug` specifically still
+fails on one never-cached lint dependency. Treat Kotlin compilation + JVM unit tests as newly
+available on this machine going forward; lint and instrumented tests are not.
+
+**IMPORTANT OPEN FINDING — E1 is NOT complete, an architectural determination is required
+before any further code change:** the E1 fix correctly protects all 10 now-Supabase-backed
+streams (`clients`/`machines`/`service_records`/`job_cards`/`job_card_lines`/
+`knowledge_machines`/`knowledge_notes`/`knowledge_media`/`knowledge_documents`/
+`knowledge_service_codes`) — proven via a new negative-control unit test
+(`ObserveCollectionFailurePolicyTest.kt`, 5/5 pass) showing the pre-fix policy really did
+kill the combined flow and the post-fix policy doesn't. **But an 11th stream, `"users"`, is
+still Firestore-backed and was never touched by this fix.** Independently confirmed by Queen
+Bee directly reading the code (not just trusting the subagent): `Core.kt:258-268`'s
+`observeFirestoreCollection()` still calls `close(error)` on any Firestore listener error,
+unchanged; `MainActivity.kt:127-138` includes `"users"` in the same `permittedCollections`
+list (gated only on the `users.view` permission, not on migration status) that
+`Core.kt:270-292`'s `observeCollections()` combines via `combine()` alongside the 10 fixed
+streams — so a Firestore error on `users` still permanently kills every other screen's data
+for any signed-in user with `users.view`, exactly the blast-radius bug this whole
+remediation exists to close, just via one remaining unfixed path. This is NOT hypothetical:
+`Core.kt`'s own KDoc states the Firebase-bridge login is best-effort (`runCatching`) and
+*"a real, expected possibility since only 1 real user has been migrated to Supabase Auth so
+far"* — meaning most real accounts today are plausibly exposed to this exact failure mode.
+
+**Per explicit user instruction: do NOT guess at the fix.** The `users` collection's correct
+status must be determined from the actual migration architecture before any code change —
+one of: (A) intentionally still Firebase/Firestore during the migration (a deliberate,
+temporary state), (B) supposed to have already migrated to Supabase (a real migration gap),
+(C) intentionally retained as a transitional dependency (deliberate, but for a different
+reason than A), or (D) obsolete/removable. Not yet determined — this is the explicit next
+step, to be investigated in a fresh task/session per the user's own stated plan. `Core.kt`
+and `MainActivity.kt` were NOT modified this session and must not be touched until this is
+resolved.
+
+**QA account state, independently re-verified by Queen Bee after `testing-bee`'s full run**:
+exactly 4 `qa-*` accounts live, unchanged from before this session's work
+(`qa-android-refresh+...@invalid.local`, `qa-phase-d+technician-...@invalid.local`,
+`qa-fixes+technician-...@invalid.local`, `qa-fixes+admin-...@invalid.local`) — confirmed via
+a fresh `listUsers()` call, not trusted from any script's self-report. **No 5th account
+remains**: `testing-bee` wrote a new script (`qa-verify-android-session-revocation-contract.mjs`,
+20/20 pass, covers server-side logout revocation — a real gap none of the 3 existing scripts
+covered) whose own cleanup had a bug (`indexOf` returning -1, `splice(-1,1)` silently
+dropping the wrong entry) that leaked one throwaway account on its first run — caught by its
+own independent verification (not blind trust), immediately deleted, script fixed, re-run
+clean. **None of the 4 pre-existing/known leftover accounts were touched or are authorized
+for deletion.**
+
+**E1 STATUS: NOT COMPLETE.** **E2: NOT STARTED.** Do not proceed to `migration-audit-bee`,
+photo upload, Calendar, or any further Android code change until the `users`-collection
+architectural determination above is resolved.
+
+Minor items also found, not yet acted on (repo hygiene only, no functional impact): one
+existing QA script (`qa-verify-android-token-refresh-contract.mjs:202`) has a hardcoded
+tautological `record(..., true, ...)` — 18 real assertions + 1 that can't fail, out of its
+reported 19; several stray zero-byte junk files exist in the working tree from shell-quoting
+accidents (not application code, not committed, not yet cleaned up).
+
+_Last verified before that: 2026-08-14 (Android Phase D, core data — clients/machines/service_records/
 job_cards/job_card_lines now read/write live Postgres via a new `SupabaseData.kt`
 (PostgREST, plain REST, matching Phase C's `SupabaseAuth.kt` pattern) instead of Firestore.
 Deliberately kept `CapRecord`/`RecordsState`'s existing generic shape so every screen

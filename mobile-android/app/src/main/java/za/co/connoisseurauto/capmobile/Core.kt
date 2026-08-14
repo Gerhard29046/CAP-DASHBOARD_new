@@ -12,6 +12,7 @@ import com.google.firebase.auth.FirebaseAuthException
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreException
+import com.google.firebase.firestore.ListenerRegistration
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -24,6 +25,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -35,6 +37,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -241,7 +244,9 @@ class StatusRepository @Inject constructor(
  * Phase D/E1 (Android->Supabase migration): routes each named collection/table to whichever
  * backend currently owns it -- [SUPABASE_MIGRATED_TABLES] go to [SupabaseDataRepository]
  * (Postgres/PostgREST), everything else (`users` only, as of Phase E1) stays on the original
- * Firestore path, unchanged. Both branches return/accept the exact same [CapRecord]/[RecordsState]
+ * Firestore path -- unchanged in what data it reads/shows; its failure-isolation policy was
+ * fixed separately (see `observeFirestoreCollection`'s doc comment). Both branches return/accept
+ * the exact same [CapRecord]/[RecordsState]
  * shapes, so callers (MainViewModel, every screen composable) never need to know or care which
  * backend actually served a given collection -- see docs/android/ANDROID_SUPABASE_MIGRATION.md
  * Phase D section for the full design writeup.
@@ -255,16 +260,84 @@ class RecordsRepository @Inject constructor(
         if (name in SUPABASE_MIGRATED_TABLES) supabaseData.observeCollection(name)
         else observeFirestoreCollection(name)
 
+    /**
+     * The one remaining Firestore-backed collection reached here today is `"users"` (the legacy,
+     * permission-gated, read-only "Users" list screen -- see `docs/ai-memory/KNOWN_ISSUES.md`'s
+     * 2026-08-14 entry and the architectural audit it references). It is intentionally still
+     * Firestore during the migration -- this function does not migrate it, remove it, or change
+     * what data it shows. It only fixes how its *failures* are isolated.
+     *
+     * E1 reliability fix, `"users"`-specific: a Firestore listener error here must NEVER close
+     * this flow. Doing so previously terminated the whole shared `combine()` flow in
+     * [observeCollections] -- the exact cross-table blast radius
+     * [SupabaseDataRepository.observeCollection] was already fixed to avoid for every
+     * Supabase-backed table, but this collection was left out of that fix. On any listener error,
+     * the current registration is torn down and a fresh one is scheduled after
+     * [FIRESTORE_RETRY_DELAY_MS]; the flow immediately re-sends the last-known-good list (or an
+     * empty list if it has never had one) instead of closing or staying silent.
+     *
+     * This deliberately diverges from [SupabaseDataRepository.observeCollection]'s rule that a
+     * failure before the very first emission still closes the flow. That rule is safe there
+     * because a Supabase table is only ever combined with other equally must-have Supabase
+     * tables -- closing surfaces an honest error instead of an infinite spinner for that one
+     * screen. `"users"` is different: it is combined via the SAME `combine()` as every core table
+     * (Clients/Machines/Service Records/Job Cards/Knowledge Base), and per the architectural
+     * audit it is an optional, permission-gated, "borderline-unnecessary" legacy screen, not
+     * must-have data. A `PERMISSION_DENIED` from `firestore.rules:31` (`allow list: if
+     * isAdmin()`) is not transient -- it happens on every attempt, including the first -- so
+     * applying the Supabase rule here would still close the shared flow on literally the first
+     * subscribe attempt for exactly the real account this fix exists for. Kotlin's `combine()`
+     * also never emits until every source has emitted at least once, so silently withholding
+     * emission forever on error would hang every other screen instead of crashing it -- equally
+     * unacceptable. Always emitting promptly (even an empty list) is what keeps
+     * [observeCollections] moving regardless of this collection's health.
+     *
+     * Known, disclosed limitation, matching the Supabase fix's own disclosed one
+     * ([SupabaseDataRepository.observeCollection]'s doc comment): a failed `"users"` fetch is
+     * currently invisible to the user beyond an empty/stale list -- no per-collection "stale
+     * data" indicator exists in [RecordsState] today. Out of this fix's scope (a UI change,
+     * `android-ui-bee`'s territory, not requested here).
+     */
     private fun observeFirestoreCollection(name: String): Flow<List<CapRecord>> = callbackFlow {
-        val registration = firestore.collection(name).addSnapshotListener { snapshot, error ->
-            when {
-                error != null -> close(error)
-                snapshot != null -> trySend(snapshot.documents.map { document ->
-                    CapRecord(document.id, document.data.orEmpty())
-                })
+        var registration: ListenerRegistration? = null
+        var lastGood: List<CapRecord> = emptyList()
+
+        fun attach() {
+            registration = firestore.collection(name).addSnapshotListener { snapshot, error ->
+                when {
+                    error != null -> {
+                        // Never close: see policy doc above. Degrade to last-known-good (or
+                        // empty) data and retry with a fresh listener after a delay -- this
+                        // specific registration will not deliver further callbacks once its
+                        // error callback has fired, so a plain retry (not a resume) is required.
+                        trySend(lastGood)
+                        registration?.remove()
+                        registration = null
+                        launch {
+                            delay(FIRESTORE_RETRY_DELAY_MS)
+                            attach()
+                        }
+                    }
+                    snapshot != null -> {
+                        lastGood = snapshot.documents.map { document ->
+                            CapRecord(document.id, document.data.orEmpty())
+                        }
+                        trySend(lastGood)
+                    }
+                }
             }
         }
-        awaitClose { registration.remove() }
+
+        attach()
+        awaitClose { registration?.remove() }
+    }
+
+    companion object {
+        /** Matches [SupabaseDataRepository.POLL_INTERVAL_MS]'s interval in spirit (retry cadence
+         *  for a degraded background collection), kept as its own named constant here since this
+         *  is a push-listener retry delay, not a poll interval -- a different mechanism that
+         *  happens to want a similar cadence. */
+        private const val FIRESTORE_RETRY_DELAY_MS = 20_000L
     }
 
     fun observeCollections(names: List<String>): Flow<RecordsState> {
@@ -281,14 +354,17 @@ class RecordsRepository @Inject constructor(
         }
         // The `.catch` above is deliberately left as-is by the E1 reliability fix. It emits one
         // error state and completes the whole combined flow, which is only correct if reaching it
-        // genuinely means "nothing here can recover". That is now true: after the fix,
-        // SupabaseDataRepository.observeCollection() no longer closes on transient failures (it
-        // swallows them and polls again), so the only things that still reach here are a terminal
-        // Supabase auth failure (SessionExpiredException -- re-login required), a cold-start
-        // failure before a table has ever emitted, or a Firestore listener error on the one
-        // remaining Firestore-backed collection. Moving recovery here instead (e.g. retry/
-        // retryWhen) would be wrong: combine() cannot resubscribe a single failed source without
-        // restarting all of them, which is precisely the cross-table blast radius being removed.
+        // genuinely means "nothing here can recover". That is now true for every source combined
+        // here: SupabaseDataRepository.observeCollection() no longer closes on transient failures
+        // (it swallows them and polls again), and observeFirestoreCollection()'s `"users"` source
+        // no longer closes on ANY listener error (it swallows them too and retries with a fresh
+        // listener -- see that function's doc comment for why its policy is even stricter than
+        // the Supabase one). So the only thing that can still reach here is a terminal Supabase
+        // auth failure (SessionExpiredException -- re-login required) or a cold-start failure on
+        // a Supabase-backed table before it has ever emitted. Moving recovery here instead (e.g.
+        // retry/retryWhen) would be wrong: combine() cannot resubscribe a single failed source
+        // without restarting all of them, which is precisely the cross-table blast radius being
+        // removed.
     }
 
     suspend fun create(collection: String, fields: Map<String, Any?>): String {

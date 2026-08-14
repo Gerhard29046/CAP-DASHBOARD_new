@@ -30,3 +30,7 @@ work and never actually surfaces a completed report.
 
 See also [[project_supabase_migration]] for the kind of session where long-running
 verification work (migrations, live QA) is common and this pattern is likely to recur.
+
+For read-only agents with no Write tool (e.g. `migration-audit-bee`), there's no disk
+artifact to fall back on — see [[technique_subagent_report_retrieval]] for how to pull its
+real final report straight from its persisted `.jsonl` transcript instead of re-spawning it.
