@@ -65,16 +65,38 @@ val syncResources = listOf(
 )
 
 /**
- * Phase D (Android->Supabase migration, see docs/android/ANDROID_SUPABASE_MIGRATION.md):
+ * Phase D + E1 (Android->Supabase migration, see docs/android/ANDROID_SUPABASE_MIGRATION.md):
  * these tables now read/write live Postgres via [SupabaseDataRepository] instead of Firestore.
- * NOT yet migrated: `knowledge_machines`/`knowledge_notes`/`knowledge_media`/
- * `knowledge_documents`/`knowledge_service_codes` (Phase E) and `users` (Phase E / web-only
- * administration) -- those still read Firestore, unchanged, via [RecordsRepository]'s Firestore
- * branch below. `job_card_lines` is included even though it has no direct permission gate in
+ *
+ * Phase D: `clients`/`machines`/`service_records`/`job_cards`/`job_card_lines`.
+ * `job_card_lines` is included even though it has no direct permission gate in
  * [syncResources] because JobCardDetail-equivalent screens read/write it through the same
  * generic `RecordsRepository`/`RecordsState` contract as everything else.
+ *
+ * Phase E1: the 5 knowledge-base tables. All 5 are RLS-gated by the same
+ * `knowledge_base.view`/`.create`/`.edit`/`.delete` permission keys
+ * (`supabase/migrations/0002_rls_policies.sql`), and `KnowledgeBaseScreen`/
+ * `KnowledgeBaseDetailScreen` already read the real Postgres column names
+ * (manufacturer/model_name/variant/product_code/category/summary/supported_refrigerants/
+ * technical_specifications/main_functions; title/content/note_type; function_name/
+ * service_code; file_url/caption/original_filename/title) -- so this is a pure backend swap
+ * with no UI change, exactly like Phase D.
+ *
+ * NOT yet migrated: `users` (web-only administration; Android's Users screen is read-only) --
+ * still reads Firestore, unchanged, via [RecordsRepository]'s Firestore branch below.
  */
-val SUPABASE_MIGRATED_TABLES = setOf("clients", "machines", "service_records", "job_cards", "job_card_lines")
+val SUPABASE_MIGRATED_TABLES = setOf(
+    "clients",
+    "machines",
+    "service_records",
+    "job_cards",
+    "job_card_lines",
+    "knowledge_machines",
+    "knowledge_notes",
+    "knowledge_service_codes",
+    "knowledge_media",
+    "knowledge_documents"
+)
 
 data class CapRecord(
     val id: String,
@@ -216,10 +238,10 @@ class StatusRepository @Inject constructor(
 }
 
 /**
- * Phase D (Android->Supabase migration): routes each named collection/table to whichever
+ * Phase D/E1 (Android->Supabase migration): routes each named collection/table to whichever
  * backend currently owns it -- [SUPABASE_MIGRATED_TABLES] go to [SupabaseDataRepository]
- * (Postgres/PostgREST), everything else (knowledge_*, users) stays on the original Firestore
- * path, unchanged. Both branches return/accept the exact same [CapRecord]/[RecordsState]
+ * (Postgres/PostgREST), everything else (`users` only, as of Phase E1) stays on the original
+ * Firestore path, unchanged. Both branches return/accept the exact same [CapRecord]/[RecordsState]
  * shapes, so callers (MainViewModel, every screen composable) never need to know or care which
  * backend actually served a given collection -- see docs/android/ANDROID_SUPABASE_MIGRATION.md
  * Phase D section for the full design writeup.
@@ -257,6 +279,16 @@ class RecordsRepository @Inject constructor(
         }.catch { error ->
             emit(RecordsState(loading = false, error = error.userMessage()))
         }
+        // The `.catch` above is deliberately left as-is by the E1 reliability fix. It emits one
+        // error state and completes the whole combined flow, which is only correct if reaching it
+        // genuinely means "nothing here can recover". That is now true: after the fix,
+        // SupabaseDataRepository.observeCollection() no longer closes on transient failures (it
+        // swallows them and polls again), so the only things that still reach here are a terminal
+        // Supabase auth failure (SessionExpiredException -- re-login required), a cold-start
+        // failure before a table has ever emitted, or a Firestore listener error on the one
+        // remaining Firestore-backed collection. Moving recovery here instead (e.g. retry/
+        // retryWhen) would be wrong: combine() cannot resubscribe a single failed source without
+        // restarting all of them, which is precisely the cross-table blast radius being removed.
     }
 
     suspend fun create(collection: String, fields: Map<String, Any?>): String {
@@ -290,7 +322,9 @@ object FirebaseModule {
         FirebaseFirestore.getInstance(FirebaseApp.getInstance(), "capdashboard")
 }
 
-class ApiException(message: String) : Exception(message)
+/** `open` so [SessionExpiredException] (SupabaseData.kt) can specialise it without changing the
+ *  contract every `catch (error: ApiException)` call site already relies on. */
+open class ApiException(message: String) : Exception(message)
 
 /**
  * Phase C (Android->Supabase auth migration, see docs/android/ANDROID_SUPABASE_MIGRATION.md):
@@ -300,10 +334,12 @@ class ApiException(message: String) : Exception(message)
  * signatures as before Phase C, so [MainViewModel] and every UI call site needed zero
  * changes.
  *
- * Firebase Auth is kept as a best-effort SECONDARY bridge, not removed, because Firestore
- * itself is NOT migrated this phase (Clients/Machines/Jobs/Services/Knowledge Base/Status
- * all still read Firestore directly via [RecordsRepository]/[StatusRepository]/
- * [GoogleCalendarRepository], unchanged) and `firestore.rules` hard-requires a real Firebase
+ * Firebase Auth is kept as a best-effort SECONDARY bridge, not removed, because Firestore is
+ * not yet FULLY migrated: as of Phase E1, Clients/Machines/Jobs/Services/Knowledge Base all read
+ * Postgres via [SupabaseDataRepository] (see [SUPABASE_MIGRATED_TABLES]), but the `users`
+ * collection still reads Firestore through [RecordsRepository]'s Firestore branch (and
+ * [GoogleCalendarRepository] remains a legacy Firestore consumer), and `firestore.rules`
+ * hard-requires a real Firebase
  * Auth session for every read (`signedIn() = request.auth != null`, confirmed by reading the
  * rules file directly -- there is no anonymous/bridged access path). Signing into Firebase
  * with the same credentials right after a successful Supabase login keeps those

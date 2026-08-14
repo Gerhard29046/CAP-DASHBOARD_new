@@ -5,6 +5,8 @@ import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -36,12 +38,63 @@ import javax.inject.Singleton
  * Session persistence: only the refresh token is persisted (Keystore-backed
  * EncryptedSharedPreferences, per CLAUDE.md's Android conventions -- never a plaintext
  * password, never stored unencrypted). The short-lived access token lives in memory only,
- * re-minted from the refresh token on process start via [restore].
+ * re-minted from the refresh token on process start via [restore] AND, from the E1 reliability
+ * fix onward, whenever it expires or a request comes back 401 -- see [validAccessToken] /
+ * [refreshAfterUnauthorized].
+ *
+ * NEVER log an access or refresh token. This file deliberately contains no logging at all;
+ * every error surfaced from here is one of a fixed set of product-facing strings (see
+ * [readResponse]), never a raw body or token.
  */
 
-data class SupabaseSession(val accessToken: String, val refreshToken: String, val userId: String, val email: String)
+data class SupabaseSession(
+    val accessToken: String,
+    val refreshToken: String,
+    val userId: String,
+    val email: String,
+    /** Epoch millis at which [accessToken] stops being accepted, derived from the token
+     *  response's own `expires_at`/`expires_in` -- never a guessed TTL. */
+    val accessTokenExpiresAtMs: Long
+) {
+    /** Overridden so the data-class default can never print the tokens into a log/crash report
+     *  if some future call site does `Log.d(TAG, "$session")`. */
+    override fun toString(): String = "SupabaseSession(userId=$userId, tokens=REDACTED)"
+}
 
-class SupabaseAuthException(message: String, val isNetworkError: Boolean = false) : Exception(message)
+/**
+ * An access token plus the session generation it belongs to. Callers hand the generation back
+ * to [SupabaseAuthRepository.refreshAfterUnauthorized] so a refresh triggered by a stale token
+ * can be recognised as already-done by whichever concurrent caller got there first, instead of
+ * each 401 kicking off its own duplicate refresh.
+ */
+data class SupabaseAccessToken(val value: String, val generation: Long) {
+    /** Same redaction rationale as [SupabaseSession.toString]. */
+    override fun toString(): String = "SupabaseAccessToken(generation=$generation, value=REDACTED)"
+}
+
+/** Refresh this far before the real expiry, so a request never leaves with a token that dies in
+ *  transit (also absorbs modest device/server clock skew). */
+private const val EXPIRY_SKEW_MS = 60_000L
+
+/** Only used if Supabase ever omits BOTH expires_at and expires_in -- deliberately short, so an
+ *  unknown expiry means "refresh often", never "assume valid forever". */
+private const val FALLBACK_TTL_MS = 5 * 60_000L
+
+/**
+ * @param isNetworkError the request never reached Supabase (connectivity/timeout). Transient --
+ *        must NOT be treated as "the session is gone", or a tunnel ride would sign the user out.
+ * @param isSessionExpired the session is genuinely, terminally unusable (refresh token expired,
+ *        revoked, or rejected). The only condition that should force a re-login.
+ * @param isUnauthorized the server answered 401 for THIS request. Recoverable: it means "this
+ *        access token is stale", which is exactly the trigger for one refresh + one retry. Not
+ *        the same thing as [isSessionExpired].
+ */
+class SupabaseAuthException(
+    message: String,
+    val isNetworkError: Boolean = false,
+    val isSessionExpired: Boolean = false,
+    val isUnauthorized: Boolean = false
+) : Exception(message)
 
 @Singleton
 class SupabaseSessionStore @Inject constructor(@ApplicationContext context: Context) {
@@ -77,19 +130,112 @@ class SupabaseAuthRepository @Inject constructor(
     private val anonKey = BuildConfig.SUPABASE_ANON_KEY
 
     @Volatile private var currentAccessToken: String? = null
+    @Volatile private var accessTokenExpiresAtMs: Long = 0L
 
-    /** Current in-memory access token, for callers (e.g. a future PostgREST-backed data
-     *  repository in Phase D) that need to attach it to their own requests. Null when
-     *  signed out. */
-    val accessToken: String? get() = currentAccessToken
+    /**
+     * Incremented every time a new access token is installed (login/restore/refresh). Lets a
+     * caller holding a token say "refresh only if nobody has already replaced the one I had",
+     * which is what collapses a burst of simultaneous 401s into a single refresh.
+     */
+    @Volatile private var sessionGeneration: Long = 0L
+
+    /** Serialises refreshes: only one `grant_type=refresh_token` call is ever in flight, no
+     *  matter how many requests discover expiry at once. */
+    private val refreshMutex = Mutex()
+
+    /** True when a session exists at all. Deliberately does NOT expose the raw token: the old
+     *  `val accessToken: String?` getter handed out a possibly-expired token with no way for the
+     *  caller to know, which is the bug this fix removes. Callers issuing an authorized request
+     *  must use [validAccessToken]; nothing else needs the token value. */
+    val hasSession: Boolean get() = currentAccessToken != null
+
+    /**
+     * The access token to authorize a request with, proactively refreshed if it has expired (or
+     * is about to). This is the only correct way to obtain a token for an outgoing request.
+     *
+     * @throws SupabaseAuthException `isSessionExpired` when there is no usable session and one
+     *         cannot be re-minted; `isNetworkError` when the refresh could not be attempted
+     *         because the network was unreachable (transient -- the session is left intact).
+     */
+    suspend fun validAccessToken(): SupabaseAccessToken {
+        val token = currentAccessToken
+            ?: throw SupabaseAuthException("Your session has expired. Sign in again.", isSessionExpired = true)
+        val generation = sessionGeneration
+        if (System.currentTimeMillis() < accessTokenExpiresAtMs - EXPIRY_SKEW_MS) {
+            return SupabaseAccessToken(token, generation)
+        }
+        return refreshAfterUnauthorized(SupabaseAccessToken(token, generation))
+    }
+
+    /**
+     * Re-mints the access token after a request authorized with [stale] was rejected (401), or
+     * after [validAccessToken] found it expired.
+     *
+     * Concurrency: guarded by [refreshMutex], plus a generation re-check once the lock is held --
+     * if another coroutine already refreshed while this one waited, the freshly installed token
+     * is returned immediately and NO second network call is made. So N concurrent 401s produce
+     * exactly one refresh request.
+     *
+     * @throws SupabaseAuthException `isSessionExpired` when the refresh token itself was
+     *         rejected (terminal -- the caller must surface "sign in again", not retry);
+     *         `isNetworkError` when the refresh could not be attempted at all (transient -- the
+     *         stored refresh token is deliberately NOT cleared, so going offline never signs
+     *         the user out).
+     */
+    suspend fun refreshAfterUnauthorized(stale: SupabaseAccessToken): SupabaseAccessToken =
+        withContext(Dispatchers.IO) {
+            refreshMutex.withLock {
+                val current = currentAccessToken
+                if (current != null && sessionGeneration != stale.generation) {
+                    // Someone else already refreshed while we waited on the lock.
+                    return@withLock SupabaseAccessToken(current, sessionGeneration)
+                }
+                val refreshToken = sessionStore.savedRefreshToken()
+                    ?: throw SupabaseAuthException("Your session has expired. Sign in again.", isSessionExpired = true)
+
+                val response = try {
+                    postJson(
+                        "$baseUrl/auth/v1/token?grant_type=refresh_token",
+                        JSONObject().put("refresh_token", refreshToken),
+                        authToken = null
+                    )
+                } catch (error: SupabaseAuthException) {
+                    if (error.isNetworkError) throw error // transient: keep the session intact
+                    clearSession()
+                    throw SupabaseAuthException("Your session has expired. Sign in again.", isSessionExpired = true)
+                }
+
+                val session = try {
+                    parseSessionResponse(response)
+                } catch (_: Exception) {
+                    clearSession()
+                    throw SupabaseAuthException("Your session has expired. Sign in again.", isSessionExpired = true)
+                }
+                installSession(session)
+                SupabaseAccessToken(session.accessToken, sessionGeneration)
+            }
+        }
+
+    /** Installs a newly minted session. Supabase ROTATES the refresh token on every refresh, so
+     *  the new one must be persisted or the NEXT refresh would fail with a stale token. */
+    private fun installSession(session: SupabaseSession) {
+        currentAccessToken = session.accessToken
+        accessTokenExpiresAtMs = session.accessTokenExpiresAtMs
+        sessionGeneration += 1
+        sessionStore.saveRefreshToken(session.refreshToken)
+    }
+
+    private fun clearSession() {
+        currentAccessToken = null
+        accessTokenExpiresAtMs = 0L
+        sessionGeneration += 1
+        sessionStore.clear()
+    }
 
     suspend fun login(email: String, password: String): SupabaseSession = withContext(Dispatchers.IO) {
         val body = JSONObject().put("email", email.trim()).put("password", password)
         val response = postJson("$baseUrl/auth/v1/token?grant_type=password", body, authToken = null)
-        parseSessionResponse(response).also {
-            currentAccessToken = it.accessToken
-            sessionStore.saveRefreshToken(it.refreshToken)
-        }
+        parseSessionResponse(response).also { installSession(it) }
     }
 
     /**
@@ -98,19 +244,25 @@ class SupabaseAuthRepository @Inject constructor(
      * the stored refresh token is no longer valid (expired/revoked/rotated elsewhere) --
      * callers should treat either case as simply "not logged in", matching
      * AuthRepository.restore()'s existing pre-Phase-C contract exactly.
+     *
+     * E1 reliability fix: a NETWORK failure here also returns null (still "not logged in" for
+     * this launch) but no longer wipes the stored refresh token -- starting the app with no
+     * signal used to permanently sign the user out.
      */
     suspend fun restore(): SupabaseSession? = withContext(Dispatchers.IO) {
         val refreshToken = sessionStore.savedRefreshToken() ?: return@withContext null
         try {
             val body = JSONObject().put("refresh_token", refreshToken)
             val response = postJson("$baseUrl/auth/v1/token?grant_type=refresh_token", body, authToken = null)
-            parseSessionResponse(response).also {
-                currentAccessToken = it.accessToken
-                sessionStore.saveRefreshToken(it.refreshToken)
+            parseSessionResponse(response).also { installSession(it) }
+        } catch (error: Exception) {
+            // A network failure at cold start must NOT destroy the stored session -- the user is
+            // simply offline, not signed out. Only an actual rejection of the refresh token
+            // (or an unparseable response) means the session is really gone.
+            if (error is SupabaseAuthException && error.isNetworkError) null else {
+                clearSession()
+                null
             }
-        } catch (_: Exception) {
-            sessionStore.clear()
-            null
         }
     }
 
@@ -121,16 +273,24 @@ class SupabaseAuthRepository @Inject constructor(
             // unconditional regardless of whether this network call succeeds.
             runCatching { postJson("$baseUrl/auth/v1/logout", JSONObject(), authToken = token) }
         }
-        currentAccessToken = null
-        sessionStore.clear()
+        clearSession()
     }
 
     /** Loads the caller's own `public.users` row via PostgREST, authorized by their own
      *  access token (RLS-gated, never the service-role key). */
     suspend fun loadProfile(userId: String): CapUser = withContext(Dispatchers.IO) {
-        val token = currentAccessToken ?: throw SupabaseAuthException("Not authenticated.")
         val url = "$baseUrl/rest/v1/users?id=eq.$userId&select=id,email,full_name,role,is_active,effective_permissions"
-        val rows = JSONArray(httpGet(url, token))
+        // Same refresh-once-then-retry-once contract as SupabaseData: a 401 here (long-idle app
+        // resumed, token aged out) gets one refresh and one retry, never a loop.
+        var token = validAccessToken()
+        val body = try {
+            httpGet(url, token.value)
+        } catch (error: SupabaseAuthException) {
+            if (!error.isUnauthorized) throw error
+            token = refreshAfterUnauthorized(token) // throws isSessionExpired if truly gone
+            httpGet(url, token.value)               // a 401 on this attempt propagates as-is
+        }
+        val rows = JSONArray(body)
         if (rows.length() == 0) throw SupabaseAuthException("User profile not found.")
         rows.getJSONObject(0).toCapUser()
     }
@@ -143,7 +303,8 @@ class SupabaseAuthRepository @Inject constructor(
             accessToken = json.getString("access_token"),
             refreshToken = json.getString("refresh_token"),
             userId = user.getString("id"),
-            email = user.optString("email", "")
+            email = user.optString("email", ""),
+            accessTokenExpiresAtMs = json.accessTokenExpiryMs()
         )
     }
 
@@ -197,17 +358,34 @@ class SupabaseAuthRepository @Inject constructor(
                 errorJson.optStringOrNull("error_description") ?: errorJson.optStringOrNull("msg")
             }.getOrNull()
             throw SupabaseAuthException(
-                when {
+                message = when {
                     code == 400 && description?.contains("Invalid login credentials", ignoreCase = true) == true ->
                         "Incorrect email address or password."
                     code == 401 -> "Your session has expired. Sign in again."
                     code == 429 -> "Too many login attempts. Please try again later."
                     else -> "Unable to reach the authentication service. Please try again."
-                }
+                },
+                isUnauthorized = code == 401
             )
         }
         return text
     }
+}
+
+/**
+ * Access-token expiry in epoch millis, taken from the token response itself rather than assumed.
+ * Supabase returns BOTH `expires_at` (absolute, UNIX SECONDS) and `expires_in` (relative,
+ * seconds) on the password and refresh grants alike -- `expires_at` is preferred, `expires_in`
+ * is the fallback. If neither is present (never observed, but not worth crashing over) the
+ * result is a deliberately short window, so an unknown expiry causes frequent refreshes rather
+ * than a token assumed valid forever -- the previous behavior, which is the bug being fixed.
+ */
+private fun JSONObject.accessTokenExpiryMs(): Long {
+    val expiresAtSeconds = optLong("expires_at", 0L)
+    if (expiresAtSeconds > 0L) return expiresAtSeconds * 1000L
+    val expiresInSeconds = optLong("expires_in", 0L)
+    if (expiresInSeconds > 0L) return System.currentTimeMillis() + expiresInSeconds * 1000L
+    return System.currentTimeMillis() + FALLBACK_TTL_MS
 }
 
 private fun JSONObject.optStringOrNull(key: String): String? =

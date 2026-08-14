@@ -1,5 +1,6 @@
 package com.CAPDATABASE.capdatabase
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -20,10 +21,10 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Phase D (Android->Supabase migration, see docs/android/ANDROID_SUPABASE_MIGRATION.md):
- * generic PostgREST-backed CRUD + polling "observe" for the tables moved off Firestore this
- * phase (see [SUPABASE_MIGRATED_TABLES] in Core.kt -- clients, machines, service_records,
- * job_cards, job_card_lines). Deliberately plain REST (HttpURLConnection/org.json), matching
+ * Phase D/E1 (Android->Supabase migration, see docs/android/ANDROID_SUPABASE_MIGRATION.md):
+ * generic PostgREST-backed CRUD + polling "observe" for every table moved off Firestore so far
+ * (see [SUPABASE_MIGRATED_TABLES] in Core.kt -- clients, machines, service_records, job_cards,
+ * job_card_lines, and the 5 knowledge_* tables). Deliberately plain REST (HttpURLConnection/org.json), matching
  * SupabaseAuth.kt's Phase C precedent, NOT the third-party supabase-kt SDK -- this build
  * environment cannot verify new Gradle dependencies (see KNOWN_ISUES.md), so this reuses an
  * already-proven technique rather than introduce an unverifiable one.
@@ -41,9 +42,10 @@ import javax.inject.Singleton
  * simplification versus Firestore's real-time listeners, not an oversight.
  *
  * SECURITY: every request is authorized by the signed-in user's own Supabase access token
- * (via [SupabaseAuthRepository.accessToken]) against Postgres RLS -- the service-role key is
- * never present here, identical trust model to SupabaseAuth.kt and the web app's Supabase
- * client.
+ * (via [SupabaseAuthRepository.validAccessToken], which keeps it fresh) against Postgres RLS --
+ * the service-role key is never present here, identical trust model to SupabaseAuth.kt and the
+ * web app's Supabase client. Tokens are never logged: this file contains no logging at all, and
+ * no error message it raises includes a token or a raw response body.
  */
 @Singleton
 class SupabaseDataRepository @Inject constructor(
@@ -60,16 +62,57 @@ class SupabaseDataRepository @Inject constructor(
         private const val POLL_INTERVAL_MS = 20_000L
     }
 
+    /**
+     * Polling "observe" for one table.
+     *
+     * Failure policy (E1 reliability fix -- the previous version called `close(error)` on ANY
+     * failure, which permanently terminated this flow, and through [RecordsRepository]'s
+     * `combine()` took every OTHER table's stream down with it until app restart):
+     *
+     * - A TERMINAL auth failure (the refresh token itself was rejected -- [SessionExpiredException])
+     *   still closes the flow with the error. That is honest and correct: no amount of retrying
+     *   fixes it, the user must sign in again, and the existing `RecordsState.error` path shows
+     *   exactly that.
+     * - Any OTHER failure (network drop, timeout, 5xx, a transient 401 that the refresh already
+     *   handled and lost anyway) is treated as one failed poll cycle, NOT as the end of the
+     *   stream: it is swallowed, the last successfully emitted list stays on screen, and the next
+     *   tick retries. One table hiccuping can no longer kill the others.
+     * - EXCEPT on the very first fetch, before this flow has ever emitted: there is no
+     *   last-good data to fall back on, and silently emitting nothing would leave the screen
+     *   stuck on its loading state forever. So a cold-start failure still closes the flow and
+     *   surfaces the error, exactly as it did before this change.
+     *
+     * Known, disclosed limitation: after at least one success, a transient failure is currently
+     * invisible to the user -- the screen keeps showing the last-good rows with no "stale data"
+     * indicator. Surfacing that would need a per-table status channel through
+     * [RecordsRepository.observeCollections]' `combine()` and a UI change (out of this fix's
+     * scope, and UI is android-ui-bee's). The Status screen's existing connection check remains
+     * the user-visible signal for "the backend is unreachable right now".
+     */
     fun observeCollection(table: String): Flow<List<CapRecord>> = channelFlow {
+        var hasEmitted = false
+
         suspend fun fetchAndSend() {
             val records = try {
                 fetchAll(table)
+            } catch (error: SessionExpiredException) {
+                close(error) // terminal: only a fresh sign-in can fix this
+                return
+            } catch (error: CancellationException) {
+                // Not a failure: the collector went away (screen closed, user signed out).
+                // Must propagate so coroutine cancellation still works -- swallowing it here
+                // would be the classic "keep polling a dead flow" leak.
+                throw error
             } catch (error: Exception) {
-                close(error)
+                // Transient. Keep the last good data and try again on the next tick; do NOT
+                // close, or this table (and via combine(), every other table) dies here.
+                if (!hasEmitted) close(error)
                 return
             }
             send(records)
+            hasEmitted = true
         }
+
         fetchAndSend()
         launch {
             while (true) {
@@ -85,39 +128,43 @@ class SupabaseDataRepository @Inject constructor(
     }
 
     suspend fun create(table: String, fields: Map<String, Any?>): String = withContext(Dispatchers.IO) {
-        val token = requireToken()
         val payload = fields.filterValues { it != null }.toMutableMap()
         payload["updated_at"] = nowIso()
-        val response = request(
-            "$baseUrl/rest/v1/$table",
-            "POST",
-            token,
-            payload.toJsonObject().toString(),
-            preferReturn = true
-        )
+        val response = withAuth { token ->
+            request(
+                "$baseUrl/rest/v1/$table",
+                "POST",
+                token,
+                payload.toJsonObject().toString(),
+                preferReturn = true
+            )
+        }
         val id = JSONArray(response).getJSONObject(0).getString("id")
         refreshSignals.tryEmit(table)
         id
     }
 
     suspend fun update(table: String, id: String, fields: Map<String, Any?>) = withContext(Dispatchers.IO) {
-        val token = requireToken()
         val payload = fields.filterValues { it != null }.toMutableMap()
         payload["updated_at"] = nowIso()
-        request("$baseUrl/rest/v1/$table?id=eq.$id", "PATCH", token, payload.toJsonObject().toString())
+        withAuth { token ->
+            request("$baseUrl/rest/v1/$table?id=eq.$id", "PATCH", token, payload.toJsonObject().toString())
+        }
         refreshSignals.tryEmit(table)
     }
 
     suspend fun delete(table: String, id: String) = withContext(Dispatchers.IO) {
-        val token = requireToken()
-        request("$baseUrl/rest/v1/$table?id=eq.$id", "DELETE", token, null)
+        withAuth { token -> request("$baseUrl/rest/v1/$table?id=eq.$id", "DELETE", token, null) }
         refreshSignals.tryEmit(table)
     }
 
     /** Row count for the Status screen's "sync" feature -- uses PostgREST's exact-count
      *  header rather than fetching every row just to count them. */
     suspend fun count(table: String): Int = withContext(Dispatchers.IO) {
-        val token = requireToken()
+        withAuth { token -> countWithToken(table, token) }
+    }
+
+    private fun countWithToken(table: String, token: String): Int {
         val connection = URL("$baseUrl/rest/v1/$table?select=id&limit=1").openConnection() as HttpURLConnection
         try {
             connection.requestMethod = "GET"
@@ -127,8 +174,11 @@ class SupabaseDataRepository @Inject constructor(
             connection.connectTimeout = 15_000
             connection.readTimeout = 20_000
             val code = connection.responseCode
+            // 401 must stay distinguishable so withAuth() can refresh and retry once, instead of
+            // reporting "unable to reach the database" for what is really a stale token.
+            if (code == 401) throw UnauthorizedException()
             if (code !in 200..299) throw ApiException("Unable to reach the database.")
-            connection.getHeaderField("Content-Range")?.substringAfter("/")?.toIntOrNull() ?: 0
+            return connection.getHeaderField("Content-Range")?.substringAfter("/")?.toIntOrNull() ?: 0
         } catch (error: IOException) {
             throw ApiException("Network unavailable. Please check your connection.")
         } finally {
@@ -137,13 +187,52 @@ class SupabaseDataRepository @Inject constructor(
     }
 
     private suspend fun fetchAll(table: String): List<CapRecord> = withContext(Dispatchers.IO) {
-        val token = requireToken()
-        val body = request("$baseUrl/rest/v1/$table?select=*&order=created_at.desc", "GET", token, null)
+        val body = withAuth { token ->
+            request("$baseUrl/rest/v1/$table?select=*&order=created_at.desc", "GET", token, null)
+        }
         val array = JSONArray(body)
         (0 until array.length()).map { i -> array.getJSONObject(i).toCapRecord() }
     }
 
-    private fun requireToken(): String = supabaseAuth.accessToken ?: throw ApiException("Not authenticated.")
+    /**
+     * Runs one authorized request, transparently recovering from an expired access token.
+     *
+     * Contract (E1 reliability fix): obtain a token that [SupabaseAuthRepository.validAccessToken]
+     * considers fresh (it refreshes proactively if the tracked expiry has passed), run [block],
+     * and if the server nonetheless answers 401, refresh ONCE and run [block] exactly ONCE more.
+     *
+     * Exactly-one-retry is structural, not counter-based: the retry path calls [block] directly
+     * rather than re-entering [withAuth], and a 401 on that second attempt is converted to a
+     * terminal [SessionExpiredException] instead of looping. There is no code path that can
+     * produce a third attempt.
+     *
+     * Concurrency: N callers hitting 401 at once all funnel into
+     * [SupabaseAuthRepository.refreshAfterUnauthorized], which is Mutex-guarded and
+     * generation-checked, so they share ONE refresh call and then each retry their own request.
+     */
+    private suspend fun <T> withAuth(block: (String) -> T): T {
+        val token = try {
+            supabaseAuth.validAccessToken()
+        } catch (error: SupabaseAuthException) {
+            throw error.asDataException()
+        }
+        return try {
+            block(token.value)
+        } catch (_: UnauthorizedException) {
+            val refreshed = try {
+                supabaseAuth.refreshAfterUnauthorized(token)
+            } catch (error: SupabaseAuthException) {
+                throw error.asDataException()
+            }
+            try {
+                block(refreshed.value)
+            } catch (_: UnauthorizedException) {
+                // Rejected even with a token minted seconds ago -- not a staleness problem.
+                // Stop here rather than retry again.
+                throw SessionExpiredException("Your session has expired. Sign in again.")
+            }
+        }
+    }
 
     private fun request(urlString: String, method: String, token: String, body: String?, preferReturn: Boolean = false): String {
         val connection = URL(urlString).openConnection() as HttpURLConnection
@@ -165,10 +254,12 @@ class SupabaseDataRepository @Inject constructor(
             val code = connection.responseCode
             val stream = if (code in 200..299) connection.inputStream else connection.errorStream
             val text = stream?.let { BufferedReader(InputStreamReader(it, Charsets.UTF_8)).use(BufferedReader::readText) }.orEmpty()
+            // 401 is thrown as a distinct type (not an ApiException) so withAuth() can tell
+            // "stale access token, refresh and retry once" apart from every other failure.
+            if (code == 401) throw UnauthorizedException()
             if (code !in 200..299) {
                 throw ApiException(
                     when (code) {
-                        401 -> "Your session has expired. Sign in again."
                         403 -> "You do not have permission to do that."
                         404 -> "The requested record could not be found."
                         409 -> "This record was changed elsewhere. Please refresh and try again."
@@ -185,12 +276,62 @@ class SupabaseDataRepository @Inject constructor(
     }
 }
 
+/**
+ * Terminal auth failure: the session cannot be re-minted (refresh token expired/revoked/rejected)
+ * and only a fresh sign-in will fix it. Subclasses [ApiException] so every existing
+ * `catch (error: ApiException)` call site in MainViewModel keeps behaving exactly as before --
+ * the subtype exists purely so [SupabaseDataRepository.observeCollection] can tell a permanent
+ * auth failure (close the flow, show "sign in again") from a transient one (keep polling).
+ */
+class SessionExpiredException(message: String) : ApiException(message)
+
+/** Internal marker for "the server said 401". Never surfaced to callers: [SupabaseDataRepository.withAuth]
+ *  either recovers from it (refresh + one retry) or converts it to [SessionExpiredException]. */
+private class UnauthorizedException : Exception("Unauthorized")
+
+/** Maps an auth-layer failure onto the data layer's exception contract, preserving the
+ *  transient/terminal distinction rather than flattening everything into "session expired". */
+private fun SupabaseAuthException.asDataException(): ApiException = when {
+    isSessionExpired -> SessionExpiredException(message ?: "Your session has expired. Sign in again.")
+    isNetworkError -> ApiException("Network unavailable. Please check your connection.")
+    else -> ApiException(message ?: "Unable to reach the CAP Database service. Please try again.")
+}
+
 private fun nowIso(): String = Instant.now().toString()
 
 private fun Map<String, Any?>.toJsonObject(): JSONObject {
     val json = JSONObject()
-    for ((key, value) in this) json.put(key, value ?: JSONObject.NULL)
+    for ((key, value) in this) json.put(key, anyToJsonValue(value))
     return json
+}
+
+/**
+ * Phase E1: collection/map values must become real JSONArray/JSONObject instances before
+ * `JSONObject.toString()` runs. org.json does NOT auto-wrap a java.util.List/Map -- its
+ * stringifier falls through to `value.toString()` for unknown types, which would have written
+ * a Postgres `text[]` column as the literal string `"[a, b]"` and a `jsonb` column as
+ * `"{k=v}"`. Nothing writes these today (Android's only knowledge-base write is "Add Note",
+ * all plain strings; `service_records.photos`/`job_cards.arrival_photos` are read-only until
+ * Phase E2), but the mapper is generic, and `knowledge_machines.supported_refrigerants`/
+ * `main_functions` (text[]) and `technical_specifications` (jsonb) are the first tables routed
+ * through it that have such columns at all -- so fixing it here rather than leaving a trap for
+ * the first screen that does write one.
+ *
+ * The read direction already handled both correctly: PostgREST serialises text[] as a JSON
+ * array and jsonb as a JSON object, which [jsonValueToAny] turns into a Kotlin List/Map --
+ * exactly what MainActivity.kt's `stringList()`/`stringMap()` helpers expect.
+ */
+private fun anyToJsonValue(value: Any?): Any = when (value) {
+    null -> JSONObject.NULL
+    is JSONObject, is JSONArray -> value
+    is Map<*, *> -> JSONObject().also { json ->
+        for ((key, entryValue) in value) {
+            if (key is String) json.put(key, anyToJsonValue(entryValue))
+        }
+    }
+    is Iterable<*> -> JSONArray().also { array -> value.forEach { array.put(anyToJsonValue(it)) } }
+    is Array<*> -> JSONArray().also { array -> value.forEach { array.put(anyToJsonValue(it)) } }
+    else -> value
 }
 
 private fun JSONObject.toCapRecord(): CapRecord {
