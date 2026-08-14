@@ -47,12 +47,21 @@ _Source of truth: CLAUDE.md section 6-9, verified against code 2026-07-23_
   `hasPermission(permission)` (admin bypass, else membership check against
   `effective_permissions`).
 
-## Worker-bee file ownership (from `.claude/agents/*.md`)
-- `android-ui-bee`: Compose UI only in `mobile-android/.../capmobile/`; never touches
-  `Core.kt` data/repository/Hilt code, `firestore.rules`, `storage.rules`, `firebase.json`,
+## Worker-bee file ownership (from `.claude/agents/*.md`, redesigned 2026-08-14 for the
+Android→Supabase migration — see DECISIONS.md's matching entry)
+- `android-ui-bee`: Compose UI only in `mobile-android/.../capmobile/` (`MainActivity.kt`'s
+  composables, `ui/`); never touches `Core.kt`/`SupabaseAuth.kt`/`SupabaseData.kt`,
+  `supabase/migrations/*.sql`, `firestore.rules`, `storage.rules`, `firebase.json`,
   `.firebaserc`, `google-services.json`, package/applicationId.
-- `integration-sync-bee`: owns `Core.kt` only; reuses existing repository patterns; same
-  never-edit list as above plus never touches `backend/` or `frontend/`.
+- `supabase-android-bee` (replaces `integration-sync-bee`): owns `Core.kt`, `SupabaseAuth.kt`,
+  `SupabaseData.kt` — Android's Supabase Auth/Postgres integration layer, migrating remaining
+  Firebase-backed repositories onto the same Supabase backend `frontend/` uses. Never bypasses
+  RLS, never embeds a service-role key in Android, never touches Compose/UI files,
+  `backend/`, or `frontend/`.
 - `testing-bee`: runs `gradlew.bat testDebugUnitTest lintDebug assembleDebug` from
-  `mobile-android/`; adds tests under `app/src/test/**` / `app/src/androidTest/**`; never
-  edits application source; never runs publish/deploy tasks or touches `backend/`/`frontend/`.
+  `mobile-android/`; adds tests under `app/src/test/**` / `app/src/androidTest/**` and
+  `supabase/scripts/qa-verify-android-*.mjs`-style live REST-contract scripts; never edits
+  application source; never runs publish/deploy tasks or touches `backend/`/`frontend/`.
+- `migration-audit-bee` (new): independent, read-only (no edit/write/bash tools) auditor of
+  the Android migration — greps for leftover Firebase architecture, UI-layer database access,
+  and Android/web schema mismatches; never modifies anything itself.

@@ -1,5 +1,41 @@
 # Session Log
 
+## 2026-08-14 (later, new conversation) — Worker-bee roster redesigned for the formal Android→Supabase migration
+- Objective: user formally declared the Android→Supabase migration and asked Queen Bee to
+  redesign (not just rename) the `.claude/agents/` worker-bee definitions around the real
+  target architecture — Android moving from Firebase Auth/Firestore to Supabase Auth/Postgres,
+  the SAME backend `frontend/` already uses live.
+- Investigation before editing: read all 3 existing agent defs, `queen-bee.md`,
+  `ARCHITECTURE.md`, and `PROJECT_STATE.md`'s Phase C/D entries; inspected the real
+  `mobile-android/` file layout (`Core.kt`, `MainActivity.kt`, `SupabaseAuth.kt`,
+  `SupabaseData.kt`, `GoogleCalendarRepository.kt`) and `docs/android/
+  ANDROID_SUPABASE_MIGRATION.md`'s phase-status sections (§12.7-12.9). Found the 3 existing
+  agent `.md` files already had uncommitted, partial edits reflecting a "mixed Firebase+
+  Supabase" mid-migration state (not committed, origin unclear — possibly an earlier,
+  unfinished pass) — used as a starting reference but not treated as sufficient; rewrote all
+  four files to match the user's full, detailed specification.
+- Files changed: deleted `.claude/agents/integration-sync-bee.md`; added
+  `.claude/agents/supabase-android-bee.md` (owns `SupabaseAuth.kt`/`SupabaseData.kt`/`Core.kt`
+  repositories, RLS-respecting design, Firebase-migration responsibilities); added
+  `.claude/agents/migration-audit-bee.md` (new, read-only, `Read`/`Glob`/`Grep` only); rewrote
+  `.claude/agents/android-ui-bee.md` (tightened boundary/strict-MUST-NOT list) and
+  `.claude/agents/testing-bee.md` (added RLS-testing checklist, migration-status-awareness
+  section); updated `.claude/agents/queen-bee.md` (Agent() tool allow-list, delegation
+  guidance, 4-bee coordination example); updated `docs/ai-memory/ARCHITECTURE.md`'s
+  worker-bee-ownership section and added a `docs/ai-memory/DECISIONS.md` entry.
+- Tests/builds run: none — this was agent-definition/documentation work only, no
+  `mobile-android/` (or any other) application source was touched, per the user's explicit
+  instruction not to modify application code unless required to validate the agent
+  definitions (it wasn't required).
+- Result: 4-bee roster now reflects the actual Supabase migration architecture rather than
+  generic Firebase terminology. Not independently "tested" in any runnable sense (these are
+  prompt/instruction files, not code) — verification here is the fact that they're grounded in
+  the real current file layout and migration-doc phase status, not a build/test result.
+- Remaining work: none required by this task. Next Android delegation should route
+  Supabase/data-layer work to `supabase-android-bee` (not the now-deleted
+  `integration-sync-bee`), and consider running `migration-audit-bee` after the next
+  meaningful chunk of migration work lands.
+
 ## 2026-08-14 (continuing overnight, same conversation) — Android→Supabase migration: Phase D, core data + build-tooling update
 - User reviewed Phase C, ran a focused verification pass (dual-auth bridge explanation +
   leftover-QA-user investigation, both reported, nothing deleted), then asked whether a

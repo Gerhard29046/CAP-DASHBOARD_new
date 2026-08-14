@@ -1,5 +1,38 @@
 # Decisions
 
+## 2026-08-14 — Worker-bee roster redesigned for the formal Android→Supabase migration; `integration-sync-bee` replaced by `supabase-android-bee`, new read-only `migration-audit-bee` added
+- Decision: `.claude/agents/integration-sync-bee.md` (previously scoped to Android's
+  Firestore-only `Core.kt` connection/sync-status logic) was deleted and replaced by
+  `.claude/agents/supabase-android-bee.md`, scoped explicitly to Android's Supabase
+  Auth/Postgres integration layer (`SupabaseAuth.kt`, `SupabaseData.kt`, `Core.kt`
+  repositories/Hilt) — including RLS-respecting query design and migrating remaining
+  Firebase-backed screens/repositories onto the shared Supabase backend `frontend/` already
+  uses live. Reason: explicit, detailed user instruction ("do not simply rename Firebase
+  terms to Supabase — redesign the agent responsibilities and rules around the actual
+  migration architecture").
+- Decision: added `.claude/agents/migration-audit-bee.md`, a fourth agent with only
+  `Read`/`Glob`/`Grep` tools (no `Edit`/`Write`/`Bash`) — an independent, read-only auditor
+  that greps the Android project for leftover Firebase architecture, UI-layer database access
+  bypassing repositories, Android/web Supabase schema mismatches, exposed credentials, and
+  swallowed-error/mock-data anti-patterns, then reports under a fixed heading structure
+  (FIREBASE REMAINING / SUPABASE COMPLETE / MIGRATION RISKS / BLOCKERS / LEGACY CODE /
+  SECURITY CONCERNS / TESTING GAPS / RECOMMENDED NEXT ACTIONS). Reason: user explicitly
+  requested a dedicated auditor to catch migration problems the implementation bees might
+  self-report optimistically or simply miss.
+- Also updated: `android-ui-bee.md` (tightened its Firebase/Supabase-boundary language and
+  strict-boundary "MUST NOT" list per the user's spec), `testing-bee.md` (added an explicit
+  RLS-testing checklist, "admin-account success is not proof of correct RLS" rule, and
+  migration-status-awareness section), and `queen-bee.md` (updated the `Agent()` tool's
+  allowed-agent list, delegation guidance, and cross-agent coordination example for the new
+  4-bee roster).
+- Scope note: this task only touched `.claude/agents/*.md` and `docs/ai-memory/`
+  (`ARCHITECTURE.md`'s worker-bee-ownership section, this file, `SESSION_LOG.md`) — no
+  `mobile-android/` application code was changed as part of this redesign.
+- Consequence: any future delegation of Android Supabase/data-layer work must target
+  `supabase-android-bee`, not `integration-sync-bee` (which no longer exists). Any future
+  session auditing Android migration progress should consider using `migration-audit-bee`
+  rather than reasoning about migration completeness from memory alone.
+
 ## 2026-08-14 — Android Phase D: core data migrated to Postgres via a backend swap, not a full rebuild; stopped before Phase E–J despite a broader instruction
 - Decision: `clients`/`machines`/`service_records`/`job_cards`/`job_card_lines` now read/
   write live Postgres (via new `SupabaseData.kt`, PostgREST/plain REST, matching Phase C's

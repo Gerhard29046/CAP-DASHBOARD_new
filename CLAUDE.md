@@ -193,8 +193,13 @@ Newest entries should appear first.
 Available specialist agents currently include:
 
 - `android-ui-bee`
-- `integration-sync-bee`
+- `supabase-android-bee`
 - `testing-bee`
+- `migration-audit-bee`
+
+`supabase-android-bee` replaced `integration-sync-bee` on 2026-08-14 when the Android→Supabase
+migration was formally scoped (see `docs/ai-memory/DECISIONS.md`'s matching entry).
+`migration-audit-bee` is new and read-only (no edit/write/bash tools).
 
 Read their actual definitions before assigning work.
 
@@ -215,19 +220,21 @@ Use for:
 - Android tests;
 - Android build issues.
 
-### `integration-sync-bee`
+### `supabase-android-bee`
 
-Use for:
+Use for mobile-android's Supabase Auth/data-layer work — the Android→Supabase migration's
+data/integration side (see `docs/android/ANDROID_SUPABASE_MIGRATION.md` for phase status):
 
-- Firestore data flow;
-- Firebase Auth;
-- Firebase Storage;
-- Cloud Functions;
-- Google Calendar integration;
-- web/mobile synchronization;
-- API integration boundaries;
-- permission synchronization;
-- deployment configuration related to integrations.
+- Supabase Auth (`SupabaseAuth.kt`) — login, session, token handling;
+- Supabase Postgres access (`SupabaseData.kt`, `Core.kt` repositories/Hilt);
+- RLS-respecting query design — RLS in `supabase/migrations/*.sql` is authoritative, never
+  bypassed, never worked around client-side;
+- migrating remaining Firebase-backed screens/repositories onto the shared Supabase backend
+  `frontend/` already uses live (never a separate Android-only backend);
+- identifying and reporting (not silently rebuilding) any remaining Google Calendar-related
+  legacy Android code, since that feature is retired for the web app.
+
+Not used for: Compose/UI (`android-ui-bee`'s scope), or anything in `backend/`/`frontend/`.
 
 ### `testing-bee`
 
@@ -238,9 +245,17 @@ Use for:
 - test implementation;
 - lint/type-check failures;
 - build verification;
-- security-rule review;
+- RLS/permission testing (including "admin-account success ≠ correct RLS" checks);
 - cross-layer validation;
 - final acceptance checks.
+
+### `migration-audit-bee`
+
+Independent, read-only (no edit/write/bash tools) auditor of mobile-android's Android→Supabase
+migration. Use it after a meaningful chunk of migration work lands to catch leftover Firebase
+architecture, UI-layer database access bypassing repositories, and Android/web Supabase schema
+mismatches the implementation bees may have missed or self-reported optimistically. It never
+modifies code — only reports, under a fixed heading structure (see its agent definition).
 
 ## Worker rules
 
@@ -363,7 +378,7 @@ What was removed:
   concrete billing-stopping action, not yet confirmed done.
 - Revoking the stored OAuth connection in Firestore `system_integrations/google_calendar`.
 - The Android `GoogleCalendarRepository` read-only consumer and any related UI —
-  Android-layer removal belongs to `android-ui-bee`/`integration-sync-bee`, not done in the
+  Android-layer removal belongs to `android-ui-bee`/`supabase-android-bee`, not done in the
   session that removed the web/Functions side.
 - `docs/GOOGLE_CALENDAR_SETUP.md`, `docs/migration/GOOGLE_CALENDAR_AUTH_REDESIGN.md`, and
   Laravel's Google Calendar controllers/tests were left as historical record, not deleted.

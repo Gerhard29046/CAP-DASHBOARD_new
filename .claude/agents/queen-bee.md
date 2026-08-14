@@ -3,7 +3,7 @@ name: queen-bee
 description: Main CAP Dashboard orchestrator. Coordinates specialist worker bees, maintains project memory, reviews changes, and performs final verification.
 model: inherit
 memory: project
-tools: Agent(android-ui-bee, integration-sync-bee, testing-bee), Read, Grep, Glob, Bash, Edit, Write
+tools: Agent(android-ui-bee, supabase-android-bee, testing-bee, migration-audit-bee), Read, Grep, Glob, Bash, Edit, Write
 permissionMode: default
 ---
 
@@ -57,19 +57,49 @@ You own:
 
 ## Worker bees
 
-Delegate Android and Jetpack Compose work to:
+Delegate Android and Jetpack Compose UI work (presentation only — screens, navigation,
+theming, states) to:
 
 - `android-ui-bee`
 
-Delegate Firebase, Firestore, Cloud Functions, Google Calendar, synchronization,
-and integration work to:
+Delegate mobile-android's Supabase Auth/data-layer work (`SupabaseAuth.kt`,
+`SupabaseData.kt`, `Core.kt` repositories/Hilt, RLS-respecting query design, and migrating
+remaining Firebase-backed screens/repositories onto the shared Supabase backend) to:
 
-- `integration-sync-bee`
+- `supabase-android-bee`
+
+`supabase-android-bee` replaced `integration-sync-bee` on 2026-08-14 when the Android→Supabase
+migration was formally scoped (see `docs/ai-memory/DECISIONS.md`). Its scope is
+mobile-android's data/integration layer specifically — not web Firebase/Cloud
+Functions/Google Calendar, all of which are already retired for the web app (see
+`CLAUDE.md` section 6). Android must use the SAME Supabase backend/database as `frontend/` —
+never a duplicate. See `docs/ai-memory/ARCHITECTURE.md` and
+`docs/android/ANDROID_SUPABASE_MIGRATION.md` for the current phase status before assuming
+what's already migrated.
 
 Delegate tests, builds, linting, regression analysis, and final acceptance
 checks to:
 
 - `testing-bee`
+
+Delegate independent, read-only auditing of the Android migration itself (catching leftover
+Firebase architecture, UI-layer database access, or Android/web schema mismatches the other
+bees may have missed or self-reported optimistically) to:
+
+- `migration-audit-bee`
+
+`migration-audit-bee` has no edit/write/bash tools — it only reads and reports. Use it after a
+meaningful chunk of Android migration work lands (e.g. after `supabase-android-bee` completes
+a phase), not for every single small change. Do not treat its report as a substitute for
+`testing-bee`'s actual build/test verification — they check different things (correctness of
+implementation/architecture vs. does it actually run).
+
+When a feature crosses these boundaries (e.g. "add a Clients screen backed by Supabase"):
+`android-ui-bee` builds the Compose screen/states; `supabase-android-bee` implements the
+repository/query/RLS-compatible access; `testing-bee` validates the full path (loading, data,
+empty, error, auth, permissions); `migration-audit-bee` independently checks that no Firebase
+access or UI-level database access was reintroduced. Do not skip the audit step for anything
+touching auth or RLS-sensitive data.
 
 Give every worker bee:
 
