@@ -23,7 +23,7 @@ compare, extend not fork, verify full flow, report parity). Maps directly onto t
 | 5 | Knowledge Base rework | **PARTIAL** — `600a097`, real-build-verified. List-card summary/refrigerant preview + real photo-grid reuse (PhotoThumbnail/CapPhotoViewerDialog) done. Upload capability deliberately deferred — found a real, live web bug blocking it correctly, see `KNOWN_ISSUES.md`'s matching entry |
 | 6 | Notes (`dashboard_notes` on Android) | **DONE** — `1a4bbd5` (data-layer registration) + `03040fb` (full CRUD UI), real-build-verified. Embedded in Dashboard matching web placement; full create/edit/delete against real RLS, no fake data |
 | 7 | Account/Profile edit + profile photo (web AND Android — neither has this today) | **DONE**, both platforms, real-build-verified. Migration `0026` written (fixes the pre-existing `profile-images` bucket's RLS, adds `users.photo_path`) but **NOT YET APPLIED** — both UIs work correctly but a real save will fail server-side until the user applies it via the SQL Editor |
-| 8 | Users + roles editable | NOT DONE — sequenced after Firebase removal (see below) |
+| 8 | Users + roles editable | **IN PROGRESS** — prerequisite (`"users"` off Firestore onto Supabase, `b8aaaee`) landed 2026-08-15, which turned out to also be the entire remaining Firebase footprint (see Phase 12 note below — this line's earlier "sequenced after Firebase removal" framing was backwards). 2026-08-16: found+fixed a real, severe, same-bug-class production bug on web while scoping this (`UserAdmin.jsx` save() sent `name`/`permission_overrides`, neither a real `public.users` column — every web admin save was 400ing; see `KNOWN_ISSUES.md`'s matching RESOLVED entry) and the Android Users list's own `"name"` titleKey (same root cause, introduced by `b8aaaee` itself) — both fixed. Android's actual role/permission-matrix editing UI dispatched to `android-ui-bee` (`permissions`/`role_permissions` tables need adding to `SUPABASE_MIGRATED_TABLES`/`permittedCollections` first — both read-only reference tables, RLS already allows any active user to read), not yet landed/verified as of this update |
 | 9 | Settings (Android; web's hub already exists, extend it) | NOT DONE on Android |
 | 10 | Theming/personalization (web AND Android — neither has this today) | NOT DONE |
 | 11 | Connection & Sync Status → Supabase-based, real checks | NOT DONE — still literally Firestore |
@@ -43,18 +43,28 @@ compare, extend not fork, verify full flow, report parity). Maps directly onto t
   as the template, not inventing a second storage mechanism.
 - Users/roles: `public.users`' role/is_active/effective_permissions changes are already
   admin-only, enforced by a server-side trigger (`restrict_self_user_update_trigger`,
-  `0002_rls_policies.sql`), not just an RLS policy — once `users` reads from Supabase (Phase 12),
-  real role editing on Android is just a normal write, no new security mechanism to build.
+  `0002_rls_policies.sql`), not just an RLS policy — since `users` now reads from Supabase
+  (`b8aaaee`, landed 2026-08-15), real role editing on Android is just a normal write, no new
+  security mechanism to build.
 - Settings: web already has a real hub (`frontend/src/pages/Settings.jsx`, tabbed, deliberately
   no fake toggles) — Android's equivalent should follow the same section shape
   (Account/Appearance/Application/Connection/Users/About per the user's own Phase 9 list), and
   extend the web hub with Appearance (theming) rather than inventing a separate pattern.
-- Firebase removal: tracing every actual Firebase usage in `Core.kt` shows the entire remaining
-  footprint is exactly one thing — the `"users"` Firestore collection (+ the login-time Firebase
-  bridge that exists solely to satisfy `firestore.rules` for that one read).
-  `GoogleCalendarRepository` (the other historical consumer) is already deleted (Phase G).
-  Migrating `users` to `public.users` (already what the web app uses) removes Firebase's entire
-  remaining reason to exist in Android.
+- **Firebase removal — UPDATE (2026-08-15/16): the actual data-layer footprint described below
+  is now already closed by `b8aaaee`.** Tracing every actual Firebase usage in `Core.kt` showed
+  the entire remaining footprint was exactly one thing — the `"users"` Firestore collection (+
+  the login-time Firebase bridge that exists solely to satisfy `firestore.rules` for that one
+  read). `GoogleCalendarRepository` (the other historical consumer) was already deleted (Phase
+  G). `b8aaaee` migrated `users` onto `public.users` (already what the web app uses), which
+  removes Firebase's entire remaining *data* reason to exist in Android. **What Phase 12 is now
+  actually left to do is dead-code/dependency removal, not a data migration**: delete the now
+  provably-unreachable `observeFirestoreCollection()` (Core.kt, confirmed unreachable in
+  `b8aaaee`'s own commit message — nothing in `permittedCollections` routes there anymore), the
+  Firebase Auth login bridge that existed only to satisfy `firestore.rules` for the old `users`
+  read, and the Firebase Gradle dependencies themselves — plus a real proof step (grep the built
+  APK/dependency tree for any remaining `firebase-*`/`com.google.firebase` reference) before
+  declaring it done. Not yet done as of this update — still its own dedicated commit per the
+  user's git-discipline instruction, not a side effect of Phase 8.
 
 **Process note, applies going forward**: worker bees hit an account-wide Claude usage limit
 mid-session on 2026-08-15 (resets 6:40pm Africa/Johannesburg) — not a bug. Local Gradle builds
