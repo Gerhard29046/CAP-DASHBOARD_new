@@ -47,6 +47,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.NavType
+import androidx.navigation.navArgument
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -433,6 +435,13 @@ private val destinations = listOf(
 
 private fun permissionFor(label: String) = destinations.first { it.label == label }.permission
 
+/**
+ * Job-card statuses that mean the job is finished. Shared by every "open jobs" reading in the app
+ * (the Dashboard tile's count, the Client-detail list, and the Jobs screen's Open filter) so a tile
+ * and the list it opens can never disagree about what "open" means.
+ */
+private val closedJobStatuses = setOf("Completed", "Collected")
+
 /** Up to two initials from a display name, for [CapUserAvatar]. */
 private fun initialsOf(name: String): String = name.trim().split(Regex("\\s+"))
     .filter { it.isNotBlank() }
@@ -544,7 +553,9 @@ private fun routeIdForLabel(label: String): String = when (label) {
     "Clients" -> CapNavRoute.Clients.route
     "Machines" -> CapNavRoute.Machines.route
     "Services" -> CapNavRoute.Services.route
-    "Jobs" -> CapNavRoute.Jobs.route
+    // Jobs' route template carries an optional `?filter=` argument, so the argument-free base is
+    // what a plain label-driven navigation must target.
+    "Jobs" -> CapNavRoute.Jobs.BASE
     "Calendar" -> CapNavRoute.Calendar.route
     "Knowledge Base" -> CapNavRoute.KnowledgeBase.route
     "Invoices" -> CapNavRoute.Invoices.route
@@ -641,7 +652,10 @@ fun AdaptiveShell(vm: MainViewModel) {
         }
     }
 
-    /** Detail destinations are addressed by an already-built route string, not by label. */
+    /**
+     * Destinations addressed by an already-built route string rather than by label: the record-id
+     * detail screens, and the Jobs list when it carries a status filter.
+     */
     val openRoute: (String) -> Unit = { route ->
         navController.navigate(route) { launchSingleTop = true }
     }
@@ -676,7 +690,17 @@ fun AdaptiveShell(vm: MainViewModel) {
                 composable(CapNavRoute.Clients.route) { ScreenContent("Clients", vm, user, navigate, openRoute) }
                 composable(CapNavRoute.Machines.route) { ScreenContent("Machines", vm, user, navigate, openRoute) }
                 composable(CapNavRoute.Services.route) { ScreenContent("Services", vm, user, navigate, openRoute) }
-                composable(CapNavRoute.Jobs.route) { ScreenContent("Jobs", vm, user, navigate, openRoute) }
+                composable(
+                    route = CapNavRoute.Jobs.route,
+                    arguments = listOf(
+                        navArgument(CapNavRoute.Jobs.ARG) { type = NavType.StringType; defaultValue = "" }
+                    )
+                ) { entry ->
+                    ScreenContent(
+                        "Jobs", vm, user, navigate, openRoute,
+                        jobsFilter = entry.arguments?.getString(CapNavRoute.Jobs.ARG).orEmpty()
+                    )
+                }
                 composable(CapNavRoute.Calendar.route) { ScreenContent("Calendar", vm, user, navigate, openRoute) }
                 composable(CapNavRoute.KnowledgeBase.route) { ScreenContent("Knowledge Base", vm, user, navigate, openRoute) }
                 composable(CapNavRoute.Invoices.route) { ScreenContent("Invoices", vm, user, navigate, openRoute) }
@@ -713,7 +737,8 @@ private fun ScreenContent(
     vm: MainViewModel,
     user: CapUser,
     onNavigate: (String) -> Unit,
-    onOpen: (String) -> Unit
+    onOpen: (String) -> Unit,
+    jobsFilter: String = ""
 ) {
     val data = vm.recordsState
     if (data.loading) {
@@ -725,11 +750,11 @@ private fun ScreenContent(
         return
     }
     when (selected) {
-        "Dashboard" -> DashboardScreen(data, user, onNavigate)
+        "Dashboard" -> DashboardScreen(data, user, onNavigate, onOpen)
         "Clients" -> ClientsScreen(data, user, vm::save, onOpen)
         "Machines" -> MachinesScreen(data, user, vm::save, onOpen)
         "Services" -> ServicesScreen(data, user, vm::save, onOpen)
-        "Jobs" -> JobsScreen(data, user, vm::save, onOpen)
+        "Jobs" -> JobsScreen(data, user, vm::save, onOpen, jobsFilter)
         "Calendar" -> CalendarScreen(data, onOpen)
         "Knowledge Base" -> KnowledgeBaseScreen(data, onOpen)
         "Invoices" -> InvoiceScreen(data)
@@ -998,7 +1023,12 @@ private data class QuickAction(
 )
 
 @Composable
-private fun DashboardScreen(data: RecordsState, user: CapUser, onNavigate: (String) -> Unit) {
+private fun DashboardScreen(
+    data: RecordsState,
+    user: CapUser,
+    onNavigate: (String) -> Unit,
+    onOpen: (String) -> Unit
+) {
     val clients = data.collection("clients")
     val machines = data.collection("machines")
     val services = data.collection("service_records")
@@ -1006,9 +1036,24 @@ private fun DashboardScreen(data: RecordsState, user: CapUser, onNavigate: (Stri
     val machinesById = machines.associateBy { it.id }
     val clientsById = clients.associateBy { it.id }
 
-    val closedJobStatuses = setOf("Completed", "Collected")
     val openJobs = jobs.count { it.text("status") !in closedJobStatuses }
     val dueServices = services.filter { it.text("next_service_due").isNotBlank() }.sortedBy { it.text("next_service_due") }
+
+    // Each summary tile drills into the screen its number came from, gated on the same permission
+    // that gates that screen — a user who cannot open the screen gets the plain, non-interactive
+    // tile (`onClick = null`) instead of a tap that leads nowhere.
+    val openClients: (() -> Unit)? =
+        if (user.hasPermission(permissionFor("Clients"))) fun() { onNavigate("Clients") } else null
+    val openMachines: (() -> Unit)? =
+        if (user.hasPermission(permissionFor("Machines"))) fun() { onNavigate("Machines") } else null
+    // Opens the Jobs list already narrowed to the same jobs this tile counted.
+    val openJobsRoute = CapNavRoute.Jobs.of(CapNavRoute.Jobs.FILTER_OPEN)
+    val openOpenJobs: (() -> Unit)? =
+        if (user.hasPermission(permissionFor("Jobs"))) fun() { onOpen(openJobsRoute) } else null
+    // "Calendar" is this app's Upcoming Services screen — the same target the "Upcoming Services"
+    // section's "View all" link below already uses.
+    val openDueServices: (() -> Unit)? =
+        if (user.hasPermission(permissionFor("Calendar"))) fun() { onNavigate("Calendar") } else null
 
     val initials = initialsOf(user.name)
     val quickActions = buildList {
@@ -1080,12 +1125,24 @@ private fun DashboardScreen(data: RecordsState, user: CapUser, onNavigate: (Stri
         item {
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                    CapStatCard(Icons.Outlined.Groups, "Clients", clients.size.toString(), Modifier.weight(1f), "Active client accounts")
-                    CapStatCard(Icons.Outlined.Build, "Machines", machines.size.toString(), Modifier.weight(1f), "Machines on record")
+                    CapStatCard(
+                        Icons.Outlined.Groups, "Clients", clients.size.toString(), Modifier.weight(1f),
+                        "Active client accounts", openClients
+                    )
+                    CapStatCard(
+                        Icons.Outlined.Build, "Machines", machines.size.toString(), Modifier.weight(1f),
+                        "Machines on record", openMachines
+                    )
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                    CapStatCard(Icons.AutoMirrored.Outlined.Assignment, "Open Jobs", openJobs.toString(), Modifier.weight(1f), "Not yet completed")
-                    CapStatCard(Icons.Outlined.Event, "Due Services", dueServices.size.toString(), Modifier.weight(1f), "With a next-due date")
+                    CapStatCard(
+                        Icons.AutoMirrored.Outlined.Assignment, "Open Jobs", openJobs.toString(), Modifier.weight(1f),
+                        "Not yet completed", openOpenJobs
+                    )
+                    CapStatCard(
+                        Icons.Outlined.Event, "Due Services", dueServices.size.toString(), Modifier.weight(1f),
+                        "With a next-due date", openDueServices
+                    )
                 }
             }
         }
@@ -1237,7 +1294,6 @@ private fun ClientDetailScreen(
 ) {
     var machineDialog by remember { mutableStateOf(false) }
     var editMachine by remember { mutableStateOf<CapRecord?>(null) }
-    val closedJobStatuses = setOf("Completed", "Collected")
     val openJobs = jobs.filter { it.text("status") !in closedJobStatuses }
     val recentServices = services.sortedByDescending { it.text("service_date") }.take(5)
     val machinesById = machines.associateBy { it.id }
@@ -2200,20 +2256,26 @@ private fun JobsScreen(
     data: RecordsState,
     user: CapUser,
     save: (String, String?, Map<String, Any?>, String) -> Unit,
-    onOpen: (String) -> Unit
+    onOpen: (String) -> Unit,
+    initialFilter: String = ""
 ) {
     val clients = data.collection("clients")
     val machines = data.collection("machines")
     val jobs = data.collection("job_cards")
     var creating by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
+    // Seeded from the route argument (the Dashboard's "Open Jobs" tile arrives with it set), but
+    // still fully user-controllable from the chips below — an arrived-at filter is never a trap.
+    var openOnly by remember(initialFilter) { mutableStateOf(initialFilter == CapNavRoute.Jobs.FILTER_OPEN) }
     val clientNames = clients.associate { it.id to it.text("company_name") }
 
     val filteredJobs = jobs.filter { job ->
-        query.isBlank() ||
+        val matchesStatus = !openOnly || job.text("status") !in closedJobStatuses
+        val matchesQuery = query.isBlank() ||
             job.text("job_number").contains(query, ignoreCase = true) ||
             clientNames[job.text("client_id")].orEmpty().contains(query, ignoreCase = true) ||
             job.text("fault_description").contains(query, ignoreCase = true)
+        matchesStatus && matchesQuery
     }
 
     Box(Modifier.fillMaxSize()) {
@@ -2223,13 +2285,31 @@ private fun JobsScreen(
                     value = query,
                     onValueChange = { query = it },
                     placeholder = "Search job number, client, or fault",
-                    modifier = Modifier.fillMaxWidth().padding(bottom = Spacing.xs)
+                    modifier = Modifier.fillMaxWidth()
                 )
+            }
+            item {
+                Row(
+                    Modifier.fillMaxWidth().padding(bottom = Spacing.xs),
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+                ) {
+                    FilterChip(
+                        selected = !openOnly,
+                        onClick = { openOnly = false },
+                        label = { Text("All jobs", maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                    )
+                    FilterChip(
+                        selected = openOnly,
+                        onClick = { openOnly = true },
+                        label = { Text("Open only", maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                    )
+                }
             }
             if (filteredJobs.isEmpty()) {
                 item {
                     CapEmptyState(
                         when {
+                            jobs.isNotEmpty() && openOnly && query.isBlank() -> "No open job cards — everything is completed or collected."
                             jobs.isNotEmpty() -> "No job cards match your search."
                             clients.isEmpty() || machines.isEmpty() -> "No job cards yet. Add a client and a machine first."
                             else -> "No job cards yet. Add the first job."

@@ -30,7 +30,21 @@ sealed class CapNavRoute(val route: String, val label: String) {
     data object Clients : CapNavRoute("clients", "Clients")
     data object Machines : CapNavRoute("machines", "Machines")
     data object Services : CapNavRoute("services", "Services")
-    data object Jobs : CapNavRoute("jobs", "Jobs")
+    /**
+     * The Jobs list. Carries an OPTIONAL status filter as a query argument, so the Dashboard's
+     * "Open Jobs" tile can open the same list already narrowed to the jobs it counted rather than
+     * dumping the user into an unfiltered list. `jobs` (no argument) and `jobs?filter=open` are the
+     * same NavHost destination — navigate to [BASE] for the plain list, [of] for a filtered one.
+     */
+    data object Jobs : CapNavRoute("jobs?filter={filter}", "Jobs") {
+        const val ARG = "filter"
+        const val BASE = "jobs"
+
+        /** [ARG] value meaning "only job cards that are not yet Completed/Collected". */
+        const val FILTER_OPEN = "open"
+
+        fun of(filter: String) = "$BASE?$ARG=${Uri.encode(filter)}"
+    }
     data object Calendar : CapNavRoute("calendar", "Calendar")
     data object KnowledgeBase : CapNavRoute("knowledge_base", "Knowledge Base")
     data object Invoices : CapNavRoute("invoices", "Invoices")

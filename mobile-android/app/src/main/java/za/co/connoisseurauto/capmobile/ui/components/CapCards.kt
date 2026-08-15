@@ -46,6 +46,9 @@ fun CapCard(
 /**
  * Icon + label + number + supporting description stat tile.
  * Designed to work inside a 2-column responsive grid — always fills the width it's given.
+ *
+ * Pass `onClick` to make the tile a real drill-in to whatever screen the number came from;
+ * leaving it `null` renders exactly the non-interactive tile this component has always been.
  */
 @Composable
 fun CapStatCard(
@@ -53,10 +56,14 @@ fun CapStatCard(
     label: String,
     value: String,
     modifier: Modifier = Modifier,
-    description: String? = null
+    description: String? = null,
+    onClick: (() -> Unit)? = null
 ) {
     Card(
-        modifier = modifier.fillMaxWidth().wrapContentHeight(),
+        modifier = modifier
+            .fillMaxWidth()
+            .wrapContentHeight()
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
         shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
