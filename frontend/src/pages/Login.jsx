@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import MachineOutlineImage from "@/assets/optimaoutline.svg";
+import CapLogo from "@/assets/cap-logo.png";
 import { useNavigate } from "react-router-dom";
 import {
   Mail,
@@ -33,14 +34,17 @@ export default function Login() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#002f1f] via-[#003f28] to-[#001f16] text-slate-900">
       <header className="h-24 flex items-center justify-between px-6 sm:px-10 border-b border-white/10">
-        <div className="text-white leading-tight">
-          <div className="text-xl font-extrabold tracking-wide">
-            CONNOISSEUR
+        <div className="flex items-center gap-3">
+          <img src={CapLogo} alt="" className="w-11 h-11 rounded-lg object-cover shrink-0" />
+          <div className="text-white leading-tight">
+            <div className="text-xl font-extrabold tracking-wide">
+              CONNOISSEUR
+            </div>
+            <div className="text-xl font-extrabold tracking-wide">
+              AUTOMOTIVE PRODUCTS
+            </div>
+            <div className="text-xs text-white/80">(CAPE) C.C.</div>
           </div>
-          <div className="text-xl font-extrabold tracking-wide">
-            AUTOMOTIVE PRODUCTS
-          </div>
-          <div className="text-xs text-white/80">(CAPE) C.C.</div>
         </div>
 
         <div className="flex items-center gap-2 text-white/90 font-medium">

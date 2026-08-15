@@ -7,7 +7,6 @@ import {
   Menu,
   X,
   LogOut,
-  Wind,
   User2,
   ClipboardList,
   ClipboardCheck,
@@ -19,6 +18,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/lib/AuthContext";
 import { apiClient } from "@/api/apiClient";
+import capLogo from "@/assets/cap-logo.png";
 
 // Job card statuses that mean "billable but not yet invoiced" -- must match
 // InvoiceQueue.jsx's own `billable`/`pending` filter exactly (see that page's
@@ -75,7 +75,7 @@ export default function AppLayout() {
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-50 flex items-center justify-between px-4 py-3 bg-card/80 backdrop-blur-xl border-b border-border md:hidden">
         <div className="flex items-center gap-2">
-          <Wind className="w-6 h-6 text-primary" />
+          <img src={capLogo} alt="" className="w-7 h-7 rounded-md object-cover" />
           <span className="font-heading font-bold text-lg text-foreground">
             CAP Database
           </span>
@@ -147,7 +147,7 @@ export default function AppLayout() {
       <div className="flex">
         <aside className="hidden md:flex flex-col w-60 min-h-screen border-r border-border bg-sidebar p-4 sticky top-0 h-screen">
           <div className="flex items-center gap-2 px-2 mb-6">
-            <Wind className="w-7 h-7 text-primary" />
+            <img src={capLogo} alt="" className="w-8 h-8 rounded-md object-cover" />
             <span className="font-heading font-bold text-xl text-foreground">
               CAP Database
             </span>
