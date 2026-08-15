@@ -18,7 +18,7 @@ compare, extend not fork, verify full flow, report parity). Maps directly onto t
 | 1 | Dashboard profile (real name, no hardcoded "Administrator") | **DONE** — Phase G round 1 |
 | 1 | Dashboard profile photo | NOT DONE — blocked on Phase 7 (no photo column exists anywhere yet) |
 | 2 | Navigation architecture (real routes, back-button rule, no state loss) | **DONE** — `ec13917`, real-build-verified |
-| 3 | Book In field parity | NOT DONE — gap precisely scoped (see below) |
+| 3 | Book In field parity | **DONE** — `0b7664c`, real-build-verified (23/23 tests, 0 lint errors/30 warnings). All 5 fields (job_number/machine_type/accessories_received/arrival_condition/arrival_condition_notes) added to BookInScreen + JobDetailScreen + JobDialog; real Previous Jobs section |
 | 4 | Calendar (day/week/month, CAP data, no Google Calendar) | NOT DONE |
 | 5 | Knowledge Base rework | NOT DONE |
 | 6 | Notes (`dashboard_notes` on Android) | NOT DONE — confirmed zero Android consumer today |
