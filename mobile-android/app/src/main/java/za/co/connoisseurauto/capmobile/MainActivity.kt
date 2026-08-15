@@ -257,9 +257,36 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun CapApp(vm: MainViewModel = hiltViewModel()) {
     when {
-        !vm.sessionRestored -> Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) { CapLoadingState() }
+        !vm.sessionRestored -> SessionRestoreScreen()
         vm.state.user == null -> LoginScreen(vm.state.error, vm.state.loading, vm::login)
         else -> AdaptiveShell(vm)
+    }
+}
+
+/**
+ * Cold-start state, shown while the stored session is restored. That restore can include a
+ * token refresh, so it is not reliably instant — carrying the app mark means the first frame
+ * identifies the product instead of showing an anonymous spinner on an empty screen.
+ */
+@Composable
+private fun SessionRestoreScreen() {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .safeDrawingPadding()
+            .padding(Spacing.lg),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        CapIdentityMark()
+        Text(
+            "CAP Mobile",
+            style = MaterialTheme.typography.headlineSmall,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(top = Spacing.md)
+        )
+        CircularProgressIndicator(Modifier.padding(top = Spacing.lg))
     }
 }
 
@@ -332,11 +359,34 @@ fun LoginScreen(error: String?, loading: Boolean, login: (String, String) -> Uni
 }
 
 /**
- * The sign-in identity lockup: the app mark in a Primary-tinted container, the product name,
- * then the company name. The tinted container is the same low-alpha treatment
- * [CapQuickActionCard] and [CapStatusBadge] use, so the first screen of the app already reads as
- * the same product as everything behind it. Grouped in its own tighter-spaced column so the
- * three parts read as one mark rather than three evenly spaced items.
+ * The app mark: the product icon in a Primary-tinted container, the same low-alpha treatment
+ * [CapQuickActionCard] and [CapStatusBadge] use. Shared by the sign-in lockup and the
+ * cold-start screen so both pre-login moments read as one product.
+ */
+@Composable
+private fun CapIdentityMark(containerSize: Dp = 72.dp, iconSize: Dp = 36.dp) {
+    Box(
+        Modifier
+            .size(containerSize)
+            .background(
+                MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
+                MaterialTheme.shapes.extraLarge
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            Icons.Outlined.Engineering,
+            contentDescription = null,
+            modifier = Modifier.size(iconSize),
+            tint = MaterialTheme.colorScheme.primary
+        )
+    }
+}
+
+/**
+ * The sign-in identity lockup: the app mark, the product name, then the company name. Grouped
+ * in its own tighter-spaced column so the three parts read as one mark rather than three
+ * evenly spaced items.
  */
 @Composable
 private fun LoginIdentity() {
@@ -345,22 +395,7 @@ private fun LoginIdentity() {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(Spacing.xs)
     ) {
-        Box(
-            Modifier
-                .size(72.dp)
-                .background(
-                    MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
-                    MaterialTheme.shapes.extraLarge
-                ),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                Icons.Outlined.Engineering,
-                contentDescription = null,
-                modifier = Modifier.size(36.dp),
-                tint = MaterialTheme.colorScheme.primary
-            )
-        }
+        CapIdentityMark()
         Text(
             "CAP Mobile",
             style = MaterialTheme.typography.headlineLarge,
