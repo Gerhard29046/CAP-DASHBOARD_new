@@ -1,0 +1,39 @@
+-- Closes a real, confirmed production error (PGRST204 -- "Could not find the
+-- 'accessories_received' column of 'job_cards' in the schema cache"), found live via a real
+-- Book In save. Same bug class already fixed three times in this schema's history (0008:
+-- job_number/date_received, 0010: service_records' service_date/work_performed/findings,
+-- 0022: machine_type) -- a real UI field existed, the original Laravel/MySQL schema already
+-- had it, but 0001_initial_schema.sql's Postgres table definition never included it, so every
+-- write of it has been silently discarded since the cutover (silently, until PostgREST's
+-- schema-cache validation started rejecting the unknown-column write outright).
+--
+-- Evidence both columns are genuine, not obsolete/frontend-only artifacts (read-only
+-- reconciliation performed first, per instruction -- not assumed):
+--   1. backend/ (the original Laravel/MySQL backend, predating the Firestore/Postgres
+--      rebuild) already had both as real, validated, fillable JobCard model fields:
+--      'accessories_received' => ['sometimes','nullable','string'],
+--      'arrival_condition_notes' => ['sometimes','nullable','string'].
+--   2. Both are live, labeled UI fields on TWO independent screens, not one:
+--      frontend/src/pages/BookIn.jsx ("Accessories / Items Received With Machine",
+--      "Condition Notes") AND frontend/src/pages/JobCardDetail.jsx (separate edit fields with
+--      their own empty-state text, "No accessories recorded." / "No condition notes
+--      recorded."), confirmed distinct from the already-existing `technician_notes` column
+--      (a third, separate field) in both the Laravel model and the current UI.
+--   3. Live production schema fetched directly (service-role, read-only) confirmed both
+--      columns are genuinely absent from the current 16-column job_cards table -- not a
+--      stale-migration-file assumption.
+--
+-- Scope discipline: adds exactly these two columns, both nullable text (matching the Laravel
+-- validation rules exactly -- 'sometimes','nullable','string'). No index added (neither field
+-- is searched/sorted/filtered by any current UI code, unlike job_number/date_received in 0008,
+-- which were). No RLS change -- job_cards_insert/job_cards_update (0002_rls_policies.sql) are
+-- already column-agnostic (gate on services.create/.edit... no, job_cards.create/.edit -- via
+-- has_permission()), so no policy needs to change for a new nullable column. No other table
+-- touched.
+--
+-- NOT YET APPLIED to the live project as of this file being written -- prepared for review
+-- only. Must be run manually via the Supabase SQL Editor once authorized, matching this
+-- project's existing no-automated-apply-pipeline convention (same as migration 0024).
+
+alter table public.job_cards add column if not exists accessories_received text;
+alter table public.job_cards add column if not exists arrival_condition_notes text;
