@@ -557,7 +557,7 @@ private fun ScreenContent(selected: String, vm: MainViewModel, user: CapUser, on
         "Calendar" -> CalendarScreen(data, user, vm)
         "Knowledge Base" -> KnowledgeBaseScreen(data, user, vm::save)
         "Invoices" -> InvoiceScreen(data)
-        "Users" -> SimpleRecordsScreen("users", data, "name", "email", "No users found.")
+        "Users" -> SimpleRecordsScreen("users", data, "name", "email", "No users found.", searchPlaceholder = "Search users", noMatches = "No users match your search.")
         "Status" -> StatusScreen(vm)
         "More" -> MoreScreen(user, onNavigate, vm::logout)
         "Account" -> AccountScreen(user, vm::logout)
@@ -1340,26 +1340,33 @@ private fun PhotoThumbnail(
 /**
  * Remove affordance overlaid on an upload-preview thumbnail. The dark scrim behind it is what
  * keeps it visible over an arbitrary photo — the previous untinted icon disappeared entirely on
- * light images.
+ * light images. The tappable area is a 48dp circle (Material's minimum touch target) while the
+ * visible scrim stays 32dp, so the target is reachable without the button covering the photo.
  */
 @Composable
 private fun BoxScope.RemovePhotoButton(onRemove: () -> Unit) {
     Box(
         Modifier
             .align(Alignment.TopEnd)
-            .padding(Spacing.xs)
-            .size(32.dp)
+            .size(48.dp)
             .clip(CircleShape)
-            .background(Color.Black.copy(alpha = 0.55f))
             .clickable(onClick = onRemove),
         contentAlignment = Alignment.Center
     ) {
-        Icon(
-            Icons.Outlined.Close,
-            contentDescription = "Remove photo",
-            tint = Color.White,
-            modifier = Modifier.size(18.dp)
-        )
+        Box(
+            Modifier
+                .size(32.dp)
+                .clip(CircleShape)
+                .background(Color.Black.copy(alpha = 0.55f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                Icons.Outlined.Close,
+                contentDescription = "Remove photo",
+                tint = Color.White,
+                modifier = Modifier.size(18.dp)
+            )
+        }
     }
 }
 
@@ -2218,7 +2225,7 @@ private fun CalendarScreen(data: RecordsState, user: CapUser, vm: MainViewModel)
                 }
                 disconnected -> item {
                     CapEmptyState(
-                        "Google Calendar is not connected. An administrator can connect it from System Settings.",
+                        "Google Calendar is not connected. This app can only view events, not connect an account.",
                         modifier = Modifier.fillMaxWidth().wrapContentHeight(),
                         icon = null
                     )
@@ -2632,17 +2639,44 @@ private fun KnowledgeBaseDetailScreen(
  * it matches every other list in the app; the record fields shown are unchanged.
  */
 @Composable
-private fun SimpleRecordsScreen(collection: String, data: RecordsState, titleKey: String, subtitleKey: String, empty: String) {
+private fun SimpleRecordsScreen(
+    collection: String,
+    data: RecordsState,
+    titleKey: String,
+    subtitleKey: String,
+    empty: String,
+    searchPlaceholder: String = "Search",
+    noMatches: String = "No records match your search."
+) {
+    var query by remember { mutableStateOf("") }
     val records = data.collection(collection)
+    val filtered = records.filter { record ->
+        query.isBlank() ||
+            record.text(titleKey).contains(query, ignoreCase = true) ||
+            record.text(subtitleKey).contains(query, ignoreCase = true)
+    }
     LazyColumn(
         Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(Spacing.sm),
         contentPadding = PaddingValues(bottom = 84.dp)
     ) {
-        if (records.isEmpty()) {
-            item { CapEmptyState(empty, modifier = Modifier.fillMaxWidth().wrapContentHeight()) }
+        item {
+            CapSearchField(
+                value = query,
+                onValueChange = { query = it },
+                placeholder = searchPlaceholder,
+                modifier = Modifier.fillMaxWidth().padding(bottom = Spacing.xs)
+            )
         }
-        items(records, key = { it.id }) { record ->
+        if (filtered.isEmpty()) {
+            item {
+                CapEmptyState(
+                    if (records.isEmpty()) empty else noMatches,
+                    modifier = Modifier.fillMaxWidth().wrapContentHeight()
+                )
+            }
+        }
+        items(filtered, key = { it.id }) { record ->
             val name = record.text(titleKey).ifBlank { record.id }
             CapCard {
                 CapListItem(
