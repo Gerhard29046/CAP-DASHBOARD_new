@@ -3,7 +3,6 @@ package com.CAPDATABASE.capdatabase
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.PickVisualMediaRequest
@@ -559,6 +558,13 @@ private fun routeIdForLabel(label: String): String = when (label) {
 }
 
 private fun labelForRouteId(routeId: String?): String = when (routeId) {
+    // Detail routes are matched against their *template* -- `NavDestination.route` is always the
+    // uninterpolated "client_detail/{clientId}" form, never the filled-in one.
+    CapNavRoute.ClientDetail.route -> CapNavRoute.ClientDetail.label
+    CapNavRoute.MachineDetail.route -> CapNavRoute.MachineDetail.label
+    CapNavRoute.JobDetail.route -> CapNavRoute.JobDetail.label
+    CapNavRoute.ServiceRecordDetail.route -> CapNavRoute.ServiceRecordDetail.label
+    CapNavRoute.KnowledgeBaseDetail.route -> CapNavRoute.KnowledgeBaseDetail.label
     CapNavRoute.Home.route -> "Dashboard"
     CapNavRoute.Clients.route -> "Clients"
     CapNavRoute.Machines.route -> "Machines"
@@ -574,6 +580,18 @@ private fun labelForRouteId(routeId: String?): String = when (routeId) {
     CapNavRoute.LogNewService.route -> "LogNewService"
     CapNavRoute.BookIn.route -> "BookIn"
     else -> "Dashboard"
+}
+
+/**
+ * Which bottom-nav tab stays highlighted for a given screen label. A detail destination keeps its
+ * parent tab lit, which is what it did implicitly back when it was rendered *inside* that tab's
+ * list screen -- the other three detail screens are reached from "More", which has never had a
+ * highlight of its own for those drill-ins, so they keep the same (unhighlighted) treatment.
+ */
+private fun bottomNavSelectionFor(label: String): String = when (label) {
+    CapNavRoute.ClientDetail.label -> "Clients"
+    CapNavRoute.JobDetail.label -> "Jobs"
+    else -> label
 }
 
 /** The 4 bottom-nav tabs get the standard Google-recommended save/restore back-stack treatment
@@ -605,6 +623,11 @@ fun AdaptiveShell(vm: MainViewModel) {
         "LogNewService" -> "Log New Service"
         "BookIn" -> "Book In"
         "Calendar" -> "Upcoming Services"
+        CapNavRoute.ClientDetail.label -> "Client"
+        CapNavRoute.MachineDetail.label -> "Machine"
+        CapNavRoute.JobDetail.label -> "Job Card"
+        CapNavRoute.ServiceRecordDetail.label -> "Service Record"
+        CapNavRoute.KnowledgeBaseDetail.label -> "Knowledge Base"
         else -> destinations.firstOrNull { it.label == selected }?.label ?: selected
     }
 
@@ -618,41 +641,80 @@ fun AdaptiveShell(vm: MainViewModel) {
         }
     }
 
+    /** Detail destinations are addressed by an already-built route string, not by label. */
+    val openRoute: (String) -> Unit = { route ->
+        navController.navigate(route) { launchSingleTop = true }
+    }
+
+    // One central rule instead of a per-screen decision: the 4 bottom-nav tabs are root
+    // destinations and never show a back arrow; everything else is something the user drilled
+    // into, so it does. The back-stack check keeps the arrow honest -- it is only offered when
+    // there is genuinely somewhere to pop to.
+    val canGoBack = selected !in bottomNavLabels && navController.previousBackStackEntry != null
+    val onTopBarBack: (() -> Unit)? = if (canGoBack) {
+        { navController.popBackStack() }
+    } else {
+        null
+    }
+
     CapAppScaffold(
         topBar = {
             CapTopAppBar(
                 title = title,
+                onBack = onTopBarBack,
                 actions = { ServerStatusIndicator(status.connection) }
             )
         },
         bottomBar = {
-            CapBottomNavigation(bottomDestinations, selected, onSelect = navigate)
+            CapBottomNavigation(bottomDestinations, bottomNavSelectionFor(selected), onSelect = navigate)
         },
         snackbarHostState = snackbar
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding).padding(horizontal = Spacing.md, vertical = Spacing.sm)) {
             NavHost(navController = navController, startDestination = CapNavRoute.Home.route) {
-                composable(CapNavRoute.Home.route) { ScreenContent("Dashboard", vm, user, navigate) }
-                composable(CapNavRoute.Clients.route) { ScreenContent("Clients", vm, user, navigate) }
-                composable(CapNavRoute.Machines.route) { ScreenContent("Machines", vm, user, navigate) }
-                composable(CapNavRoute.Services.route) { ScreenContent("Services", vm, user, navigate) }
-                composable(CapNavRoute.Jobs.route) { ScreenContent("Jobs", vm, user, navigate) }
-                composable(CapNavRoute.Calendar.route) { ScreenContent("Calendar", vm, user, navigate) }
-                composable(CapNavRoute.KnowledgeBase.route) { ScreenContent("Knowledge Base", vm, user, navigate) }
-                composable(CapNavRoute.Invoices.route) { ScreenContent("Invoices", vm, user, navigate) }
-                composable(CapNavRoute.Users.route) { ScreenContent("Users", vm, user, navigate) }
-                composable(CapNavRoute.Status.route) { ScreenContent("Status", vm, user, navigate) }
-                composable(CapNavRoute.More.route) { ScreenContent("More", vm, user, navigate) }
-                composable(CapNavRoute.Account.route) { ScreenContent("Account", vm, user, navigate) }
-                composable(CapNavRoute.LogNewService.route) { ScreenContent("LogNewService", vm, user, navigate) }
-                composable(CapNavRoute.BookIn.route) { ScreenContent("BookIn", vm, user, navigate) }
+                composable(CapNavRoute.Home.route) { ScreenContent("Dashboard", vm, user, navigate, openRoute) }
+                composable(CapNavRoute.Clients.route) { ScreenContent("Clients", vm, user, navigate, openRoute) }
+                composable(CapNavRoute.Machines.route) { ScreenContent("Machines", vm, user, navigate, openRoute) }
+                composable(CapNavRoute.Services.route) { ScreenContent("Services", vm, user, navigate, openRoute) }
+                composable(CapNavRoute.Jobs.route) { ScreenContent("Jobs", vm, user, navigate, openRoute) }
+                composable(CapNavRoute.Calendar.route) { ScreenContent("Calendar", vm, user, navigate, openRoute) }
+                composable(CapNavRoute.KnowledgeBase.route) { ScreenContent("Knowledge Base", vm, user, navigate, openRoute) }
+                composable(CapNavRoute.Invoices.route) { ScreenContent("Invoices", vm, user, navigate, openRoute) }
+                composable(CapNavRoute.Users.route) { ScreenContent("Users", vm, user, navigate, openRoute) }
+                composable(CapNavRoute.Status.route) { ScreenContent("Status", vm, user, navigate, openRoute) }
+                composable(CapNavRoute.More.route) { ScreenContent("More", vm, user, navigate, openRoute) }
+                composable(CapNavRoute.Account.route) { ScreenContent("Account", vm, user, navigate, openRoute) }
+                composable(CapNavRoute.LogNewService.route) { ScreenContent("LogNewService", vm, user, navigate, openRoute) }
+                composable(CapNavRoute.BookIn.route) { ScreenContent("BookIn", vm, user, navigate, openRoute) }
+
+                composable(CapNavRoute.ClientDetail.route) { entry ->
+                    DetailContent(CapNavRoute.ClientDetail, entry.arguments?.getString(CapNavRoute.ClientDetail.ARG), vm, user)
+                }
+                composable(CapNavRoute.MachineDetail.route) { entry ->
+                    DetailContent(CapNavRoute.MachineDetail, entry.arguments?.getString(CapNavRoute.MachineDetail.ARG), vm, user)
+                }
+                composable(CapNavRoute.JobDetail.route) { entry ->
+                    DetailContent(CapNavRoute.JobDetail, entry.arguments?.getString(CapNavRoute.JobDetail.ARG), vm, user)
+                }
+                composable(CapNavRoute.ServiceRecordDetail.route) { entry ->
+                    DetailContent(CapNavRoute.ServiceRecordDetail, entry.arguments?.getString(CapNavRoute.ServiceRecordDetail.ARG), vm, user)
+                }
+                composable(CapNavRoute.KnowledgeBaseDetail.route) { entry ->
+                    DetailContent(CapNavRoute.KnowledgeBaseDetail, entry.arguments?.getString(CapNavRoute.KnowledgeBaseDetail.ARG), vm, user)
+                }
             }
         }
     }
 }
 
 @Composable
-private fun ScreenContent(selected: String, vm: MainViewModel, user: CapUser, onNavigate: (String) -> Unit) {
+private fun ScreenContent(
+    selected: String,
+    vm: MainViewModel,
+    user: CapUser,
+    onNavigate: (String) -> Unit,
+    onOpen: (String) -> Unit
+) {
     val data = vm.recordsState
     if (data.loading) {
         CapLoadingState()
@@ -664,12 +726,12 @@ private fun ScreenContent(selected: String, vm: MainViewModel, user: CapUser, on
     }
     when (selected) {
         "Dashboard" -> DashboardScreen(data, user, onNavigate)
-        "Clients" -> ClientsScreen(data, user, vm::save)
-        "Machines" -> MachinesScreen(data, user, vm::save)
-        "Services" -> ServicesScreen(data, user, vm::save, vm)
-        "Jobs" -> JobsScreen(data, user, vm::save, vm)
-        "Calendar" -> CalendarScreen(data, user, vm)
-        "Knowledge Base" -> KnowledgeBaseScreen(data, user, vm::save)
+        "Clients" -> ClientsScreen(data, user, vm::save, onOpen)
+        "Machines" -> MachinesScreen(data, user, vm::save, onOpen)
+        "Services" -> ServicesScreen(data, user, vm::save, onOpen)
+        "Jobs" -> JobsScreen(data, user, vm::save, onOpen)
+        "Calendar" -> CalendarScreen(data, onOpen)
+        "Knowledge Base" -> KnowledgeBaseScreen(data, onOpen)
         "Invoices" -> InvoiceScreen(data)
         "Users" -> SimpleRecordsScreen("users", data, "name", "email", "No users found.", searchPlaceholder = "Search users", noMatches = "No users match your search.")
         "Status" -> StatusScreen(vm)
@@ -677,6 +739,106 @@ private fun ScreenContent(selected: String, vm: MainViewModel, user: CapUser, on
         "Account" -> AccountScreen(user, vm::logout)
         "LogNewService" -> LogNewServiceScreen(data.collection("clients"), data.collection("machines"), vm::save, vm.actionMessage, vm, { onNavigate("Dashboard") }) { onNavigate("Dashboard") }
         "BookIn" -> BookInScreen(data.collection("clients"), data.collection("machines"), vm::save, vm.actionMessage, vm, { onNavigate("Dashboard") }) { onNavigate("Dashboard") }
+    }
+}
+
+/**
+ * Detail-destination counterpart to [ScreenContent]. A detail route carries only a record id, so
+ * the record is looked up in the live collection on every recomposition: it may still be loading
+ * (the destination can be restored before data arrives, e.g. after process death), and it can
+ * legitimately disappear if it was deleted elsewhere while the screen was open — neither case may
+ * crash, so both get a real state instead of a `!!`.
+ */
+@Composable
+private fun DetailContent(route: CapNavRoute, recordId: String?, vm: MainViewModel, user: CapUser) {
+    val data = vm.recordsState
+    if (data.loading) {
+        CapLoadingState()
+        return
+    }
+    data.error?.let { message ->
+        CapErrorState(message = message, onRetry = { vm.checkHealth() })
+        return
+    }
+
+    val collection = when (route) {
+        CapNavRoute.ClientDetail -> "clients"
+        CapNavRoute.MachineDetail -> "machines"
+        CapNavRoute.JobDetail -> "job_cards"
+        CapNavRoute.ServiceRecordDetail -> "service_records"
+        CapNavRoute.KnowledgeBaseDetail -> "knowledge_machines"
+        else -> return
+    }
+    val record = recordId?.let { id -> data.collection(collection).firstOrNull { it.id == id } }
+    if (record == null) {
+        CapEmptyState("This record is no longer available.")
+        return
+    }
+
+    when (route) {
+        CapNavRoute.ClientDetail -> {
+            val clientMachines = relatedRecords(data.collection("machines"), "client_id", record.id)
+            val clientMachineIds = clientMachines.map { it.id }.toSet()
+            ClientDetailScreen(
+                client = record,
+                machines = clientMachines,
+                services = data.collection("service_records").filter { it.text("machine_id") in clientMachineIds },
+                jobs = relatedRecords(data.collection("job_cards"), "client_id", record.id),
+                user = user,
+                clients = data.collection("clients"),
+                save = vm::save
+            )
+        }
+
+        CapNavRoute.MachineDetail -> MachineDetailScreen(
+            machine = record,
+            clients = data.collection("clients"),
+            services = relatedRecords(data.collection("service_records"), "machine_id", record.id),
+            user = user,
+            save = vm::save
+        )
+
+        CapNavRoute.JobDetail -> JobDetailScreen(
+            job = record,
+            clients = data.collection("clients"),
+            machines = data.collection("machines"),
+            user = user,
+            save = vm::save,
+            vm = vm
+        )
+
+        CapNavRoute.ServiceRecordDetail -> {
+            val machines = data.collection("machines")
+            val machine = machines.firstOrNull { it.id == record.text("machine_id") }
+            val client = data.collection("clients").firstOrNull { it.id == machine?.text("client_id") }
+            var editing by remember(record.id) { mutableStateOf(false) }
+            ServiceRecordDetailScreen(
+                service = record,
+                machine = machine,
+                client = client,
+                user = user,
+                vm = vm,
+                onEdit = { editing = true }
+            )
+            if (editing) {
+                ServiceDialog(machines, record, { editing = false }) { fields ->
+                    vm.save("service_records", record.id, fields, "Service record")
+                    editing = false
+                }
+            }
+        }
+
+        CapNavRoute.KnowledgeBaseDetail -> KnowledgeBaseDetailScreen(
+            machine = record,
+            notes = relatedRecords(data.collection("knowledge_notes"), "knowledge_machine_id", record.id),
+            media = relatedRecords(data.collection("knowledge_media"), "knowledge_machine_id", record.id),
+            documents = relatedRecords(data.collection("knowledge_documents"), "knowledge_machine_id", record.id),
+            serviceCodes = relatedRecords(data.collection("knowledge_service_codes"), "knowledge_machine_id", record.id),
+            user = user,
+            save = vm::save
+        )
+
+        else -> Unit
     }
 }
 
@@ -994,36 +1156,16 @@ private fun DashboardScreen(data: RecordsState, user: CapUser, onNavigate: (Stri
 }
 
 @Composable
-private fun ClientsScreen(data: RecordsState, user: CapUser, save: (String, String?, Map<String, Any?>, String) -> Unit) {
+private fun ClientsScreen(
+    data: RecordsState,
+    user: CapUser,
+    save: (String, String?, Map<String, Any?>, String) -> Unit,
+    onOpen: (String) -> Unit
+) {
     val clients = data.collection("clients")
     val machines = data.collection("machines")
-    val services = data.collection("service_records")
-    val jobs = data.collection("job_cards")
     var clientDialog by remember { mutableStateOf(false) }
-    var machineClient by remember { mutableStateOf<CapRecord?>(null) }
-    var editMachine by remember { mutableStateOf<CapRecord?>(null) }
-    var selectedClient by remember { mutableStateOf<CapRecord?>(null) }
     var query by remember { mutableStateOf("") }
-
-    // Detail views here are local state, not nav destinations, so without this the system back
-    // gesture left the whole section instead of returning to the list.
-    BackHandler(enabled = selectedClient != null) { selectedClient = null }
-
-    val activeClient = selectedClient
-    if (activeClient != null) {
-        val clientMachineIds = relatedRecords(machines, "client_id", activeClient.id).map { it.id }.toSet()
-        ClientDetailScreen(
-            client = activeClient,
-            machines = relatedRecords(machines, "client_id", activeClient.id),
-            services = services.filter { it.text("machine_id") in clientMachineIds },
-            jobs = relatedRecords(jobs, "client_id", activeClient.id),
-            user = user,
-            clients = clients,
-            save = save,
-            onBack = { selectedClient = null }
-        )
-        return
-    }
 
     val filteredClients = clients.filter { client ->
         query.isBlank() ||
@@ -1059,7 +1201,7 @@ private fun ClientsScreen(data: RecordsState, user: CapUser, save: (String, Stri
                             "${clientMachines.size} ${if (clientMachines.size == 1) "machine" else "machines"}"
                         ).joinToString(" · "),
                         showNavArrow = true,
-                        onClick = { selectedClient = client }
+                        onClick = { onOpen(CapNavRoute.ClientDetail.of(client.id)) }
                     )
                 }
             }
@@ -1067,8 +1209,6 @@ private fun ClientsScreen(data: RecordsState, user: CapUser, save: (String, Stri
         if (user.hasPermission("clients.create")) FloatingActionButton({ clientDialog = true }, Modifier.align(Alignment.BottomEnd).padding(Spacing.md)) { Icon(Icons.Outlined.PersonAdd, "Add client") }
     }
     if (clientDialog) ClientDialog({ clientDialog = false }) { fields -> save("clients", null, fields, "Client"); clientDialog = false }
-    machineClient?.let { client -> MachineDialog(clients, null, client.id, { machineClient = null }) { fields -> save("machines", null, fields, "Machine"); machineClient = null } }
-    editMachine?.let { machine -> MachineDialog(clients, machine, machine.text("client_id"), { editMachine = null }) { fields -> save("machines", machine.id, fields, "Machine"); editMachine = null } }
 }
 
 @Composable
@@ -1093,8 +1233,7 @@ private fun ClientDetailScreen(
     jobs: List<CapRecord>,
     user: CapUser,
     clients: List<CapRecord>,
-    save: (String, String?, Map<String, Any?>, String) -> Unit,
-    onBack: () -> Unit
+    save: (String, String?, Map<String, Any?>, String) -> Unit
 ) {
     var machineDialog by remember { mutableStateOf(false) }
     var editMachine by remember { mutableStateOf<CapRecord?>(null) }
@@ -1105,9 +1244,6 @@ private fun ClientDetailScreen(
 
     Box(Modifier.fillMaxSize()) {
         LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(Spacing.md), contentPadding = PaddingValues(bottom = 84.dp)) {
-            item {
-                CapBackRow("Back to clients", onBack)
-            }
             item {
                 Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
                     Text(
@@ -1202,29 +1338,17 @@ private fun ClientDetailScreen(
 }
 
 @Composable
-private fun MachinesScreen(data: RecordsState, user: CapUser, save: (String, String?, Map<String, Any?>, String) -> Unit) {
+private fun MachinesScreen(
+    data: RecordsState,
+    user: CapUser,
+    save: (String, String?, Map<String, Any?>, String) -> Unit,
+    onOpen: (String) -> Unit
+) {
     val clients = data.collection("clients")
     val machines = data.collection("machines")
-    val services = data.collection("service_records")
     var creating by remember { mutableStateOf(false) }
-    var selectedMachine by remember { mutableStateOf<CapRecord?>(null) }
     var query by remember { mutableStateOf("") }
     val clientNames = clients.associate { it.id to it.text("company_name") }
-
-    BackHandler(enabled = selectedMachine != null) { selectedMachine = null }
-
-    val activeMachine = selectedMachine
-    if (activeMachine != null) {
-        MachineDetailScreen(
-            machine = activeMachine,
-            clients = clients,
-            services = relatedRecords(services, "machine_id", activeMachine.id),
-            user = user,
-            save = save,
-            onBack = { selectedMachine = null }
-        )
-        return
-    }
 
     val filteredMachines = machines.filter { machine ->
         query.isBlank() ||
@@ -1266,7 +1390,7 @@ private fun MachinesScreen(data: RecordsState, user: CapUser, save: (String, Str
                             machine.text("serial_number").ifBlank { null }
                         ).joinToString(" · "),
                         showNavArrow = true,
-                        onClick = { selectedMachine = machine }
+                        onClick = { onOpen(CapNavRoute.MachineDetail.of(machine.id)) }
                     )
                 }
             }
@@ -1282,8 +1406,7 @@ private fun MachineDetailScreen(
     clients: List<CapRecord>,
     services: List<CapRecord>,
     user: CapUser,
-    save: (String, String?, Map<String, Any?>, String) -> Unit,
-    onBack: () -> Unit
+    save: (String, String?, Map<String, Any?>, String) -> Unit
 ) {
     var editDialog by remember { mutableStateOf(false) }
     val client = clients.firstOrNull { it.id == machine.text("client_id") }
@@ -1295,9 +1418,6 @@ private fun MachineDetailScreen(
 
     Box(Modifier.fillMaxSize()) {
         LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(Spacing.md), contentPadding = PaddingValues(bottom = 84.dp)) {
-            item {
-                CapBackRow("Back to machines", onBack)
-            }
             item {
                 Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
                     Text(
@@ -1359,16 +1479,11 @@ private fun ServiceRecordDetailScreen(
     machine: CapRecord?,
     client: CapRecord?,
     user: CapUser,
-    save: (String, String?, Map<String, Any?>, String) -> Unit,
     vm: MainViewModel,
-    onBack: () -> Unit,
     onEdit: () -> Unit
 ) {
     Box(Modifier.fillMaxSize()) {
         LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(Spacing.md), contentPadding = PaddingValues(bottom = 84.dp)) {
-            item {
-                CapBackRow("Back", onBack)
-            }
             item {
                 Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
                     Text(
@@ -2012,41 +2127,17 @@ private fun BookInScreen(
 }
 
 @Composable
-private fun ServicesScreen(data: RecordsState, user: CapUser, save: (String, String?, Map<String, Any?>, String) -> Unit, vm: MainViewModel) {
+private fun ServicesScreen(
+    data: RecordsState,
+    user: CapUser,
+    save: (String, String?, Map<String, Any?>, String) -> Unit,
+    onOpen: (String) -> Unit
+) {
     val machines = data.collection("machines")
     val machinesById = machines.associateBy { it.id }
-    val clientsById = data.collection("clients").associateBy { it.id }
     val services = data.collection("service_records")
-    var editing by remember { mutableStateOf<CapRecord?>(null) }
     var creating by remember { mutableStateOf(false) }
-    var selectedService by remember { mutableStateOf<CapRecord?>(null) }
     var query by remember { mutableStateOf("") }
-
-    BackHandler(enabled = selectedService != null) { selectedService = null }
-
-    val activeService = selectedService
-    if (activeService != null) {
-        val machine = machinesById[activeService.text("machine_id")]
-        val client = clientsById[machine?.text("client_id")]
-        ServiceRecordDetailScreen(
-            service = activeService,
-            machine = machine,
-            client = client,
-            user = user,
-            save = save,
-            vm = vm,
-            onBack = { selectedService = null },
-            onEdit = { editing = activeService }
-        )
-        if (editing != null) {
-            val service = editing!!
-            ServiceDialog(machines, service, { editing = null }) { fields ->
-                save("service_records", service.id, fields, "Service record")
-                editing = null
-            }
-        }
-        return
-    }
 
     val filteredServices = services.filter { service ->
         query.isBlank() ||
@@ -2086,7 +2177,7 @@ private fun ServicesScreen(data: RecordsState, user: CapUser, save: (String, Str
                             service.text("technician_name").ifBlank { null }
                         ).joinToString(" · ").ifBlank { null },
                         showNavArrow = true,
-                        onClick = { selectedService = service }
+                        onClick = { onOpen(CapNavRoute.ServiceRecordDetail.of(service.id)) }
                     )
                 }
             }
@@ -2105,30 +2196,18 @@ private fun jobStatusTone(status: String): StatusTone = when (status) {
 }
 
 @Composable
-private fun JobsScreen(data: RecordsState, user: CapUser, save: (String, String?, Map<String, Any?>, String) -> Unit, vm: MainViewModel) {
+private fun JobsScreen(
+    data: RecordsState,
+    user: CapUser,
+    save: (String, String?, Map<String, Any?>, String) -> Unit,
+    onOpen: (String) -> Unit
+) {
     val clients = data.collection("clients")
     val machines = data.collection("machines")
     val jobs = data.collection("job_cards")
     var creating by remember { mutableStateOf(false) }
-    var selectedJob by remember { mutableStateOf<CapRecord?>(null) }
     var query by remember { mutableStateOf("") }
     val clientNames = clients.associate { it.id to it.text("company_name") }
-
-    BackHandler(enabled = selectedJob != null) { selectedJob = null }
-
-    val activeJob = selectedJob
-    if (activeJob != null) {
-        JobDetailScreen(
-            job = activeJob,
-            clients = clients,
-            machines = machines,
-            user = user,
-            save = save,
-            vm = vm,
-            onBack = { selectedJob = null }
-        )
-        return
-    }
 
     val filteredJobs = jobs.filter { job ->
         query.isBlank() ||
@@ -2169,7 +2248,7 @@ private fun JobsScreen(data: RecordsState, user: CapUser, save: (String, String?
                         ).joinToString(" · ").ifBlank { null },
                         trailing = { CapStatusBadge(job.text("status").ifBlank { "Booked In" }, jobStatusTone(job.text("status"))) },
                         showNavArrow = true,
-                        onClick = { selectedJob = job }
+                        onClick = { onOpen(CapNavRoute.JobDetail.of(job.id)) }
                     )
                 }
             }
@@ -2186,8 +2265,7 @@ private fun JobDetailScreen(
     machines: List<CapRecord>,
     user: CapUser,
     save: (String, String?, Map<String, Any?>, String) -> Unit,
-    vm: MainViewModel,
-    onBack: () -> Unit
+    vm: MainViewModel
 ) {
     var editDialog by remember { mutableStateOf(false) }
     val client = clients.firstOrNull { it.id == job.text("client_id") }
@@ -2195,9 +2273,6 @@ private fun JobDetailScreen(
 
     Box(Modifier.fillMaxSize()) {
         LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(Spacing.md), contentPadding = PaddingValues(bottom = 84.dp)) {
-            item {
-                CapBackRow("Back to jobs", onBack)
-            }
             item {
                 Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
@@ -2245,40 +2320,10 @@ private fun JobDetailScreen(
 }
 
 @Composable
-private fun CalendarScreen(data: RecordsState, user: CapUser, vm: MainViewModel) {
-    val save: (String, String?, Map<String, Any?>, String) -> Unit = { collection, id, fields, label -> vm.save(collection, id, fields, label) }
-    val machines = data.collection("machines")
-    val machinesById = machines.associateBy { it.id }
+private fun CalendarScreen(data: RecordsState, onOpen: (String) -> Unit) {
+    val machinesById = data.collection("machines").associateBy { it.id }
     val clientsById = data.collection("clients").associateBy { it.id }
     var query by remember { mutableStateOf("") }
-    var selectedService by remember { mutableStateOf<CapRecord?>(null) }
-    var editing by remember { mutableStateOf<CapRecord?>(null) }
-
-    BackHandler(enabled = selectedService != null) { selectedService = null }
-
-    val activeService = selectedService
-    if (activeService != null) {
-        val machine = machinesById[activeService.text("machine_id")]
-        val client = clientsById[machine?.text("client_id")]
-        ServiceRecordDetailScreen(
-            service = activeService,
-            machine = machine,
-            client = client,
-            user = user,
-            save = save,
-            vm = vm,
-            onBack = { selectedService = null },
-            onEdit = { editing = activeService }
-        )
-        if (editing != null) {
-            val service = editing!!
-            ServiceDialog(machines, service, { editing = null }) { fields ->
-                save("service_records", service.id, fields, "Service record")
-                editing = null
-            }
-        }
-        return
-    }
 
     val today = remember { SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date()) }
     val soonThreshold = remember {
@@ -2333,7 +2378,7 @@ private fun CalendarScreen(data: RecordsState, user: CapUser, vm: MainViewModel)
                             ).joinToString(" · ").ifBlank { null },
                             trailing = { CapStatusBadge(badgeLabel, badgeTone) },
                             showNavArrow = true,
-                            onClick = { selectedService = service }
+                            onClick = { onOpen(CapNavRoute.ServiceRecordDetail.of(service.id)) }
                         )
                     }
                 }
@@ -2428,31 +2473,9 @@ private fun stringMap(value: Any?): List<Pair<String, String>> =
     } ?: emptyList()
 
 @Composable
-private fun KnowledgeBaseScreen(data: RecordsState, user: CapUser, save: (String, String?, Map<String, Any?>, String) -> Unit) {
+private fun KnowledgeBaseScreen(data: RecordsState, onOpen: (String) -> Unit) {
     val machines = data.collection("knowledge_machines")
-    val notes = data.collection("knowledge_notes")
-    val media = data.collection("knowledge_media")
-    val documents = data.collection("knowledge_documents")
-    val serviceCodes = data.collection("knowledge_service_codes")
-    var selectedMachine by remember { mutableStateOf<CapRecord?>(null) }
     var query by remember { mutableStateOf("") }
-
-    BackHandler(enabled = selectedMachine != null) { selectedMachine = null }
-
-    val activeMachine = selectedMachine
-    if (activeMachine != null) {
-        KnowledgeBaseDetailScreen(
-            machine = activeMachine,
-            notes = relatedRecords(notes, "knowledge_machine_id", activeMachine.id),
-            media = relatedRecords(media, "knowledge_machine_id", activeMachine.id),
-            documents = relatedRecords(documents, "knowledge_machine_id", activeMachine.id),
-            serviceCodes = relatedRecords(serviceCodes, "knowledge_machine_id", activeMachine.id),
-            user = user,
-            save = save,
-            onBack = { selectedMachine = null }
-        )
-        return
-    }
 
     val filteredMachines = machines.filter { machine ->
         query.isBlank() ||
@@ -2498,7 +2521,7 @@ private fun KnowledgeBaseScreen(data: RecordsState, user: CapUser, save: (String
                         )
                     },
                     showNavArrow = true,
-                    onClick = { selectedMachine = machine }
+                    onClick = { onOpen(CapNavRoute.KnowledgeBaseDetail.of(machine.id)) }
                 )
             }
         }
@@ -2513,8 +2536,7 @@ private fun KnowledgeBaseDetailScreen(
     documents: List<CapRecord>,
     serviceCodes: List<CapRecord>,
     user: CapUser,
-    save: (String, String?, Map<String, Any?>, String) -> Unit,
-    onBack: () -> Unit
+    save: (String, String?, Map<String, Any?>, String) -> Unit
 ) {
     val uriHandler = LocalUriHandler.current
     val canManage = user.role != "accountant"
@@ -2529,9 +2551,6 @@ private fun KnowledgeBaseDetailScreen(
 
     Box(Modifier.fillMaxSize()) {
         LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(Spacing.md), contentPadding = PaddingValues(bottom = 84.dp)) {
-            item {
-                CapBackRow("Back to knowledge base", onBack)
-            }
             item {
                 Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
                     machine.text("manufacturer").ifBlank { null }?.let {

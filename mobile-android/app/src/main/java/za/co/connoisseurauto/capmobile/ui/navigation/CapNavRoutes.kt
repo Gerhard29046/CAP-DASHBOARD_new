@@ -1,5 +1,7 @@
 package com.CAPDATABASE.capdatabase.ui.navigation
 
+import android.net.Uri
+
 /**
  * Route identifiers for every top-level screen. Wired into a real NavHost/NavController for
  * the first time in Phase B of the Android->Supabase migration (see
@@ -39,25 +41,47 @@ sealed class CapNavRoute(val route: String, val label: String) {
     data object LogNewService : CapNavRoute("log_new_service", "Log New Service")
     data object BookIn : CapNavRoute("book_in", "Book In")
 
-    // --- Reserved for Phase D (not yet wired into the NavHost) -----------------------------
-    // Detail screens (ClientDetailScreen, MachineDetailScreen, etc.) currently exist as
-    // composables but are reached via ad-hoc `remember { mutableStateOf<CapRecord?>(null) }`
-    // state *inside* their parent list screen, not as addressable routes -- converting each
-    // one to a real nested route (with a real back-stack entry, deep-linkable by id) is
-    // deliberately scoped to Phase D, alongside that screen's own Firestore->Supabase data
-    // swap, not done as one large navigation-only rewrite up front. Kept defined here so the
-    // id convention is already decided when that work starts.
-    data object ClientDetail : CapNavRoute("client_detail/{clientId}", "Client Detail")
-    data object MachineDetail : CapNavRoute("machine_detail/{machineId}", "Machine Detail")
-    data object JobDetail : CapNavRoute("job_detail/{jobId}", "Job Detail")
-    data object ServiceRecordDetail : CapNavRoute("service_detail/{serviceId}", "Service Detail")
-    data object KnowledgeBaseDetail : CapNavRoute("knowledge_base_detail/{entryId}", "Knowledge Base Detail")
+    // --- Detail destinations (record id argument) ------------------------------------------
+    // Real NavHost destinations with their own back-stack entry. Each carries the record id
+    // only -- the record itself is re-resolved from the live collection by the destination, so
+    // a detail screen survives tab switches and process death instead of being lost with the
+    // parent list screen's local state (which is what it was before: a `remember`ed CapRecord
+    // held *inside* the list composable).
+    data object ClientDetail : CapNavRoute("client_detail/{clientId}", "Client Detail") {
+        const val ARG = "clientId"
+        fun of(clientId: String) = "client_detail/${Uri.encode(clientId)}"
+    }
+
+    data object MachineDetail : CapNavRoute("machine_detail/{machineId}", "Machine Detail") {
+        const val ARG = "machineId"
+        fun of(machineId: String) = "machine_detail/${Uri.encode(machineId)}"
+    }
+
+    data object JobDetail : CapNavRoute("job_detail/{jobId}", "Job Detail") {
+        const val ARG = "jobId"
+        fun of(jobId: String) = "job_detail/${Uri.encode(jobId)}"
+    }
+
+    data object ServiceRecordDetail : CapNavRoute("service_detail/{serviceId}", "Service Detail") {
+        const val ARG = "serviceId"
+        fun of(serviceId: String) = "service_detail/${Uri.encode(serviceId)}"
+    }
+
+    data object KnowledgeBaseDetail : CapNavRoute("knowledge_base_detail/{entryId}", "Knowledge Base Detail") {
+        const val ARG = "entryId"
+        fun of(entryId: String) = "knowledge_base_detail/${Uri.encode(entryId)}"
+    }
 
     companion object {
-        /** Top-level destinations actually wired into the Phase B NavHost. */
+        /** Argument-free destinations reachable directly by label from the nav bar or "More". */
         val topLevel: List<CapNavRoute> = listOf(
             Home, Clients, Machines, Services, Jobs, Calendar, KnowledgeBase,
             Invoices, Users, Status, More, Account, LogNewService, BookIn
+        )
+
+        /** Detail destinations, addressed by record id rather than by label. */
+        val details: List<CapNavRoute> = listOf(
+            ClientDetail, MachineDetail, JobDetail, ServiceRecordDetail, KnowledgeBaseDetail
         )
     }
 }
