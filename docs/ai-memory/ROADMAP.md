@@ -1,6 +1,61 @@
 # Roadmap
 
-## In progress
+## In progress — Android product-quality revamp (started 2026-08-15, 13-commit user spec)
+
+Full spec: user message 2026-08-15, "substantial Android frontend/product-quality revamp
+while bringing Android and Web much closer together." 13 commits in order:
+1. Branding/icon infrastructure — **DONE** (`8f82611` web, `1223f38` Android real icon swap).
+2. Navigation architecture — **DONE** (`ec13917`, real nav routes for all 5 detail screens,
+   centralized top-bar back-button rule). Real clean-build-verified: 23/23 tests, 0 lint
+   errors/30 warnings.
+3. Dashboard redesign + interactive cards — not started (Phase G round 1 already made cards
+   real navigable entry points and added a real greeting; further polish may still apply).
+4. Calendar + Upcoming Services — not started (Android's Calendar today is CAP's own
+   service-date list, already Google-Calendar-free per Phase G round 1's removal; user wants
+   this made more of a real calendar experience).
+5. Book In parity with web — not started. **Precise gap confirmed by direct audit**: Android's
+   `BookInScreen` is missing `job_number`, `machine_type`, `accessories_received` (migration
+   0025's own column!), `condition_on_arrival`, `condition_notes`, and the "Previous Jobs for
+   this machine" history section — all present on web's `BookIn.jsx`.
+6. Knowledge Base rework — not started.
+7. Notes (dashboard_notes) — not started. **Confirmed Android has zero consumer of
+   `dashboard_notes` today** — this is a from-scratch build (new Kotlin REST client matching
+   `SupabaseStorage.kt`'s plain-REST pattern + new screen), not a UI-only port.
+8. Profile + profile photo + real user identity — not started. **Real finding**: `public.users`
+   has no photo/avatar column in any migration, and the web app has no profile-photo feature
+   either — this is a genuinely new cross-platform feature, not an Android-catch-up item. Needs
+   a new migration + Storage bucket/RLS.
+9. Users + roles/permissions — not started. **Sequencing note**: real role editing requires
+   Commit 12 (Firebase removal / `users` migrated to Supabase) to land first or alongside —
+   Android's current Users screen reads Firestore, a different unsynchronized permission model.
+   `public.users`' role/is_active/effective_permissions changes are already admin-only,
+   enforced by a server-side trigger (`restrict_self_user_update_trigger`,
+   `0002_rls_policies.sql`), not just a policy — once `users` is on Supabase, real role editing
+   is just a normal write, no new security mechanism needed.
+10. Settings + theming — not started. Web already has a real Settings hub
+    (`frontend/src/pages/Settings.jsx`, tabs, deliberately no fake toggles) to extend with
+    Account/Appearance/Security/About — reuse the pattern, don't invent a new one.
+11. Supabase Connection & Sync Status — not started. `StatusScreen`/`StatusRepository` still
+    literally probe Firestore (`firestore.collection("users").document(uid).get()`) — flagged
+    repeatedly across Phase F/G as accurate-but-stale; real fix needs Commit 12 first.
+12. Firebase removal — not started. **Real finding, changes the whole scope of this commit**:
+    tracing every actual Firebase usage in `Core.kt` shows the ENTIRE remaining footprint is
+    exactly one thing — the `"users"` Firestore collection (+ the login-time Firebase bridge
+    that exists solely to satisfy `firestore.rules` for that one read).
+    `GoogleCalendarRepository` (the other historical consumer) is already deleted (Phase G).
+    Migrating `users` to `public.users` (which the web app already uses) removes Firebase's
+    entire remaining reason to exist in this app.
+13. Final consistency/accessibility/responsive pass — not started.
+
+**Process note for this initiative**: both the round-2 implementer and its verifier hit an
+account-wide Claude session usage limit mid-task (resets 6:40pm Africa/Johannesburg,
+2026-08-15) — not a bug, a plan-level rate limit. Queen Bee verified Commit 2's left-behind
+work directly via a real local Gradle build (Bash tool, not a subagent — local builds don't
+consume the same limit) rather than waiting idle. Worth repeating this approach if it recurs:
+review the diff manually for completeness first (check for truncated hunks / orphaned
+references), then verify directly if subagents are unavailable, rather than blocking.
+
+## Earlier in-progress items
 - **Android Firebase→Supabase migration (started 2026-08-13, separate project from the web
   cutover — explicitly authorized by the user).** Phase A (audit) + Phase B (mapping +
   Navigation-Compose foundation) + Phase C (authentication) + **Phase D (core data: Clients/
