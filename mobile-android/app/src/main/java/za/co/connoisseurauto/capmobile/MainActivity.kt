@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -32,6 +33,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -86,6 +89,7 @@ import com.CAPDATABASE.capdatabase.ui.theme.Spacing
 import coil3.compose.AsyncImage
 import coil3.compose.AsyncImagePainter
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.DecimalFormat
 import java.text.DecimalFormatSymbols
@@ -105,7 +109,6 @@ class MainViewModel @Inject constructor(
     private val auth: AuthRepository,
     private val statusRepo: StatusRepository,
     private val recordsRepository: RecordsRepository,
-    private val googleCalendarRepository: GoogleCalendarRepository,
     private val storageRepository: SupabaseStorageRepository
 ) : ViewModel() {
     var state by mutableStateOf(AuthState())
@@ -119,10 +122,6 @@ class MainViewModel @Inject constructor(
     var testingConnection by mutableStateOf(false)
         private set
     var sessionRestored by mutableStateOf(false)
-        private set
-    var googleEventsResult by mutableStateOf<GoogleCalendarEventsResult?>(null)
-        private set
-    var loadingGoogleEvents by mutableStateOf(false)
         private set
 
     val status = statusRepo.status
@@ -241,20 +240,6 @@ class MainViewModel @Inject constructor(
         connectionTestResult = statusRepo.testConnection()
         testingConnection = false
     }
-
-    /**
-     * Read-only fetch of the selected Google Calendar events (today through +90 days) for the
-     * Upcoming Services screen. Android is a viewer only - connect/disconnect/select-calendars
-     * stays entirely on the web System Settings page.
-     */
-    fun loadGoogleEvents() = viewModelScope.launch {
-        loadingGoogleEvents = true
-        val zone = java.time.ZoneId.systemDefault()
-        val startIso = java.time.LocalDate.now(zone).atStartOfDay(zone).toInstant().toString()
-        val endIso = java.time.LocalDate.now(zone).plusDays(90).atStartOfDay(zone).toInstant().toString()
-        googleEventsResult = googleCalendarRepository.fetchEvents(startIso, endIso)
-        loadingGoogleEvents = false
-    }
 }
 
 @AndroidEntryPoint
@@ -349,10 +334,10 @@ private val destinations = listOf(
     Destination("Clients", "clients.view", Icons.Outlined.Groups),
     Destination("Machines", "machines.view", Icons.Outlined.PrecisionManufacturing),
     Destination("Services", "services.view", Icons.Outlined.Build),
-    Destination("Jobs", "job_cards.view", Icons.Outlined.Assignment),
+    Destination("Jobs", "job_cards.view", Icons.AutoMirrored.Outlined.Assignment),
     Destination("Calendar", "calendar.view", Icons.Outlined.CalendarMonth),
-    Destination("Knowledge Base", "knowledge_base.view", Icons.Outlined.LibraryBooks),
-    Destination("Invoices", "invoices.queue.view", Icons.Outlined.ReceiptLong),
+    Destination("Knowledge Base", "knowledge_base.view", Icons.AutoMirrored.Outlined.LibraryBooks),
+    Destination("Invoices", "invoices.queue.view", Icons.AutoMirrored.Outlined.ReceiptLong),
     Destination("Users", "users.view", Icons.Outlined.AdminPanelSettings),
     Destination("Status", "", Icons.Outlined.CloudSync)
 )
@@ -367,6 +352,23 @@ private fun initialsOf(name: String): String = name.trim().split(Regex("\\s+"))
     .joinToString("")
     .ifBlank { "?" }
 
+/**
+ * Time-of-day greeting. Deliberately mirrors the web dashboard's `greeting()`
+ * (frontend/src/pages/Dashboard.jsx) so both clients use identical wording and cut-off hours.
+ */
+private fun greetingFor(now: Date): String {
+    val hour = java.util.Calendar.getInstance().apply { time = now }.get(java.util.Calendar.HOUR_OF_DAY)
+    return when {
+        hour >= 5 && hour < 12 -> "Good morning"
+        hour >= 12 && hour < 18 -> "Good afternoon"
+        else -> "Good evening"
+    }
+}
+
+/** First name (or email local part) for the greeting — same fallback chain as the web dashboard. */
+private fun firstNameOf(user: CapUser): String =
+    user.name.ifBlank { user.email }.trim().split(Regex("[\\s@]")).firstOrNull().orEmpty()
+
 /** Human-readable label for a connection state — the raw enum name is not user-facing copy. */
 private fun connectionLabel(status: ConnectionStatus): String = when (status) {
     ConnectionStatus.Connected -> "Connected"
@@ -379,8 +381,14 @@ private fun connectionLabel(status: ConnectionStatus): String = when (status) {
 }
 
 /**
- * Compact top-bar connection indicator: a tinted dot plus its label, both driven by the same
- * [connectionTone] mapping the Status screen's badges use, so the two never disagree visually.
+ * Compact top-bar connection indicator: a tinted dot, plus its label whenever the connection is
+ * anything other than healthy. Both are driven by the same [connectionTone] mapping the Status
+ * screen's badges use, so the two never disagree visually.
+ *
+ * The healthy state is deliberately dot-only — a green dot already reads as "fine", and dropping
+ * the redundant "Connected" word gives the screen title the top-bar width it needs on a phone.
+ * Every non-healthy state still spells itself out, and the dot carries the state as its
+ * accessibility label when the text is hidden.
  */
 @Composable
 fun ServerStatusIndicator(status: ConnectionStatus) {
@@ -390,17 +398,28 @@ fun ServerStatusIndicator(status: ConnectionStatus) {
         StatusTone.Error -> MaterialTheme.colorScheme.error
         else -> MaterialTheme.colorScheme.primary
     }
+    val label = connectionLabel(status)
+    val showLabel = status != ConnectionStatus.Connected
     Row(
         modifier = Modifier.padding(end = Spacing.md),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(Spacing.xs)
     ) {
-        Box(Modifier.size(8.dp).background(color, CircleShape))
-        Text(
-            connectionLabel(status),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+        Box(
+            Modifier
+                .size(8.dp)
+                .background(color, CircleShape)
+                .then(if (showLabel) Modifier else Modifier.semantics { contentDescription = label })
         )
+        if (showLabel) {
+            Text(
+                label,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
     }
 }
 
@@ -419,7 +438,7 @@ fun ServerStatusIndicator(status: ConnectionStatus) {
 private fun bottomNavDestinations(user: CapUser): List<CapNavDestination> = buildList {
     add(CapNavDestination("Dashboard", "Home", Icons.Outlined.Home))
     if (user.hasPermission(permissionFor("Clients"))) add(CapNavDestination("Clients", "Clients", Icons.Outlined.Groups))
-    if (user.hasPermission(permissionFor("Jobs"))) add(CapNavDestination("Jobs", "Jobs", Icons.Outlined.Assignment))
+    if (user.hasPermission(permissionFor("Jobs"))) add(CapNavDestination("Jobs", "Jobs", Icons.AutoMirrored.Outlined.Assignment))
     add(CapNavDestination("More", "More", Icons.Outlined.MoreHoriz))
 }
 
@@ -487,10 +506,15 @@ fun AdaptiveShell(vm: MainViewModel) {
         vm.actionMessage?.let { snackbar.showSnackbar(it); vm.clearMessage() }
     }
 
+    // "Calendar" is an internal route label that appears nowhere in the UI: MoreScreen's row says
+    // "Upcoming Services", and unlike Invoices/Status this screen has no in-screen header to
+    // resolve the mismatch — so the top bar was the only location cue and it named a different
+    // screen from the one the user tapped.
     val title = when (selected) {
         "Dashboard" -> "Home"
         "LogNewService" -> "Log New Service"
         "BookIn" -> "Book In"
+        "Calendar" -> "Upcoming Services"
         else -> destinations.firstOrNull { it.label == selected }?.label ?: selected
     }
 
@@ -588,8 +612,6 @@ private fun MoreScreen(user: CapUser, onNavigate: (String) -> Unit, onLogout: ()
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(Spacing.md)
     ) {
-        CapScreenHeader("More")
-
         if (showOperations) {
             CapCard {
                 if (user.hasPermission(permissionFor("Machines"))) {
@@ -610,10 +632,10 @@ private fun MoreScreen(user: CapUser, onNavigate: (String) -> Unit, onLogout: ()
         if (showResources) {
             CapCard {
                 if (user.hasPermission(permissionFor("Knowledge Base"))) {
-                    CapListItem("Machine Knowledge Base", leading = { Icon(Icons.Outlined.LibraryBooks, null) }, showNavArrow = true, onClick = { onNavigate("Knowledge Base") })
+                    CapListItem("Machine Knowledge Base", leading = { Icon(Icons.AutoMirrored.Outlined.LibraryBooks, null) }, showNavArrow = true, onClick = { onNavigate("Knowledge Base") })
                 }
                 if (user.hasPermission(permissionFor("Invoices"))) {
-                    CapListItem("Invoice Queue", leading = { Icon(Icons.Outlined.ReceiptLong, null) }, showNavArrow = true, onClick = { onNavigate("Invoices") })
+                    CapListItem("Invoice Queue", leading = { Icon(Icons.AutoMirrored.Outlined.ReceiptLong, null) }, showNavArrow = true, onClick = { onNavigate("Invoices") })
                 }
                 if (user.hasPermission(permissionFor("Users"))) {
                     CapListItem("Users", leading = { Icon(Icons.Outlined.AdminPanelSettings, null) }, showNavArrow = true, onClick = { onNavigate("Users") })
@@ -629,7 +651,7 @@ private fun MoreScreen(user: CapUser, onNavigate: (String) -> Unit, onLogout: ()
             CapListItem("Account", leading = { Icon(Icons.Outlined.Person, null) }, showNavArrow = true, onClick = { onNavigate("Account") })
             CapListItem(
                 "Logout",
-                leading = { Icon(Icons.Outlined.Logout, null, tint = MaterialTheme.colorScheme.error) },
+                leading = { Icon(Icons.AutoMirrored.Outlined.Logout, null, tint = MaterialTheme.colorScheme.error) },
                 onClick = { confirmLogout = true }
             )
         }
@@ -652,8 +674,6 @@ private fun AccountScreen(user: CapUser, onLogout: () -> Unit) {
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(Spacing.md)
     ) {
-        CapScreenHeader("Account")
-
         CapCard {
             Row(
                 Modifier.fillMaxWidth(),
@@ -742,24 +762,67 @@ private fun DashboardScreen(data: RecordsState, user: CapUser, onNavigate: (Stri
     val quickActions = buildList {
         if (user.hasPermission("services.create")) add(QuickAction(Icons.Outlined.Build, "Log New Service", "LogNewService"))
         if (user.hasPermission("job_cards.create")) add(QuickAction(Icons.Outlined.PrecisionManufacturing, "Book In Machine", "BookIn"))
-        if (user.hasPermission(permissionFor("Jobs"))) add(QuickAction(Icons.Outlined.Assignment, "View Jobs", "Jobs"))
+        if (user.hasPermission(permissionFor("Jobs"))) add(QuickAction(Icons.AutoMirrored.Outlined.Assignment, "View Jobs", "Jobs"))
         if (user.hasPermission(permissionFor("Clients"))) add(QuickAction(Icons.Outlined.Groups, "View Clients", "Clients"))
+    }
+
+    // Live clock, matching the web dashboard's ticking date/time line. Re-reading the clock on a
+    // timer (rather than once per composition) keeps the greeting honest when this tab is left
+    // open — the bottom-nav back stack keeps this screen alive across tab switches.
+    var now by remember { mutableStateOf(Date()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(30_000)
+            now = Date()
+        }
+    }
+    val isoFormat = remember { SimpleDateFormat("yyyy-MM-dd", Locale.US) }
+    val dateFormat = remember { SimpleDateFormat("EEEE, d MMMM yyyy", Locale.US) }
+    val timeFormat = remember { SimpleDateFormat("HH:mm", Locale.US) }
+    val todayIso = isoFormat.format(now)
+    val next30Iso = isoFormat.format(
+        java.util.Calendar.getInstance().apply { time = now; add(java.util.Calendar.DAY_OF_YEAR, 30) }.time
+    )
+    // Same window the web dashboard's greeting line uses: due on or after today, within 30 days.
+    // ISO yyyy-MM-dd sorts lexicographically, so plain string comparison is correct here.
+    val dueNext30 = dueServices.count { service ->
+        val dueDate = service.text("next_service_due")
+        dueDate >= todayIso && dueDate <= next30Iso
+    }
+    val greetingName = firstNameOf(user)
+    val greeting = greetingFor(now).let { if (greetingName.isBlank()) it else "$it, $greetingName" }
+    val contextLine = if (dueNext30 > 0) {
+        "$dueNext30 service${if (dueNext30 == 1) "" else "s"} due in the next 30 days."
+    } else {
+        "Here's what needs attention today."
     }
 
     LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
         item {
-            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
-                CapScreenHeader(title = "CAP Database", subtitle = "Live overview")
-                CapCard {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                        CapUserAvatar(initials)
-                        Column(Modifier.weight(1f)) {
-                            Text(user.name.ifBlank { "Signed-in user" }, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(user.email, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            CapCard {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                    CapUserAvatar(initials)
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                        Text(greeting, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                            Text(
+                                "${dateFormat.format(now)} · ${timeFormat.format(now)}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                            CapStatusBadge(user.role.ifBlank { "User" }, StatusTone.Info)
                         }
-                        CapStatusBadge(user.role.ifBlank { "User" }, StatusTone.Info)
                     }
                 }
+                Text(
+                    contextLine,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth().padding(top = Spacing.sm)
+                )
             }
         }
         item {
@@ -769,7 +832,7 @@ private fun DashboardScreen(data: RecordsState, user: CapUser, onNavigate: (Stri
                     CapStatCard(Icons.Outlined.Build, "Machines", machines.size.toString(), Modifier.weight(1f), "Machines on record")
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                    CapStatCard(Icons.Outlined.Assignment, "Open Jobs", openJobs.toString(), Modifier.weight(1f), "Not yet completed")
+                    CapStatCard(Icons.AutoMirrored.Outlined.Assignment, "Open Jobs", openJobs.toString(), Modifier.weight(1f), "Not yet completed")
                     CapStatCard(Icons.Outlined.Event, "Due Services", dueServices.size.toString(), Modifier.weight(1f), "With a next-due date")
                 }
             }
@@ -2096,12 +2159,6 @@ private fun JobDetailScreen(
 @Composable
 private fun CalendarScreen(data: RecordsState, user: CapUser, vm: MainViewModel) {
     val save: (String, String?, Map<String, Any?>, String) -> Unit = { collection, id, fields, label -> vm.save(collection, id, fields, label) }
-    val uriHandler = LocalUriHandler.current
-    val canViewGoogle = user.hasPermission("calendar.google.view")
-    var showGoogle by remember { mutableStateOf(canViewGoogle) }
-    LaunchedEffect(canViewGoogle, showGoogle) {
-        if (canViewGoogle && showGoogle) vm.loadGoogleEvents()
-    }
     val machines = data.collection("machines")
     val machinesById = machines.associateBy { it.id }
     val clientsById = data.collection("clients").associateBy { it.id }
@@ -2161,18 +2218,6 @@ private fun CalendarScreen(data: RecordsState, user: CapUser, vm: MainViewModel)
                 modifier = Modifier.fillMaxWidth().padding(bottom = Spacing.xs)
             )
         }
-        if (canViewGoogle) {
-            item {
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("Show Google Calendar", style = MaterialTheme.typography.bodyMedium)
-                    Switch(checked = showGoogle, onCheckedChange = { showGoogle = it })
-                }
-            }
-        }
         if (due.isEmpty()) {
             item {
                 CapEmptyState(
@@ -2206,76 +2251,6 @@ private fun CalendarScreen(data: RecordsState, user: CapUser, vm: MainViewModel)
                 }
             }
         }
-        if (canViewGoogle && showGoogle) {
-            item { CapSectionHeader(title = "Google Calendar") }
-            val result = vm.googleEventsResult
-            val disconnected = result?.warnings.orEmpty().any {
-                it.contains("not connected", ignoreCase = true) || it.contains("reconnect", ignoreCase = true)
-            }
-            when {
-                result == null && vm.loadingGoogleEvents -> item {
-                    CapLoadingState(modifier = Modifier.fillMaxWidth().height(120.dp))
-                }
-                result?.error != null -> item {
-                    CapErrorState(
-                        message = result.error,
-                        modifier = Modifier.fillMaxWidth().wrapContentHeight(),
-                        onRetry = { vm.loadGoogleEvents() }
-                    )
-                }
-                disconnected -> item {
-                    CapEmptyState(
-                        "Google Calendar is not connected. This app can only view events, not connect an account.",
-                        modifier = Modifier.fillMaxWidth().wrapContentHeight(),
-                        icon = null
-                    )
-                }
-                result != null && result.events.isEmpty() -> item {
-                    CapEmptyState(
-                        "No Google Calendar events in this range.",
-                        modifier = Modifier.fillMaxWidth().wrapContentHeight()
-                    )
-                }
-                result != null -> items(result.events, key = { "google-${it.id}" }) { event ->
-                    val htmlLink = event.htmlLink
-                    CapCard {
-                        CapListItem(
-                            title = event.title,
-                            subtitle = listOfNotNull(
-                                formatGoogleEventTiming(event),
-                                event.calendarName?.ifBlank { null }
-                            ).joinToString(" · "),
-                            trailing = if (!htmlLink.isNullOrBlank()) {
-                                { CapSecondaryButton(text = "Open", onClick = { uriHandler.openUri(htmlLink) }) }
-                            } else null
-                        )
-                    }
-                }
-                else -> item { CapLoadingState(modifier = Modifier.fillMaxWidth().height(120.dp)) }
-            }
-        }
-    }
-}
-
-/** Read-only formatting of a Google Calendar event's start/end for display; falls back to the raw ISO string on parse failure. */
-private fun formatGoogleEventTiming(event: GoogleCalendarEvent): String {
-    if (event.allDay) return "All day"
-    return try {
-        val displayFormat = java.time.format.DateTimeFormatter.ofPattern("d MMM, HH:mm", Locale.US)
-            .withZone(java.time.ZoneId.systemDefault())
-        val startText = displayFormat.format(java.time.Instant.parse(event.start))
-        val endText = event.end?.let {
-            try {
-                java.time.format.DateTimeFormatter.ofPattern("HH:mm", Locale.US)
-                    .withZone(java.time.ZoneId.systemDefault())
-                    .format(java.time.Instant.parse(it))
-            } catch (_: Exception) {
-                null
-            }
-        }
-        if (endText != null) "$startText - $endText" else startText
-    } catch (_: Exception) {
-        event.start
     }
 }
 

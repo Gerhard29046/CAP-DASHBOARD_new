@@ -6,7 +6,6 @@ val localProperties = Properties().apply {
     if (file.exists()) file.inputStream().use(::load)
 }
 val productionWebAppUrl = "https://capdashboard.gerhardvanwijk.workers.dev/"
-val productionFunctionsBaseUrl = "https://africa-south1-capdatabasefb2.cloudfunctions.net"
 val defaultLoginEmail = localProperties.getProperty("CAP_LOGIN_EMAIL", "admin@connoisseurauto.co.za")
 // Phase C (Android->Supabase auth migration, see docs/android/ANDROID_SUPABASE_MIGRATION.md).
 // Same project/values already committed in frontend/.env.production -- the publishable/anon
@@ -19,14 +18,12 @@ android { namespace="com.CAPDATABASE.capdatabase"; compileSdk=36
  buildTypes {
     debug {
         buildConfigField("String", "WEB_APP_URL", "\"$productionWebAppUrl\"")
-        buildConfigField("String", "FUNCTIONS_BASE_URL", "\"$productionFunctionsBaseUrl\"")
         buildConfigField("String", "SUPABASE_URL", "\"$supabaseUrl\"")
         buildConfigField("String", "SUPABASE_ANON_KEY", "\"$supabaseAnonKey\"")
     }
     release {
         isMinifyEnabled=true
         buildConfigField("String", "WEB_APP_URL", "\"$productionWebAppUrl\"")
-        buildConfigField("String", "FUNCTIONS_BASE_URL", "\"$productionFunctionsBaseUrl\"")
         buildConfigField("String", "SUPABASE_URL", "\"$supabaseUrl\"")
         buildConfigField("String", "SUPABASE_ANON_KEY", "\"$supabaseAnonKey\"")
         proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"),"proguard-rules.pro")

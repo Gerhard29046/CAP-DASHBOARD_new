@@ -1,7 +1,9 @@
 package com.CAPDATABASE.capdatabase.ui.components
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -75,7 +77,11 @@ fun CapStatCard(
 
 /**
  * Tappable icon + label tile for dashboard shortcuts. Sized to a comfortable touch target
- * (>= 72dp tall) rather than the cramped default a bare Card + small label produces.
+ * (>= 88dp tall) rather than the cramped default a bare Card + small label produces.
+ *
+ * The icon sits in a Primary-tinted rounded container using the same low-alpha treatment
+ * [CapStatusBadge] uses for its Info tone, so a shortcut reads as a deliberate product feature
+ * rather than a bare icon on a card — without introducing any colour outside the theme tokens.
  */
 @Composable
 fun CapQuickActionCard(
@@ -85,19 +91,26 @@ fun CapQuickActionCard(
     modifier: Modifier = Modifier
 ) {
     Card(
-        modifier = modifier.fillMaxWidth().defaultMinSize(minHeight = 76.dp).clickable(onClick = onClick),
+        modifier = modifier.fillMaxWidth().defaultMinSize(minHeight = 88.dp).clickable(onClick = onClick),
         shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
         Column(
             Modifier.fillMaxWidth().padding(vertical = Spacing.md, horizontal = Spacing.sm),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(Spacing.xs)
+            verticalArrangement = Arrangement.spacedBy(Spacing.sm)
         ) {
-            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f), MaterialTheme.shapes.medium),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+            }
             Text(
                 label,
-                style = MaterialTheme.typography.labelMedium,
+                style = MaterialTheme.typography.labelLarge,
                 textAlign = TextAlign.Center,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis
