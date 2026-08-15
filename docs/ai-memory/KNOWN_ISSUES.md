@@ -34,7 +34,23 @@
   now shows dot-only when healthy (frees app-bar width) — flagged by the implementer as the
   one change most likely to draw an objection, a 4-line revert if so.
 
-## URGENT, LIKELY LIVE-BREAKING — `job_cards.accessories_received`/`arrival_condition_notes` columns missing; migration written and committed, NOT YET APPLIED (found 2026-08-15, mid-session, while cleaning up unrelated stray files)
+## RESOLVED (2026-08-15, later same day): migration 0025 applied and independently confirmed live
+
+- User applied `0025_job_cards_accessories_and_arrival_notes.sql` via the SQL Editor. Confirmed
+  independently, not taken on trust: wrote `supabase/scripts/qa-check-0025-applied.mjs`
+  (matches this project's existing `qa-check-0020-0021-0022-applied.mjs` pattern — read-only,
+  service-role client, checks both columns are actually selectable) and ran it live —
+  `job_cards.accessories_received`/`arrival_condition_notes` both `OK`. Since `BookIn.jsx`'s
+  save is one combined `update()` payload and PostgREST's `PGRST204` fires specifically when a
+  referenced column isn't in its schema cache, this directly closes the root cause described
+  below — Book In saves should now succeed rather than fail outright. **Not separately
+  re-tested via an actual live Book In save this session** (column-existence is a reliable
+  proxy for the schema-cache fix, so this wasn't treated as required, but a real save has not
+  been observed to succeed) — if Book In still fails after this, it's a different bug.
+
+**Original finding, preserved below for history:**
+
+## ORIGINAL — `job_cards.accessories_received`/`arrival_condition_notes` columns missing; migration written and committed, NOT YET APPLIED (found 2026-08-15, mid-session, while cleaning up unrelated stray files)
 
 - Found sitting **uncommitted and untracked** in the working tree (`supabase/migrations/
   0025_job_cards_accessories_and_arrival_notes.sql`) — real, reasoned, evidence-gathering
