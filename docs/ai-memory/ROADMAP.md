@@ -22,7 +22,7 @@ compare, extend not fork, verify full flow, report parity). Maps directly onto t
 | 4 | Calendar (day/week/month, CAP data, no Google Calendar) | **DONE** — `e9003b9`, real-build-verified. Deliberate no-grid-library call (web itself drops to agenda view under 640px); bucketed agenda (Overdue/Today/This week/Later this month/Later/Completed) + range filter chips + richer detail (serial/refrigerant/notes/findings/status + cross-links). Reschedule confirmed already existed. |
 | 5 | Knowledge Base rework | **PARTIAL** — `600a097`, real-build-verified. List-card summary/refrigerant preview + real photo-grid reuse (PhotoThumbnail/CapPhotoViewerDialog) done. Upload capability deliberately deferred — found a real, live web bug blocking it correctly, see `KNOWN_ISSUES.md`'s matching entry |
 | 6 | Notes (`dashboard_notes` on Android) | **DONE** — `1a4bbd5` (data-layer registration) + `03040fb` (full CRUD UI), real-build-verified. Embedded in Dashboard matching web placement; full create/edit/delete against real RLS, no fake data |
-| 7 | Account/Profile edit + profile photo (web AND Android — neither has this today) | NOT DONE |
+| 7 | Account/Profile edit + profile photo (web AND Android — neither has this today) | **DONE**, both platforms, real-build-verified. Migration `0026` written (fixes the pre-existing `profile-images` bucket's RLS, adds `users.photo_path`) but **NOT YET APPLIED** — both UIs work correctly but a real save will fail server-side until the user applies it via the SQL Editor |
 | 8 | Users + roles editable | NOT DONE — sequenced after Firebase removal (see below) |
 | 9 | Settings (Android; web's hub already exists, extend it) | NOT DONE on Android |
 | 10 | Theming/personalization (web AND Android — neither has this today) | NOT DONE |
