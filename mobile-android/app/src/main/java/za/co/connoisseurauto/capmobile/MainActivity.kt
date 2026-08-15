@@ -763,7 +763,7 @@ private fun ScreenContent(
         "More" -> MoreScreen(user, onNavigate, vm::logout)
         "Account" -> AccountScreen(user, vm::logout)
         "LogNewService" -> LogNewServiceScreen(data.collection("clients"), data.collection("machines"), vm::save, vm.actionMessage, vm, { onNavigate("Dashboard") }) { onNavigate("Dashboard") }
-        "BookIn" -> BookInScreen(data.collection("clients"), data.collection("machines"), vm::save, vm.actionMessage, vm, { onNavigate("Dashboard") }) { onNavigate("Dashboard") }
+        "BookIn" -> BookInScreen(data.collection("clients"), data.collection("machines"), data.collection("job_cards"), vm::save, vm.actionMessage, vm, onOpen, { onNavigate("Dashboard") }) { onNavigate("Dashboard") }
     }
 }
 
@@ -1985,9 +1985,11 @@ private fun LogNewServiceScreen(
 private fun BookInScreen(
     clients: List<CapRecord>,
     machines: List<CapRecord>,
+    jobs: List<CapRecord>,
     save: (String, String?, Map<String, Any?>, String) -> Unit,
     actionMessage: String?,
     vm: MainViewModel,
+    onOpen: (String) -> Unit,
     onBack: () -> Unit,
     onSaved: () -> Unit
 ) {
@@ -1995,9 +1997,14 @@ private fun BookInScreen(
     var clientId by remember { mutableStateOf(clients.firstOrNull()?.id.orEmpty()) }
     val availableMachines = machines.filter { sameRecordId(it.fields["client_id"], clientId) }
     var machineId by remember(clientId) { mutableStateOf(availableMachines.firstOrNull()?.id.orEmpty()) }
+    var jobNumber by remember { mutableStateOf(newJobNumber()) }
     var date by remember { mutableStateOf(today) }
     var technician by remember { mutableStateOf("") }
+    var machineType by remember { mutableStateOf("") }
     var fault by remember { mutableStateOf("") }
+    var accessories by remember { mutableStateOf("") }
+    var arrivalCondition by remember { mutableStateOf("") }
+    var conditionNotes by remember { mutableStateOf("") }
     var attemptedSubmit by remember { mutableStateOf(false) }
     var submitting by remember { mutableStateOf(false) }
 
@@ -2076,6 +2083,12 @@ private fun BookInScreen(
     val machineError = attemptedSubmit && machineId.isBlank()
     val faultError = attemptedSubmit && fault.isBlank()
 
+    // `recordId` is excluded because the draft job card this screen may have already created for
+    // photo uploads carries the same machine_id — it is the job being booked in, not a previous one.
+    val previousJobs = if (machineId.isBlank()) emptyList<CapRecord>() else jobs
+        .filter { sameRecordId(it.fields["machine_id"], machineId) && it.id != recordId }
+        .sortedByDescending { it.text("date_received") }
+
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).imePadding(),
         verticalArrangement = Arrangement.spacedBy(Spacing.md)
@@ -2084,6 +2097,7 @@ private fun BookInScreen(
         CapScreenHeader(title = "Book In Machine", subtitle = "Create a new job card for an incoming machine")
         CapCard {
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                CapSectionHeader("Job Information")
                 CapDropdownField(
                     label = "Client",
                     options = clients.map { it.id to it.text("company_name") },
@@ -2103,6 +2117,7 @@ private fun BookInScreen(
                     required = true,
                     errorMessage = if (machineError) "Machine is required." else null
                 )
+                CapTextField(label = "Job number", value = jobNumber, onValueChange = { jobNumber = it })
                 CapDateField(
                     label = "Date received",
                     value = date,
@@ -2111,11 +2126,48 @@ private fun BookInScreen(
                 )
                 CapTextField(label = "Technician", value = technician, onValueChange = { technician = it })
                 CapTextField(
+                    label = "Machine type",
+                    value = machineType,
+                    onValueChange = { machineType = it },
+                    placeholder = "e.g. Wigam, Ecotechnics, Texa"
+                )
+            }
+        }
+        CapCard {
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                CapSectionHeader("Problem Report")
+                CapTextField(
                     label = "Fault description",
                     value = fault,
                     onValueChange = { fault = it },
                     required = true,
+                    singleLine = false,
                     errorMessage = if (faultError) "Fault description is required." else null
+                )
+                CapTextField(
+                    label = "Accessories / items received",
+                    value = accessories,
+                    onValueChange = { accessories = it },
+                    placeholder = "e.g. Remote control, power cable, manual",
+                    singleLine = false
+                )
+            }
+        }
+        CapCard {
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                CapSectionHeader("Machine Condition on Arrival")
+                CapDropdownField(
+                    label = "Condition",
+                    options = arrivalConditions.map { it to it },
+                    selectedKey = arrivalCondition,
+                    onSelected = { arrivalCondition = it }
+                )
+                CapTextField(
+                    label = "Condition notes",
+                    value = conditionNotes,
+                    onValueChange = { conditionNotes = it },
+                    placeholder = "Any visible damage or notes",
+                    singleLine = false
                 )
             }
         }
@@ -2154,6 +2206,33 @@ private fun BookInScreen(
                 )
             }
         }
+        CapCard {
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                CapSectionHeader("Previous Jobs for This Machine")
+                if (previousJobs.isEmpty()) {
+                    Text(
+                        if (machineId.isBlank()) "Select a machine to see its job history."
+                        else "No previous job cards for this machine.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    previousJobs.forEach { job ->
+                        CapListItem(
+                            title = job.text("job_number").ifBlank { "Job card" },
+                            subtitle = listOfNotNull(
+                                job.text("date_received").ifBlank { null },
+                                job.text("technician_name").ifBlank { null },
+                                job.text("fault_description").ifBlank { null }
+                            ).joinToString(" · ").ifBlank { null },
+                            trailing = { CapStatusBadge(job.text("status").ifBlank { "Booked In" }, jobStatusTone(job.text("status"))) },
+                            showNavArrow = true,
+                            onClick = { onOpen(CapNavRoute.JobDetail.of(job.id)) }
+                        )
+                    }
+                }
+            }
+        }
         CapPrimaryButton(
             text = "Book In Machine",
             onClick = {
@@ -2164,12 +2243,16 @@ private fun BookInScreen(
                     "job_cards",
                     recordId,
                     mapOf(
-                        "job_number" to "JOB-${System.currentTimeMillis().toString().takeLast(6)}",
+                        "job_number" to jobNumber.trim().ifBlank { newJobNumber() },
                         "client_id" to clientId,
                         "machine_id" to machineId,
                         "status" to "Booked In",
                         "date_received" to date,
+                        "machine_type" to machineType.trim(),
                         "fault_description" to fault.trim(),
+                        "accessories_received" to accessories.trim(),
+                        "arrival_condition" to arrivalCondition,
+                        "arrival_condition_notes" to conditionNotes.trim(),
                         "technician_name" to technician.trim()
                     ),
                     "Job card"
@@ -2242,6 +2325,11 @@ private fun ServicesScreen(
     }
     if (creating) ServiceDialog(machines, null, { creating = false }) { save("service_records", null, it, "Service record"); creating = false }
 }
+
+/** Matches BookIn.jsx's `CONDITIONS` verbatim — the web writes these exact strings to `arrival_condition`. */
+private val arrivalConditions = listOf("Good", "Fair", "Poor", "Damaged")
+
+private fun newJobNumber(): String = "JOB-${System.currentTimeMillis().toString().takeLast(6)}"
 
 private fun jobStatusTone(status: String): StatusTone = when (status) {
     "Booked In" -> StatusTone.Neutral
@@ -2370,8 +2458,12 @@ private fun JobDetailScreen(
                             listOfNotNull(
                                 client?.text("company_name")?.ifBlank { null }?.let { "Client" to it },
                                 machineTitle(machine).ifBlank { null }?.let { "Machine" to it },
+                                job.text("machine_type").ifBlank { null }?.let { "Machine type" to it },
                                 job.text("date_received").ifBlank { null }?.let { "Date received" to it },
                                 job.text("fault_description").ifBlank { null }?.let { "Fault description" to it },
+                                job.text("accessories_received").ifBlank { null }?.let { "Accessories received" to it },
+                                job.text("arrival_condition").ifBlank { null }?.let { "Condition on arrival" to it },
+                                job.text("arrival_condition_notes").ifBlank { null }?.let { "Condition notes" to it },
                                 job.text("technician_name").ifBlank { null }?.let { "Technician" to it }
                             ).forEach { (label, value) -> CapDetailField(label, value) }
                         }
@@ -2912,17 +3004,39 @@ private fun JobDialog(clients: List<CapRecord>, machines: List<CapRecord>, initi
     var clientId by remember(initial) { mutableStateOf(initial?.text("client_id") ?: clients.firstOrNull()?.id.orEmpty()) }
     val availableMachines = machines.filter { sameRecordId(it.fields["client_id"], clientId) }
     var machineId by remember(initial, clientId) { mutableStateOf(initial?.text("machine_id") ?: availableMachines.firstOrNull()?.id.orEmpty()) }
-    var number by remember(initial) { mutableStateOf(initial?.text("job_number")?.ifBlank { "JOB-${System.currentTimeMillis().toString().takeLast(6)}" } ?: "JOB-${System.currentTimeMillis().toString().takeLast(6)}") }
+    var number by remember(initial) { mutableStateOf(initial?.text("job_number")?.ifBlank { newJobNumber() } ?: newJobNumber()) }
+    var machineType by remember(initial) { mutableStateOf(initial?.text("machine_type").orEmpty()) }
     var fault by remember(initial) { mutableStateOf(initial?.text("fault_description").orEmpty()) }
+    var accessories by remember(initial) { mutableStateOf(initial?.text("accessories_received").orEmpty()) }
+    var arrivalCondition by remember(initial) { mutableStateOf(initial?.text("arrival_condition").orEmpty()) }
+    var conditionNotes by remember(initial) { mutableStateOf(initial?.text("arrival_condition_notes").orEmpty()) }
     var technician by remember(initial) { mutableStateOf(initial?.text("technician_name").orEmpty()) }
     var status by remember(initial) { mutableStateOf(initial?.text("status")?.ifBlank { "Booked In" } ?: "Booked In") }
     EditDialog(if (initial == null) "Add job card" else "Edit job card", onDismiss, clientId.isNotBlank() && machineId.isNotBlank() && number.isNotBlank(), {
-        onSave(mapOf("client_id" to clientId, "machine_id" to machineId, "job_number" to number.trim(), "status" to status, "date_received" to (initial?.text("date_received")?.ifBlank { today } ?: today), "fault_description" to fault.trim(), "technician_name" to technician.trim()))
+        onSave(
+            mapOf(
+                "client_id" to clientId,
+                "machine_id" to machineId,
+                "job_number" to number.trim(),
+                "status" to status,
+                "date_received" to (initial?.text("date_received")?.ifBlank { today } ?: today),
+                "machine_type" to machineType.trim(),
+                "fault_description" to fault.trim(),
+                "accessories_received" to accessories.trim(),
+                "arrival_condition" to arrivalCondition,
+                "arrival_condition_notes" to conditionNotes.trim(),
+                "technician_name" to technician.trim()
+            )
+        )
     }) {
         SelectInput("Client", clients.map { it.id to it.text("company_name") }, clientId) { selected -> clientId = selected; machineId = machines.firstOrNull { sameRecordId(it.fields["client_id"], selected) }?.id.orEmpty() }
         SelectInput("Machine", machines.filter { sameRecordId(it.fields["client_id"], clientId) }.map { it.id to machineTitle(it) }, machineId) { machineId = it }
         TextInput("Job number", number, { number = it }, true)
+        TextInput("Machine type", machineType, { machineType = it })
         TextInput("Fault description", fault, { fault = it })
+        TextInput("Accessories received", accessories, { accessories = it })
+        SelectInput("Condition on arrival", arrivalConditions.map { it to it }, arrivalCondition) { arrivalCondition = it }
+        TextInput("Condition notes", conditionNotes, { conditionNotes = it })
         TextInput("Technician", technician, { technician = it })
         SelectInput("Status", listOf("Booked In", "Open", "In Progress", "Completed", "Ready to Invoice").map { it to it }, status) { status = it }
     }
