@@ -316,13 +316,14 @@ class SupabaseAuthRepository @Inject constructor(
      * Cross-platform parity Phase 7 (Account editing + profile photo). Updates the caller's OWN
      * `public.users` row -- deliberately a direct PostgREST call here, in the same file/class as
      * [loadProfile], rather than routed through [RecordsRepository]'s generic
-     * `update("users", ...)`. That generic path still targets Firestore for `"users"` (it is not
-     * in [SUPABASE_MIGRATED_TABLES] yet -- the separate, still-read-only "Users" list screen is
-     * the ONLY thing that still legitimately reads Firestore's `users` collection, per Core.kt's
-     * own KDoc on that distinction) -- routing a real profile edit through it would silently
-     * write to the wrong backend, or fail outright. The signed-in user's OWN identity has always
-     * come from here (`loadProfile`, PostgREST), authoritatively, since Phase C; this is simply
-     * the write side of that same, already-correct path.
+     * `update("users", ...)`. At the time this was written, that generic path still targeted
+     * Firestore for `"users"` (added to [SUPABASE_MIGRATED_TABLES] one phase later, in `b8aaaee`)
+     * -- routing a real profile edit through it then would have silently written to the wrong
+     * backend. Both paths now hit the same `public.users` table, but this method stays separate
+     * regardless: it is the signed-in user's OWN identity write (paired with [loadProfile], the
+     * same already-correct read path since Phase C), a different real use case from the generic
+     * Users LIST/admin-editing screen (`UsersScreen`/`UserDetailScreen`, Phase 8) even though both
+     * now happen to reach the same rows.
      *
      * `fields` is intentionally narrow at the call-site level (only `full_name`/`photo_path` are
      * meant to be sent) but this method itself does not enforce that allowlist -- the real

@@ -196,10 +196,29 @@ class ConnectivityObserver(context: Context) {
     }.distinctUntilChanged()
 }
 
+/**
+ * Cross-platform parity Phase 11 (2026-08-16): this used to probe
+ * `firestore.collection("users").document(uid).get()` -- accurate when written (the "users"
+ * collection was still Firestore-backed then), but "users" moved onto Supabase in `b8aaaee`
+ * (Phase 8's prerequisite), so that Firestore doc is now stale/vestigial for most accounts.
+ * Continuing to gate this screen's "is the backend reachable" signal on a read of dead data
+ * would be actively misleading (a real Supabase outage could read as "Connected", or a merely
+ * stale Firestore doc could read as broken while Supabase itself is fine) -- not just a stale
+ * label, an actually wrong health check. Now probes Supabase directly, via the same `count()`
+ * primitive `sync()` already uses below, against `permissions` (a tiny, always-populated
+ * reference table any active profile can read -- see 0002_rls_policies.sql's
+ * `permissions_select` policy -- so this can only fail for real connectivity/server reasons,
+ * never a permissions one).
+ *
+ * No longer depends on FirebaseAuth/FirebaseFirestore at all -- [SupabaseAuthRepository.hasSession]
+ * is the "is someone signed in" signal, and [SupabaseDataRepository] is the only backend probed.
+ * The Firebase Auth login bridge and `observeFirestoreCollection()` (Core.kt, both still present)
+ * are untouched by this change -- their removal is Phase 12's dedicated commit, not a side effect
+ * of fixing this screen's health check.
+ */
 @Singleton
 class StatusRepository @Inject constructor(
-    private val auth: FirebaseAuth,
-    private val firestore: FirebaseFirestore,
+    private val supabaseAuth: SupabaseAuthRepository,
     private val supabaseData: SupabaseDataRepository,
     @ApplicationContext context: Context
 ) {
@@ -217,14 +236,13 @@ class StatusRepository @Inject constructor(
 
     suspend fun checkHealth() {
         _status.update { it.copy(connection = ConnectionStatus.Checking) }
-        val currentUser = auth.currentUser
-        if (currentUser == null) {
+        if (!supabaseAuth.hasSession) {
             _status.update { it.copy(connection = ConnectionStatus.AuthRequired, apiHealthy = true, dbHealthy = false) }
             return
         }
         val start = System.currentTimeMillis()
         try {
-            firestore.collection("users").document(currentUser.uid).get().await()
+            supabaseData.count("permissions")
             _status.update { it.copy(
                 connection = ConnectionStatus.Connected,
                 apiHealthy = true,
@@ -234,23 +252,24 @@ class StatusRepository @Inject constructor(
             ) }
         } catch (error: Exception) {
             _status.update { it.copy(
-                connection = error.connectionStatus(),
-                apiHealthy = auth.currentUser != null,
+                connection = error.supabaseConnectionStatus(),
+                apiHealthy = error !is SessionExpiredException,
                 dbHealthy = false,
-                lastError = error.connectionUserMessage()
+                lastError = error.message ?: "Unable to reach the CAP Database service."
             ) }
         }
     }
 
     suspend fun testConnection(): ConnectionTestResult {
-        val currentUser = auth.currentUser
-            ?: return ConnectionTestResult(success = false, message = "Please sign in to test the connection.")
+        if (!supabaseAuth.hasSession) {
+            return ConnectionTestResult(success = false, message = "Please sign in to test the connection.")
+        }
         val start = System.currentTimeMillis()
         return try {
-            firestore.collection("users").document(currentUser.uid).get().await()
+            supabaseData.count("permissions")
             ConnectionTestResult(success = true, latencyMs = System.currentTimeMillis() - start, message = "Connected")
         } catch (error: Exception) {
-            ConnectionTestResult(success = false, message = error.connectionUserMessage())
+            ConnectionTestResult(success = false, message = error.message ?: "Unable to reach the CAP Database service.")
         }
     }
 
@@ -258,19 +277,17 @@ class StatusRepository @Inject constructor(
         _status.update { it.copy(connection = ConnectionStatus.Checking) }
         val results = allowedSyncResources(user).map { resource ->
             async {
-                // Phase D: clients/machines/service_records/job_cards now live in Postgres --
-                // counting them via Firestore here would silently show stale/zero counts.
-                val result = runCatching {
-                    if (resource.collection in SUPABASE_MIGRATED_TABLES) supabaseData.count(resource.collection)
-                    else firestore.collection(resource.collection).get().await().size()
-                }
-                SyncResult(resource.label, result.getOrNull(), result.exceptionOrNull()?.connectionUserMessage())
+                // Every entry in `syncResources` (below) is already a SUPABASE_MIGRATED_TABLES
+                // table -- there is no remaining Firestore-backed sync resource to fall back to,
+                // so this no longer branches on collection name the way it used to pre-b8aaaee.
+                val result = runCatching { supabaseData.count(resource.collection) }
+                SyncResult(resource.label, result.getOrNull(), result.exceptionOrNull()?.message)
             }
         }.awaitAll()
         val failedCount = results.count { result -> result.error != null }
         _status.update { it.copy(
             connection = if (failedCount > 0) ConnectionStatus.SyncError else ConnectionStatus.Connected,
-            apiHealthy = auth.currentUser != null,
+            apiHealthy = supabaseAuth.hasSession,
             dbHealthy = failedCount == 0,
             syncResults = results,
             lastSync = System.currentTimeMillis(),
@@ -280,6 +297,16 @@ class StatusRepository @Inject constructor(
             failedOperations = failedCount
         ) }
     }
+}
+
+/** Maps a Supabase data-layer failure onto [ConnectionStatus] for the Status screen. Coarser
+ *  than the Firestore mapping below (SupabaseDataRepository's ApiException doesn't yet
+ *  distinguish network vs. 5xx vs. RLS at the type level) -- a terminal session failure reads as
+ *  "sign in again", everything else reads as a generic server/reachability problem, which is
+ *  honest given what's actually knowable here without deeper request-layer typing. */
+private fun Exception.supabaseConnectionStatus(): ConnectionStatus = when (this) {
+    is SessionExpiredException -> ConnectionStatus.AuthRequired
+    else -> ConnectionStatus.ServerError
 }
 
 /**

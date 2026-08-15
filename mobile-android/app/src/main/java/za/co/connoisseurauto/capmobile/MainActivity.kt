@@ -4319,11 +4319,10 @@ fun StatusScreen(vm: MainViewModel) {
             CapSectionCard(title = "Connection Details") {
                 StatusRowBadge("Internet / Live Service", connectionLabel(status.connection), connectionTone(status.connection))
                 StatusRowBadge("Authentication", if (status.apiHealthy) "Connected" else "Not connected", if (status.apiHealthy) StatusTone.Success else StatusTone.Error)
-                StatusRowBadge("Firebase / Database Access", if (status.dbHealthy) "Connected" else "Not connected", if (status.dbHealthy) StatusTone.Success else StatusTone.Error)
+                StatusRowBadge("Database Access", if (status.dbHealthy) "Connected" else "Not connected", if (status.dbHealthy) StatusTone.Success else StatusTone.Error)
                 StatusRow("Data Read", vm.recordsState.records.values.sumOf { it.size }.toString())
                 StatusRow("Latency", "${status.latency} ms")
-                StatusRow("Firebase Project", "capdatabasefb2")
-                StatusRow("Firestore Database", "capdashboard")
+                StatusRow("Supabase Project", BuildConfig.SUPABASE_URL.removePrefix("https://").substringBefore("."))
                 StatusRow("Environment", "Production")
                 StatusRow("Last Sync", if (status.lastSync > 0) fmt.format(Date(status.lastSync)) else "Never")
                 StatusRow("Pending Operations", status.pendingOperations.toString())
@@ -4349,7 +4348,7 @@ fun StatusScreen(vm: MainViewModel) {
         item {
             CapSectionCard(title = "Connection Test") {
                 Text(
-                    "Runs a one-off, read-only check against Firestore, separate from the background status above.",
+                    "Runs a one-off, read-only check against the CAP Database, separate from the background status above.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
