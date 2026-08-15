@@ -1,5 +1,49 @@
 # Known Issues
 
+## RESOLVED (2026-08-16) — Web User Admin "Save User" was 400ing in production on every save; "Create User" and "reset another user's password" were both non-functional by design, not just buggy (found while scoping Android Phase 8 parity)
+
+- `frontend/src/pages/UserAdmin.jsx`'s `save()` sent `name` in its payload; `public.users` has
+  no `name` column, only `full_name` (`0001_initial_schema.sql`). `frontend/src/api/
+  supabaseApiClient.js`'s PUT/PATCH handler additionally set `body.permission_overrides =
+  body.permissions` — `permission_overrides` isn't a real column either (only `effective_
+  permissions text[]` is; confirmed via `grep -n "permission_overrides"
+  supabase/migrations/*.sql` returning zero matches). PostgREST rejects an update/insert
+  outright on any unknown column, so **every save — role changes, active/disabled toggles,
+  permission edits alike — was failing in production**, not a cosmetic display bug.
+- Two further, deeper problems found in the same pass, both pre-existing design flaws rather
+  than typos: (1) the form also sent `password`/`password_confirmation` on edit, intending to
+  let an admin reset another user's password — `public.users` has no password column at all
+  (Supabase Auth owns credentials in `auth.users`), so this could never have worked, with or
+  without the column-name fix; (2) "Create User" POSTed a plain insert into `public.users`,
+  but `public.users.id` is `references auth.users(id)` and only ever populated by a trigger
+  when someone genuinely signs up through Supabase Auth — there is no client-safe way to
+  originate a real account from an admin screen without a service_role key, which per this
+  project's standing policy must never be used in frontend code.
+- **Fixed, scoped to what's genuinely fixable without a new server-side service**: renamed
+  `name`→`full_name` throughout (list display, form state, `FIELD_LABELS`); removed
+  `permission_overrides` from the write payload; removed the password fields from the form
+  entirely (real password resets already go through the existing self-service
+  `ForgotPassword.jsx` email flow); replaced the "Create User" form with an honest message
+  directing admins to self-registration (`/register`), then selecting that person from the
+  list here to configure role/permissions once their account exists. Editing an existing
+  user's `full_name`/`email`/`role`/`is_active`/`effective_permissions` is unaffected and now
+  actually persists.
+- Verified: `npm run lint` / `typecheck` / `build` all pass clean. **Not verified via a live
+  click-through save** (no browser tool available this session, per the project's established
+  QA-scripted-verification pattern) — the fix is a direct, mechanical removal of confirmed
+  nonexistent columns from a payload that was previously provably rejected by PostgREST's
+  schema cache, so this is lower-risk than most unverified claims, but is disclosed as
+  code-level-verified only, not live-clicked.
+- **Left as a disclosed, separate finding, not fixed here**: editing an existing user's
+  `email` through this form changes only `public.users.email`, not their real Supabase Auth
+  login email (`auth.users.email`) — the two would drift out of sync. Pre-existing behavior,
+  not introduced by this fix; worth a future decision on whether to hide that field or wire it
+  to a real `auth.admin.updateUserById` call (also service_role-gated, same constraint as
+  account creation above).
+- Directly informs Android Phase 8 (Users + Roles): Android's own role/permission-editing UI
+  should write `effective_permissions` only, the same real column this fix confirmed is
+  authoritative — not replicate web's now-removed `permission_overrides` pattern.
+
 ## LIVE BUG, WEB — Knowledge Base photo/document uploads permanently break 7 days after upload (found 2026-08-15, during Android parity Phase 5, independently verified)
 
 - `frontend/src/api/supabaseApiClient.js`'s `integrations.Core.UploadFile()` uploads to the
