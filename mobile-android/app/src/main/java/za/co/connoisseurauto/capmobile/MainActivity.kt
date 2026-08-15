@@ -712,19 +712,19 @@ fun AdaptiveShell(vm: MainViewModel) {
                 composable(CapNavRoute.BookIn.route) { ScreenContent("BookIn", vm, user, navigate, openRoute) }
 
                 composable(CapNavRoute.ClientDetail.route) { entry ->
-                    DetailContent(CapNavRoute.ClientDetail, entry.arguments?.getString(CapNavRoute.ClientDetail.ARG), vm, user)
+                    DetailContent(CapNavRoute.ClientDetail, entry.arguments?.getString(CapNavRoute.ClientDetail.ARG), vm, user, openRoute)
                 }
                 composable(CapNavRoute.MachineDetail.route) { entry ->
-                    DetailContent(CapNavRoute.MachineDetail, entry.arguments?.getString(CapNavRoute.MachineDetail.ARG), vm, user)
+                    DetailContent(CapNavRoute.MachineDetail, entry.arguments?.getString(CapNavRoute.MachineDetail.ARG), vm, user, openRoute)
                 }
                 composable(CapNavRoute.JobDetail.route) { entry ->
-                    DetailContent(CapNavRoute.JobDetail, entry.arguments?.getString(CapNavRoute.JobDetail.ARG), vm, user)
+                    DetailContent(CapNavRoute.JobDetail, entry.arguments?.getString(CapNavRoute.JobDetail.ARG), vm, user, openRoute)
                 }
                 composable(CapNavRoute.ServiceRecordDetail.route) { entry ->
-                    DetailContent(CapNavRoute.ServiceRecordDetail, entry.arguments?.getString(CapNavRoute.ServiceRecordDetail.ARG), vm, user)
+                    DetailContent(CapNavRoute.ServiceRecordDetail, entry.arguments?.getString(CapNavRoute.ServiceRecordDetail.ARG), vm, user, openRoute)
                 }
                 composable(CapNavRoute.KnowledgeBaseDetail.route) { entry ->
-                    DetailContent(CapNavRoute.KnowledgeBaseDetail, entry.arguments?.getString(CapNavRoute.KnowledgeBaseDetail.ARG), vm, user)
+                    DetailContent(CapNavRoute.KnowledgeBaseDetail, entry.arguments?.getString(CapNavRoute.KnowledgeBaseDetail.ARG), vm, user, openRoute)
                 }
             }
         }
@@ -775,7 +775,13 @@ private fun ScreenContent(
  * crash, so both get a real state instead of a `!!`.
  */
 @Composable
-private fun DetailContent(route: CapNavRoute, recordId: String?, vm: MainViewModel, user: CapUser) {
+private fun DetailContent(
+    route: CapNavRoute,
+    recordId: String?,
+    vm: MainViewModel,
+    user: CapUser,
+    onOpen: (String) -> Unit
+) {
     val data = vm.recordsState
     if (data.loading) {
         CapLoadingState()
@@ -843,6 +849,7 @@ private fun DetailContent(route: CapNavRoute, recordId: String?, vm: MainViewMod
                 client = client,
                 user = user,
                 vm = vm,
+                onOpen = onOpen,
                 onEdit = { editing = true }
             )
             if (editing) {
@@ -1536,27 +1543,56 @@ private fun ServiceRecordDetailScreen(
     client: CapRecord?,
     user: CapUser,
     vm: MainViewModel,
+    onOpen: (String) -> Unit,
     onEdit: () -> Unit
 ) {
+    // Same due-state badge the Calendar row showed, so the state cannot silently change meaning
+    // between the agenda list and the record it opened.
+    val (today, weekEnd, monthEnd) = remember { dueDateBounds() }
+    val dueDate = service.text("next_service_due")
+    val dueState = dueDate.ifBlank { null }?.let {
+        dueBadge(
+            dueBucketOf(
+                dueDate = it,
+                completed = service.text("status").equals("completed", ignoreCase = true),
+                today = today,
+                weekEnd = weekEnd,
+                monthEnd = monthEnd
+            )
+        )
+    }
+
     Box(Modifier.fillMaxSize()) {
         LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(Spacing.md), contentPadding = PaddingValues(bottom = 84.dp)) {
             item {
                 Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-                    Text(
-                        machineTitle(machine),
-                        style = MaterialTheme.typography.headlineSmall,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+                    ) {
+                        Text(
+                            machineTitle(machine),
+                            style = MaterialTheme.typography.headlineSmall,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        dueState?.let { (label, tone) -> CapStatusBadge(label, tone) }
+                    }
                     client?.text("company_name")?.ifBlank { null }?.let {
                         Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     CapCard {
                         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
                             listOfNotNull(
+                                service.text("status").ifBlank { null }?.let { "Status" to it },
+                                machine?.text("serial_number")?.ifBlank { null }?.let { "Serial number" to it },
+                                machine?.text("refrigerant_type")?.ifBlank { null }?.let { "Refrigerant" to it },
                                 service.text("service_date").ifBlank { null }?.let { "Service date" to it },
                                 service.text("technician_name").ifBlank { null }?.let { "Technician" to it },
                                 service.text("work_performed").ifBlank { null }?.let { "Work performed" to it },
+                                service.text("findings").ifBlank { null }?.let { "Findings" to it },
+                                service.text("notes").ifBlank { null }?.let { "Notes" to it },
                                 service.text("next_service_due").ifBlank { null }?.let { "Next service due" to it }
                             ).forEach { (label, value) -> CapDetailField(label, value) }
                         }
@@ -1570,12 +1606,19 @@ private fun ServiceRecordDetailScreen(
                             }
                         }
                     }
-                    if (user.hasPermission("services.edit")) {
-                        CapSecondaryButton(
-                            text = "Edit",
-                            onClick = onEdit,
-                            modifier = Modifier.padding(top = Spacing.sm)
-                        )
+                    Column(
+                        Modifier.fillMaxWidth().padding(top = Spacing.sm),
+                        verticalArrangement = Arrangement.spacedBy(Spacing.sm)
+                    ) {
+                        if (machine != null && user.hasPermission(permissionFor("Machines"))) {
+                            CapSecondaryButton(text = "View machine", onClick = { onOpen(CapNavRoute.MachineDetail.of(machine.id)) })
+                        }
+                        if (client != null && user.hasPermission(permissionFor("Clients"))) {
+                            CapSecondaryButton(text = "View client", onClick = { onOpen(CapNavRoute.ClientDetail.of(client.id)) })
+                        }
+                        if (user.hasPermission("services.edit")) {
+                            CapSecondaryButton(text = "Edit", onClick = onEdit)
+                        }
                     }
                 }
             }
@@ -2491,28 +2534,102 @@ private fun JobDetailScreen(
     if (editDialog) JobDialog(clients, machines, job, { editDialog = false }) { fields -> save("job_cards", job.id, fields, "Job card"); editDialog = false }
 }
 
+/**
+ * Range narrowing for [CalendarScreen] — the phone-shaped equivalent of the web calendar's
+ * week/month view switcher (the web itself drops to a plain agenda list under 640px, so there is
+ * no month grid to match here). Each range is an inclusive upper bound on `next_service_due`;
+ * anything already overdue falls under every bound, so it never disappears behind a filter.
+ */
+private enum class DueRange(val label: String) { Week("This week"), Month("This month"), All("All") }
+
+/** Agenda sections, rendered in declaration order. */
+private enum class DueBucket(val title: String) {
+    Overdue("Overdue"),
+    Today("Today"),
+    ThisWeek("This week"),
+    ThisMonth("Later this month"),
+    Later("Later"),
+    Completed("Completed")
+}
+
+/**
+ * `today`, end of the current week, and end of the current month as `yyyy-MM-dd` — the same
+ * format `next_service_due` is stored in, so every comparison below is a plain string compare.
+ * The month bound is held at or after the week bound so that widening from [DueRange.Week] to
+ * [DueRange.Month] can never show fewer services (a week straddling a month boundary otherwise
+ * ends after the month does).
+ */
+private fun dueDateBounds(): Triple<String, String, String> {
+    val format = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+    val today = format.format(Date())
+    val weekEnd = format.format(
+        java.util.Calendar.getInstance().apply {
+            val dayIndex = (get(java.util.Calendar.DAY_OF_WEEK) - firstDayOfWeek + 7) % 7
+            add(java.util.Calendar.DAY_OF_YEAR, 6 - dayIndex)
+        }.time
+    )
+    val monthEnd = format.format(
+        java.util.Calendar.getInstance().apply {
+            set(java.util.Calendar.DAY_OF_MONTH, getActualMaximum(java.util.Calendar.DAY_OF_MONTH))
+        }.time
+    )
+    return Triple(today, weekEnd, maxOf(monthEnd, weekEnd))
+}
+
+/**
+ * Mirrors the web calendar's `eventClass`: a service already marked completed is never presented
+ * as overdue, however far in the past its due date is.
+ */
+private fun dueBucketOf(dueDate: String, completed: Boolean, today: String, weekEnd: String, monthEnd: String): DueBucket = when {
+    completed && dueDate <= today -> DueBucket.Completed
+    dueDate < today -> DueBucket.Overdue
+    dueDate == today -> DueBucket.Today
+    dueDate <= weekEnd -> DueBucket.ThisWeek
+    dueDate <= monthEnd -> DueBucket.ThisMonth
+    else -> DueBucket.Later
+}
+
+private fun dueBadge(bucket: DueBucket): Pair<String, StatusTone> = when (bucket) {
+    DueBucket.Completed -> "Completed" to StatusTone.Success
+    DueBucket.Overdue -> "Overdue" to StatusTone.Error
+    DueBucket.Today -> "Due today" to StatusTone.Warning
+    DueBucket.ThisWeek -> "Due soon" to StatusTone.Warning
+    DueBucket.ThisMonth, DueBucket.Later -> "Upcoming" to StatusTone.Info
+}
+
 @Composable
 private fun CalendarScreen(data: RecordsState, onOpen: (String) -> Unit) {
     val machinesById = data.collection("machines").associateBy { it.id }
     val clientsById = data.collection("clients").associateBy { it.id }
     var query by remember { mutableStateOf("") }
+    var range by remember { mutableStateOf(DueRange.Month) }
 
-    val today = remember { SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date()) }
-    val soonThreshold = remember {
-        val cal = java.util.Calendar.getInstance()
-        cal.add(java.util.Calendar.DAY_OF_YEAR, 7)
-        SimpleDateFormat("yyyy-MM-dd", Locale.US).format(cal.time)
+    val (today, weekEnd, monthEnd) = remember { dueDateBounds() }
+    val rangeEnd = when (range) {
+        DueRange.Week -> weekEnd
+        DueRange.Month -> monthEnd
+        DueRange.All -> null
     }
 
-    val due = data.collection("service_records")
-        .filter { it.text("next_service_due").isNotBlank() }
+    val scheduled = data.collection("service_records").filter { it.text("next_service_due").isNotBlank() }
+    val due = scheduled
+        .filter { service -> rangeEnd == null || service.text("next_service_due") <= rangeEnd }
         .filter { service ->
             query.isBlank() ||
                 machineTitle(machinesById[service.text("machine_id")]).contains(query, ignoreCase = true) ||
                 clientsById[machinesById[service.text("machine_id")]?.text("client_id")]?.text("company_name").orEmpty().contains(query, ignoreCase = true)
         }
         .sortedBy { it.text("next_service_due") }
-    val grouped = due.groupBy { it.text("next_service_due") }
+
+    val grouped = due.groupBy { service ->
+        dueBucketOf(
+            dueDate = service.text("next_service_due"),
+            completed = service.text("status").equals("completed", ignoreCase = true),
+            today = today,
+            weekEnd = weekEnd,
+            monthEnd = monthEnd
+        )
+    }
 
     LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(Spacing.sm), contentPadding = PaddingValues(bottom = 84.dp)) {
         item {
@@ -2520,34 +2637,56 @@ private fun CalendarScreen(data: RecordsState, onOpen: (String) -> Unit) {
                 value = query,
                 onValueChange = { query = it },
                 placeholder = "Search machine or client",
-                modifier = Modifier.fillMaxWidth().padding(bottom = Spacing.xs)
+                modifier = Modifier.fillMaxWidth()
             )
+        }
+        item {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = Spacing.xs)
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+            ) {
+                DueRange.entries.forEach { option ->
+                    FilterChip(
+                        selected = range == option,
+                        onClick = { range = option },
+                        label = { Text(option.label, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                    )
+                }
+            }
         }
         if (due.isEmpty()) {
             item {
                 CapEmptyState(
-                    "No upcoming service dates.",
+                    when {
+                        scheduled.isEmpty() -> "No upcoming service dates."
+                        query.isNotBlank() -> "No services match your search."
+                        else -> "No services due in this range. Try \"All\"."
+                    },
                     modifier = Modifier.fillMaxWidth().wrapContentHeight()
                 )
             }
         } else {
-            grouped.forEach { (dueDate, servicesForDate) ->
-                item(key = "header-$dueDate") { CapSectionHeader(title = "Due $dueDate") }
-                items(servicesForDate, key = { it.id }) { service ->
+            DueBucket.entries.forEach { bucket ->
+                val servicesInBucket = grouped[bucket].orEmpty()
+                if (servicesInBucket.isEmpty()) return@forEach
+                item(key = "header-${bucket.name}") {
+                    CapSectionHeader(title = "${bucket.title} (${servicesInBucket.size})")
+                }
+                items(servicesInBucket, key = { it.id }) { service ->
                     val machine = machinesById[service.text("machine_id")]
                     val client = clientsById[machine?.text("client_id")]
-                    val (badgeLabel, badgeTone) = when {
-                        dueDate < today -> "Overdue" to StatusTone.Error
-                        dueDate <= soonThreshold -> "Due soon" to StatusTone.Warning
-                        else -> "Upcoming" to StatusTone.Info
-                    }
+                    val (badgeLabel, badgeTone) = dueBadge(bucket)
                     CapCard {
                         CapListItem(
                             title = machineTitle(machine),
                             subtitle = listOfNotNull(
+                                "Due ${service.text("next_service_due")}",
                                 client?.text("company_name")?.ifBlank { null },
                                 service.text("technician_name").ifBlank { null }
-                            ).joinToString(" · ").ifBlank { null },
+                            ).joinToString(" · "),
                             trailing = { CapStatusBadge(badgeLabel, badgeTone) },
                             showNavArrow = true,
                             onClick = { onOpen(CapNavRoute.ServiceRecordDetail.of(service.id)) }
