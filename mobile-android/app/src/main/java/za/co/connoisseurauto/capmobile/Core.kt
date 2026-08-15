@@ -101,6 +101,23 @@ val syncResources = listOf(
  *
  * NOT yet migrated: `users` (web-only administration; Android's Users screen is read-only) --
  * still reads Firestore, unchanged, via [RecordsRepository]'s Firestore branch below.
+ *
+ * Cross-platform parity Phase 8 (Users + Roles, 2026-08-15): `"users"` added -- the prerequisite
+ * for real, RLS-respecting role/active-status editing (public.users' role/is_active/
+ * effective_permissions self-updates are already admin-only, enforced by
+ * restrict_self_user_update_trigger, not by anything in this app -- see SupabaseAuth.kt's
+ * updateProfile() doc comment for the same trigger, added one phase earlier). This was the
+ * ONLY remaining Firestore-routed collection -- observeFirestoreCollection() below (and its
+ * whole "users"-specific E1 retry-forever reliability policy) is now provably unreachable dead
+ * code, since nothing in [permittedCollections][MainActivity]'s list routes here anymore. NOT
+ * deleted in this commit -- full Firebase removal (deleting the dead code, the Firebase Auth
+ * login bridge it existed to support, and the Firebase Gradle dependencies themselves) is its
+ * own later, dedicated phase per the user's own git-discipline instruction, not a side effect
+ * of this one. The signed-in user's OWN identity continues to come from
+ * SupabaseAuthRepository.loadProfile()/updateProfile() (a separate, already-Supabase,
+ * already-correct path since Phase C) -- this addition is specifically about the Users LIST
+ * screen and role-editing, a different real use case for the same table, not a duplicate of
+ * that path.
  */
 val SUPABASE_MIGRATED_TABLES = setOf(
     "clients",
@@ -113,7 +130,8 @@ val SUPABASE_MIGRATED_TABLES = setOf(
     "knowledge_service_codes",
     "knowledge_media",
     "knowledge_documents",
-    "dashboard_notes"
+    "dashboard_notes",
+    "users"
 )
 
 data class CapRecord(
