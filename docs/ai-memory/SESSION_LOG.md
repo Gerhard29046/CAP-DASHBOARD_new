@@ -1,5 +1,50 @@
 # Session Log
 
+## 2026-08-15 — Android Phase F kickoff: photo-viewer bugs fixed + real CLI build verification (first ever); unrelated job_cards migration recovered
+- Objective: install the E2 build to the user's phone (done, `adb install -r`, device
+  `24116RACCG`), then continue systematically through the Android migration's remaining phases
+  per explicit user instruction, prioritizing frontend/UX. Real-device feedback drove the
+  priority: web photo upload/display works end-to-end; Android upload works but display was
+  broken (blank thumbnails, no way to open a photo). User also flagged the website's
+  photo-click-opens-a-new-tab UX as a separate, deferred web item — logged, not implemented.
+- **`android-ui-bee`**: root-caused (before delegating) and fixed both photo bugs — missing
+  `coil3-network-okhttp` dependency (blank thumbnails), and no tap handler/viewer anywhere (no
+  way to open a photo). Added a shared `PhotoThumbnail` + new in-app `CapPhotoViewerDialog`,
+  wired onto all 3 photo sites plus Knowledge Base's photo rows. Swept all 17 screens in
+  `MainActivity.kt`, fixing several more real defects: permission-ungated dashboard quick
+  actions, system back button not working on 6 detail screens (local Compose state, not nav
+  destinations), blank-subtitle rendering, stale "Firebase" strings. Reported rather than
+  guess-fixed: `StatusScreen`'s Firebase labels (genuinely still measures Firestore), the dead
+  Google Calendar section, Users-screen missing search, a sub-48dp touch target.
+- **`testing-bee`**: verified the change with a real Gradle build — and along the way
+  root-caused this machine's multi-month "CLI Gradle build is broken" mystery for real: Avast
+  Antivirus TLS-intercepts this machine's HTTPS traffic, and its (OS-trusted) root CA was never
+  trusted by the Android Studio JBR's own `cacerts`, explaining why the GUI always worked and
+  the CLI never did. Fixed a real build without disabling certificate validation (scratch
+  trust-store copy + the OS-trusted Avast root, Gradle daemon pointed at it via
+  `org.gradle.jvmargs`), verified the downloaded jar's SHA-1 against Maven Central first.
+  Result: genuine `BUILD SUCCESSFUL` — 23/23 unit tests, lint 0 errors, real APK assembled.
+  This is a scratch/one-off fix, not yet made durable (needs the user's approval for a
+  permanent trust-store change).
+- **Unrelated, found incidentally while clearing harmless 0-byte shell-artifact junk files**:
+  `supabase/migrations/0025_job_cards_accessories_and_arrival_notes.sql` was sitting fully
+  written, never committed or applied. Independently re-verified its claims (both fields
+  genuine, confirmed absent from the live schema) before committing it (`7ce9cf8`). Likely
+  fixes a currently-live Book In save failure (`PGRST204`) — not yet applied, needs the SQL
+  Editor, flagged as high priority.
+- Files changed: `mobile-android/gradle/libs.versions.toml`, `mobile-android/app/build.gradle.kts`,
+  `mobile-android/app/src/main/java/za/co/connoisseurauto/capmobile/MainActivity.kt`,
+  `supabase/migrations/0025_job_cards_accessories_and_arrival_notes.sql` (new).
+- Tests/builds run: real CLI `gradlew.bat testDebugUnitTest lintDebug assembleDebug` — 23/23
+  unit tests pass, lint 0 errors/31 pre-existing warnings, `assembleDebug` produced a real APK.
+- Remaining/not done: on-device visual/runtime verification (no device run this session, only
+  compile/package-level proof); `0025` not applied; the deferred web in-app photo-viewer
+  (scoped, not implemented — `RecordPhotoGallery.jsx` already has an `onPhotoClick` extension
+  point, needs one lightbox component + 3 call-site wire-ups); `StatusScreen`/dead-Calendar/
+  Users-search items awaiting a decision or `supabase-android-bee`; Phases G–J not started;
+  making the Avast trust-store fix durable awaiting user approval; `supabase-android-bee`/
+  `migration-audit-bee` still not invocable this session (same recurring registration gap).
+
 ## 2026-08-14 (new conversation, continuing from the `"users"` architectural finding) — Architectural audit, Firestore listener isolation fix, independent testing-bee verification — E1 GATE PASSED
 - Objective: resolve the one open blocker from the prior session's E1 verification — determine
   the Firestore `"users"` collection's architectural status (A/B/C/D), then, if authorized,

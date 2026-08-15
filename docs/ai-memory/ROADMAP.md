@@ -35,6 +35,28 @@
   received yet). Do not assume Android CLI build-tooling works here without re-checking; the
   Android Studio GUI path is the one known-working path on this machine.
 
+  **UPDATE (2026-08-15): Phase E2 (photo upload) is done** (commit `0c9a068`, both web +
+  Android, real-device tested by the user). **Phase F (UI redesign/consistency) is now in
+  progress**, prioritized per explicit user instruction to continue systematically through the
+  remaining phases with an Android-frontend/UX focus. First Phase F pass (`android-ui-bee`):
+  fixed two real photo-viewing bugs found via real-device testing (blank thumbnails — missing
+  Coil3 network artifact; no tap-to-view — no viewer existed at all) plus a systematic
+  screen-by-screen sweep of all 17 screens in `MainActivity.kt` finding several more real,
+  concrete defects (permission-ungated dashboard quick actions, system back button not working
+  on 6 detail screens, stale "Firebase" strings, blank-subtitle rendering). Code-reviewed by
+  Queen Bee directly (full diff read, cross-checked shared component signatures), **then
+  genuinely build-verified by `testing-bee` for the first time via a real CLI Gradle build —
+  23/23 unit tests, lint 0 errors, real APK assembled.** Same verification pass also
+  root-caused and solved this machine's long-standing CLI-build TLS gap (Avast HTTPS
+  interception, not a project defect — see `KNOWN_ISSUES.md`'s new RESOLVED entry; not yet made
+  durable, needs the user's approval for a permanent trust-store fix). Only genuinely
+  unverified layer left: on-device visual/runtime behavior (no device run performed this pass).
+  See `KNOWN_ISSUES.md`'s matching 2026-08-15 entries for full detail, including what was
+  deliberately reported-not-fixed (`StatusScreen`'s Firebase labels — needs a real Supabase
+  health-check capability from `supabase-android-bee`, not invocable this session; dead Google
+  Calendar UI; Users screen missing search — both flagged as product calls). Phases G–J still
+  not started.
+
 - **UX redesign resumed (2026-08-13, after the Supabase cutover), functional fixes +
   Settings/Products & Services/Customer Import.** See SESSION_LOG.md's matching entry for
   full detail. Status:

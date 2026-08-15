@@ -1,5 +1,113 @@
 # Known Issues
 
+## URGENT, LIKELY LIVE-BREAKING — `job_cards.accessories_received`/`arrival_condition_notes` columns missing; migration written and committed, NOT YET APPLIED (found 2026-08-15, mid-session, while cleaning up unrelated stray files)
+
+- Found sitting **uncommitted and untracked** in the working tree (`supabase/migrations/
+  0025_job_cards_accessories_and_arrival_notes.sql`) — real, reasoned, evidence-gathering
+  work from a prior session that was never committed and never applied. Committed this
+  session (`7ce9cf8`) after independently re-verifying its own claims rather than trusting
+  the file's comments blindly: both fields are genuine (present in the original Laravel
+  `JobCard` model's validation rules; used on two independent live screens,
+  `frontend/src/pages/BookIn.jsx` and `frontend/src/pages/JobCardDetail.jsx`, distinct from
+  the existing `technician_notes` column), and confirmed absent from `0001_initial_schema.sql`'s
+  `job_cards` table definition (`arrival_condition` exists, `accessories_received`/
+  `arrival_condition_notes` do not).
+- **Real production impact, not just two dead fields**: `BookIn.jsx`'s save
+  (`apiClient.entities.JobCard.update(jobCardId, {...})`, line ~166) is a single combined
+  payload including both missing columns — PostgREST validates the whole request against its
+  schema cache, so an unknown column doesn't silently drop just that field, it fails the
+  **entire** request with `PGRST204`. If this is accurate (the migration file's own comment
+  says this was "found live via a real Book In save"), **the Book In workflow may currently be
+  completely broken in production** for any technician who saves a booked-in machine, not a
+  cosmetic gap. This has NOT been independently re-confirmed live this session (would require
+  a real Book In save against production, which wasn't performed) — flagging as "very likely,
+  strongly evidenced" rather than "confirmed live" until someone either runs the migration and
+  the workflow starts working, or a live probe confirms the failure first.
+- **Fix ready, not yet live**: `alter table public.job_cards add column if not exists
+  accessories_received text; ... arrival_condition_notes text;` — purely additive, two
+  nullable text columns, no RLS change needed (`job_cards` policies are already
+  column-agnostic). Same bug class already fixed 3 times before in this schema
+  (`0008`: job_number/date_received, `0010`: service_records fields, `0022`: machine_type) —
+  a recurring pattern worth remembering: whenever a live UI field write starts failing with
+  `PGRST204`, check first whether the column simply doesn't exist in Postgres yet, the same
+  way the Laravel model already declares it.
+- **Needs the user**: apply `0025_job_cards_accessories_and_arrival_notes.sql` via the
+  Supabase SQL Editor, same as every other migration in this project (no automated apply
+  pipeline exists). Recommend prioritizing this over cosmetic work given the likely severity.
+
+## RESOLVED, real-build-verified (2026-08-15, Phase F): Android photo-display bugs fixed
+
+- Real-device testing (physical phone) found two bugs in the just-shipped E2 photo-upload
+  feature: uploaded photo thumbnails rendered blank/broken, and there was no way to open/view
+  a photo at all (no full-screen viewer existed anywhere).
+- **Root-caused, not guessed**: `mobile-android/app/build.gradle.kts`/`libs.versions.toml`
+  only declared `coil3:coil-compose:3.2.0` — Coil 3.x split network image loading into a
+  separate artifact (`coil3-network-okhttp`), so every `AsyncImage(model = <https url>)` had
+  no registered fetcher and silently rendered nothing (no crash, no error UI, since no
+  `error =`/`onState` handler existed either). Separately, none of the photo thumbnails had a
+  `clickable` modifier — a second, independent gap, not just a symptom of the first.
+- **Fixed by `android-ui-bee`**: added `coil-network-okhttp` (reusing the existing `coil`
+  version ref, no OkHttp double-declaration — confirmed the project's unused OkHttp/Retrofit
+  catalog entries aren't applied to the `:app` module). Added a shared `PhotoThumbnail`
+  (explicit resolving/broken/loaded states, never a silent blank tile) and a new in-app
+  `CapPhotoViewerDialog` (full-screen, black backdrop, close button, dismiss on backdrop
+  tap/back — deliberately stays in-app, never hands a signed URL to an external
+  app/browser), wired onto all 3 photo-thumbnail sites plus Knowledge Base's photo rows
+  (previously launched an external browser via `LocalUriHandler`, same underlying "should stay
+  in-app" issue — KB documents still open externally since the viewer can't render PDFs).
+  Same pass also fixed: dashboard quick-actions being completely permission-ungated (an
+  accountant could reach forms RLS would reject), 6 screens' detail views not responding to
+  the system back button (local Compose state, not nav destinations — `BackHandler` added),
+  several blank-subtitle rendering bugs, and stale "Firebase" strings left over from the
+  Supabase migration in `AccountScreen`/`DashboardScreen`/`StatusScreen`'s headers.
+- **Both explicit unknowns `android-ui-bee` flagged are now answered with real evidence, not
+  inference** — `testing-bee` got a genuine CLI `BUILD SUCCESSFUL` (see the dedicated RESOLVED
+  Avast/TLS entry above for how) and confirmed: `coil-network-okhttp` resolves cleanly
+  (verified via `:app:dependencies`, and its supply-chain integrity via a SHA-1 match against
+  Maven Central); `AsyncImage(onState = ...)` is real, correct Coil 3.2.0 API (resolves to the
+  singleton `AsyncImage` overload, `AsyncImagePainter.State.Loading`/`.Error` are real
+  classes); `Icons.Outlined.BrokenImage` resolves via `material-icons-extended`. **23/23 unit
+  tests pass** (`ObserveCollectionFailurePolicyTest` 5, `ObserveFirestoreCollectionFailurePolicyTest`
+  7, `SupabaseStorageTest` 7 — added in E2, `SyncResourcesTest` 4 — baseline grew from the E1
+  gate's 16, correctly not assumed unchanged). `lintDebug`: 0 errors, 31 pre-existing/unrelated
+  warnings. `assembleDebug`: real 25,625,910-byte APK produced. Also confirmed via the built
+  APK's own `META-INF/services` that Coil's fetcher auto-registration mechanism the fix relies
+  on is genuinely present (the app uses Coil's default singleton `ImageLoader`, no custom one).
+  **What remains genuinely unverified**: on-device/runtime visual behavior (does the photo
+  actually render, does the dialog dismiss correctly, do the 6 new `BackHandler`s behave as
+  expected) — compilation/packaging proves the code is correct and buildable, not that it
+  looks/behaves right on a real screen. A device run remains a worthwhile product check, but
+  per `testing-bee`'s own assessment, an Android Studio GUI rebuild is no longer *required* to
+  confirm this specific change compiles and packages correctly.
+- **Deliberately NOT fixed, reported instead**: `StatusScreen` still labels the backend
+  "Firebase" — left alone because `StatusRepository.checkHealth()`/`testConnection()` genuinely
+  still probe Firestore, so the label is accurate to what's actually measured; a truthful fix
+  needs a real Supabase health-check capability on `StatusRepository`
+  (`supabase-android-bee`'s scope, not invocable this session — see the recurring
+  agent-registration gap entry). `CalendarScreen`'s dead Google-Calendar empty-state text
+  (references a Settings page that no longer exists) and `SimpleRecordsScreen`'s (Users)
+  missing search field (every other list screen has one) were flagged as real but left for a
+  deliberate follow-up decision rather than guessed at inline. The photo remove-button's 32dp
+  touch target is below Material's 48dp minimum — flagged as a disclosed tradeoff (a 48dp
+  target on an 80dp thumbnail would cover over a third of it), not silently fixed.
+
+## Web: photo click opens a new browser tab instead of an in-app viewer — logged, deferred (found 2026-08-15, user real-world testing)
+
+- User: photo upload/display works correctly end-to-end on `frontend/`, but clicking an
+  uploaded photo currently opens it via a plain new browser tab (not the final desired UX).
+  Wants an in-app/lightbox/full-screen viewer instead, matching the in-app viewer just built
+  for Android (see the entry above) — same underlying goal (stay in the app, don't hand a
+  signed Storage URL off to the browser chrome), different platform/implementation.
+- **Explicitly deferred by the user** — do not let this block or interrupt the current Android
+  Phase F priority. **Located and scoped this session (read-only, not implemented)**:
+  `frontend/src/components/RecordPhotoGallery.jsx` already has the extension point built in —
+  it takes an optional `onPhotoClick(url)` prop ("caller handles what 'click' means, e.g. a
+  lightbox") and only falls back to a plain `<a target="_blank">` when the caller omits it.
+  None of its 3 call sites (`MachineDetail.jsx`, `ServiceRecords.jsx`, `JobCardDetail.jsx`)
+  currently pass it. This is a smaller job than it first looked: build one simple lightbox
+  component (consistent with the existing design system) and wire `onPhotoClick` at those 3
+  call sites — no gallery-component rework needed.
+
 ## RESOLVED (2026-08-14) — Android `"users"` Firestore listener failure isolated; E1 gate PASSED
 
 - **Architectural audit completed first, as required** (read-only, Read/Grep/Glob only — no
@@ -143,7 +251,45 @@
   action requiring explicit approval. Explicitly instructed not to delete these 4 as part of
   the E1 reliability gate. Needs the user's decision on whether/when to delete them.
 
-## This ("home") machine's CLI Gradle build still fails, but Android Studio's own GUI build succeeds (found 2026-08-13/14, Phase D)
+## RESOLVED (2026-08-15) — root cause found: Avast TLS interception, not a project/CA defect; a legitimate CLI build IS possible on this machine
+
+- **`testing-bee`, dispatched to verify Phase F's photo-viewer fix, root-caused the entire
+  multi-month "this machine's Gradle wrapper/CLI can't build" mystery for real** (dumped the
+  actual TLS certificate chain served for `dl.google.com`/`repo.maven.apache.org` during a
+  live failed resolution): both present leaf certs issued by `CN=Avast Web/Mail Shield Root` —
+  **Avast Antivirus is TLS-intercepting all HTTPS traffic on this machine.** Avast's root CA
+  is installed in the Windows trust store already (thumbprint
+  `BFE0A38E40D6DBECAC0CA9FA49AF2AB4118E47A3`) but is **absent** from the Android Studio JBR's
+  own `cacerts` file — which is exactly why Android Studio's GUI build has always succeeded
+  (different network/trust stack) while a bare `gradlew.bat` CLI invocation always failed on
+  *whichever* dependency happened to be uncached that session. This was never a per-dependency
+  or per-artifact problem, and never a real absence of a valid CA chain — every previous
+  session's narrower theories (below, kept for history) were reasonable given the evidence
+  available at the time, but the actual root cause is this one system-level interception.
+- **Legitimate workaround found and used, not a validation bypass**: copied the JBR's
+  `cacerts` into a scratch location, imported the Avast root the OS already trusts into that
+  copy, and pointed the Gradle **daemon** at it via `org.gradle.jvmargs` (must go through the
+  daemon's own JVM args — `-Djavax.net.ssl.trustStoreType=Windows-ROOT` alone breaks SunJSSE's
+  default `SSLContext` init and does not work). No system file, JDK install, or repo file was
+  modified. Supply-chain integrity was independently re-checked (not just "it downloaded"):
+  the resolved `coil-network-okhttp` jar's SHA-1 matched Maven Central's published `.sha1`
+  exactly, confirming the intercepted-but-now-trusted download wasn't tampered with.
+- **Result: the first genuine CLI `BUILD SUCCESSFUL` in this project's history** —
+  `compileDebugKotlin`, `testDebugUnitTest` (23/23 pass — see the Phase F entry above for the
+  breakdown), `lintDebug` (0 errors, 31 warnings, all pre-existing/unrelated), and
+  `assembleDebug` (real 25,625,910-byte APK) all passed for real, not via Android Studio's GUI.
+- **Not yet made durable** — this was a scratch/one-off trust-store override for this one
+  verification run, not a permanent fix. Making it permanent (importing the Avast root into
+  the JBR's real `cacerts`, or disabling Avast's HTTPS scanning for build traffic) is a
+  system-level change that needs the user's own explicit approval/action, not something to do
+  silently. Until then, treat CLI Gradle builds on this machine as "possible via this specific
+  trust-store technique, not yet a standing capability" — don't assume a bare `gradlew.bat`
+  invocation will work without it.
+- The two entries immediately below are the prior, narrower (and now superseded) theories —
+  kept as historical record of the investigation, not because they're still the operative
+  explanation.
+
+## SUPERSEDED — see the RESOLVED entry immediately above for the real root cause (Avast TLS interception). This ("home") machine's CLI Gradle build still fails, but Android Studio's own GUI build succeeds (found 2026-08-13/14, Phase D)
 - Re-attempted `gradlew.bat assembleDebug` fresh this session (via `testing-bee`) rather than
   assuming the earlier-documented TLS/CA gap still applied unverified. Result: the Gradle
   wrapper's own distribution download succeeded this time (different from the earlier
@@ -227,7 +373,7 @@
 - Neither Firebase/GCP billing nor a Cloudflare account/deploy is relevant to this feature
   at all anymore — it's pure Postgres + the existing frontend Supabase client.
 
-## This ("home") machine's Gradle wrapper cannot download its distribution — blocks direct Android build verification (found 2026-08-13)
+## SUPERSEDED — see the RESOLVED entry near the top of this file for the real root cause (Avast TLS interception). This ("home") machine's Gradle wrapper cannot download its distribution — blocks direct Android build verification (found 2026-08-13)
 - `mobile-android/gradlew.bat testDebugUnitTest`/`lintDebug`/`assembleDebug` fail before
   even reaching the project: `javax.net.ssl.SSLHandshakeException: PKIX path building
   failed` while the Gradle wrapper tries to download `gradle-8.14.5-bin.zip` from

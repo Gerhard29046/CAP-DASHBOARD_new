@@ -1,5 +1,83 @@
 # Project State
-_Last verified: 2026-08-14 (Android Phase E1 — `"users"` Firestore listener reliability
+_Last verified: 2026-08-15 (Android Phase F kickoff — photo-viewer bugs fixed and, for the
+first time in this project, genuinely CLI-build-verified). Full narrative:
+
+**Context**: Phase E2 (photo upload, commit `0c9a068`) had already landed and was real-device
+tested by the user (physical phone, installed via `adb install -r`). Real-world feedback: web
+photo upload/display works end-to-end; Android upload works but **display was broken**
+(blank/broken thumbnails, no way to open/view a photo at all). User asked Queen Bee to continue
+systematically through the remaining Android phases (F: UI redesign/consistency onward),
+prioritizing frontend/UX, fixing directly-relevant issues found along the way, not stopping for
+minor items, and to log (not fix now) the website's "photo opens a new tab instead of an in-app
+viewer" UX gap as separate, deferred web polish.
+
+**Root-caused and fixed, then genuinely build-verified — first real CLI Gradle build success in
+this project's history.** `android-ui-bee`: root cause of blank thumbnails was `coil-compose`
+3.x alone having no network fetcher for `http(s)` models (Coil 3 split that into a separate
+`coil3-network-okhttp` artifact, never added); root cause of "can't open a photo" was that no
+thumbnail anywhere had a tap handler or viewer at all — two independent gaps, not one bug wearing
+two faces. Fixed: added the missing dependency, built a shared `PhotoThumbnail` (explicit
+resolving/broken/loaded states, never a silent blank tile) and a new in-app `CapPhotoViewerDialog`
+(full-screen, stays in-app, never hands a signed URL to an external app), wired onto all 3 photo
+sites plus Knowledge Base's photo rows (previously opened an external browser). Same pass swept
+all 17 screens in `MainActivity.kt` and fixed several more real, concrete defects: dashboard
+quick-actions were completely permission-ungated (an accountant could reach forms RLS would
+reject); 6 screens' detail views (local Compose state, not nav destinations) didn't respond to
+the system back button; several list rows rendered a bare `" · "` on blank data; stale "Firebase"
+strings survived in 3 screens from before the Supabase cutover. Deliberately left alone and
+reported instead: `StatusScreen`'s Firebase labels (genuinely still probes Firestore, so the
+label is accurate — a truthful fix needs a real Supabase health-check capability from
+`supabase-android-bee`, not invocable this session), the dead Google Calendar UI section
+(depends on the still-present `GoogleCalendarRepository.kt`, a Phase I/product call, not a UI
+sweep fix), Users-screen missing search (product call), and a 32dp remove-photo touch target
+below Material's 48dp minimum (disclosed tradeoff, not silently changed).
+
+**`testing-bee`'s verification did more than confirm the diff — it root-caused and solved this
+machine's multi-month "CLI Gradle build is broken" mystery for real.** Dumped the actual TLS
+certificate chain served during a live failed dependency resolution: both `dl.google.com` and
+`repo.maven.apache.org` presented leaf certs issued by `CN=Avast Web/Mail Shield Root` — **Avast
+Antivirus is TLS-intercepting this machine's HTTPS traffic**, and its root CA (already trusted by
+Windows) was simply never trusted by the Android Studio JBR's own `cacerts`. This is why Android
+Studio's GUI build always worked while bare `gradlew.bat` always failed, on *whatever* dependency
+happened to be uncached that session — never a real absent-CA problem, never a per-artifact
+issue, contrary to every prior session's narrower theory (kept in `KNOWN_ISSUES.md` as
+historical record, not deleted). Fixed a real build for real, without disabling certificate
+validation: copied the JBR `cacerts`, imported the OS-trusted Avast root into the copy, pointed
+the Gradle daemon at it via `org.gradle.jvmargs`. Independently verified the downloaded
+`coil-network-okhttp` jar's SHA-1 against Maven Central's published hash (exact match) to confirm
+the intercepted-but-now-trusted download wasn't tampered with. **Result**: genuine `BUILD
+SUCCESSFUL` — `compileDebugKotlin` passed (confirming `AsyncImage(onState = ...)` /
+`AsyncImagePainter.State.Error|Loading` is real, correctly-used Coil 3.2.0 API, the one surface
+`android-ui-bee` couldn't compile against itself), **23/23 unit tests pass** (baseline grew from
+the E1 gate's 16 to 23 — `SupabaseStorageTest`'s 7 were added in E2, correctly not assumed
+unchanged), `lintDebug` 0 errors (31 pre-existing/unrelated warnings), `assembleDebug` produced a
+real 25,625,910-byte APK. **This trust-store fix was a scratch/one-off override for this
+verification run, not yet made durable** — making it permanent needs the user's own explicit
+approval (import the Avast root into the JBR's real `cacerts`, or disable Avast's HTTPS scanning
+for build traffic). Until then, don't assume a bare `gradlew.bat` invocation will just work.
+
+**What remains genuinely unverified**: on-device/runtime visual behavior — does a photo actually
+render, does the viewer dialog dismiss correctly on all three paths, do the 6 new `BackHandler`s
+behave as expected, are the permission-gated dashboard tiles correct for each role. Compilation +
+packaging proves the code is correct and buildable, not that it looks/behaves right on a real
+screen — a device run is still a worthwhile product check, just no longer required to confirm
+this specific change is real, working code.
+
+**Also this session, unrelated to Android**: found `supabase/migrations/
+0025_job_cards_accessories_and_arrival_notes.sql` sitting fully written but never committed or
+applied (from a prior session). Re-verified its own claims independently before trusting it —
+both `job_cards.accessories_received`/`arrival_condition_notes` are genuine fields (present in
+the original Laravel model, used on two live screens, confirmed absent from the live Postgres
+schema) — then committed it (`7ce9cf8`). **Not yet applied** — needs the SQL Editor. Likely
+severity is high: `BookIn.jsx`'s save is one combined `update()` call including both missing
+columns, so PostgREST's schema-cache check plausibly rejects the *entire* Book In save with
+`PGRST204`, not just those two fields — strongly evidenced (the migration's own comment says it
+was "found live via a real Book In save") but not re-confirmed live this session. See
+`KNOWN_ISSUES.md`'s matching URGENT entry.
+
+---
+
+_Last verified before that: 2026-08-14 (Android Phase E1 — `"users"` Firestore listener reliability
 isolation implemented, independently `testing-bee`-verified, **E1 gate PASSED**). Full
 narrative:
 

@@ -46,6 +46,7 @@ work={module="androidx.work:work-runtime-ktx",version.ref="work"}
 datastore={module="androidx.datastore:datastore-preferences",version.ref="datastore"}
 security={module="androidx.security:security-crypto",version.ref="security"}
 coil={module="io.coil-kt.coil3:coil-compose",version.ref="coil"}
+coil-network-okhttp={module="io.coil-kt.coil3:coil-network-okhttp",version.ref="coil"}
 junit={module="junit:junit",version.ref="junit"}
 firebase-bom={module="com.google.firebase:firebase-bom",version.ref="firebaseBom"}
 firebase-auth={module="com.google.firebase:firebase-auth"}

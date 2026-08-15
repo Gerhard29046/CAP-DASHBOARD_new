@@ -3,13 +3,16 @@ package com.CAPDATABASE.capdatabase
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
@@ -25,11 +28,16 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -76,6 +84,7 @@ import com.CAPDATABASE.capdatabase.ui.theme.CapTheme
 import com.CAPDATABASE.capdatabase.ui.theme.CapWarningAmber
 import com.CAPDATABASE.capdatabase.ui.theme.Spacing
 import coil3.compose.AsyncImage
+import coil3.compose.AsyncImagePainter
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.text.DecimalFormat
@@ -672,10 +681,10 @@ private fun AccountScreen(user: CapUser, onLogout: () -> Unit) {
         }
 
         CapCard {
-            CapListItem(user.name, subtitle = "Name", leading = { Icon(Icons.Outlined.Person, null) })
-            CapListItem(user.email, subtitle = "Email", leading = { Icon(Icons.Outlined.Email, null) })
-            CapListItem(user.role, subtitle = "Role", leading = { Icon(Icons.Outlined.Badge, null) })
-            CapListItem("Firebase", subtitle = "Authentication provider", leading = { Icon(Icons.Outlined.Security, null) })
+            CapListItem(user.name.ifBlank { "Not set" }, subtitle = "Name", leading = { Icon(Icons.Outlined.Person, null) })
+            CapListItem(user.email.ifBlank { "Not set" }, subtitle = "Email", leading = { Icon(Icons.Outlined.Email, null) })
+            CapListItem(user.role.ifBlank { "Not set" }, subtitle = "Role", leading = { Icon(Icons.Outlined.Badge, null) })
+            CapListItem("Supabase", subtitle = "Authentication provider", leading = { Icon(Icons.Outlined.Security, null) })
         }
 
         CapCard {
@@ -709,6 +718,13 @@ private fun LogoutConfirmDialog(onDismiss: () -> Unit, onConfirm: () -> Unit) {
     )
 }
 
+/** One dashboard quick-action tile, paired with the permission key that gates it. */
+private data class QuickAction(
+    val icon: androidx.compose.ui.graphics.vector.ImageVector,
+    val label: String,
+    val route: String
+)
+
 @Composable
 private fun DashboardScreen(data: RecordsState, user: CapUser, onNavigate: (String) -> Unit) {
     val clients = data.collection("clients")
@@ -723,11 +739,17 @@ private fun DashboardScreen(data: RecordsState, user: CapUser, onNavigate: (Stri
     val dueServices = services.filter { it.text("next_service_due").isNotBlank() }.sortedBy { it.text("next_service_due") }
 
     val initials = initialsOf(user.name)
+    val quickActions = buildList {
+        if (user.hasPermission("services.create")) add(QuickAction(Icons.Outlined.Build, "Log New Service", "LogNewService"))
+        if (user.hasPermission("job_cards.create")) add(QuickAction(Icons.Outlined.PrecisionManufacturing, "Book In Machine", "BookIn"))
+        if (user.hasPermission(permissionFor("Jobs"))) add(QuickAction(Icons.Outlined.Assignment, "View Jobs", "Jobs"))
+        if (user.hasPermission(permissionFor("Clients"))) add(QuickAction(Icons.Outlined.Groups, "View Clients", "Clients"))
+    }
 
     LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
         item {
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
-                CapScreenHeader(title = "CAP Database", subtitle = "Live Firebase overview")
+                CapScreenHeader(title = "CAP Database", subtitle = "Live overview")
                 CapCard {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
                         CapUserAvatar(initials)
@@ -752,18 +774,23 @@ private fun DashboardScreen(data: RecordsState, user: CapUser, onNavigate: (Stri
                 }
             }
         }
-        item {
-            // 2x2 rather than 4-across: four tiles on one phone-width row left each label
-            // truncated and each target under the comfortable touch size.
-            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                CapSectionHeader(title = "Quick actions")
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                    CapQuickActionCard(Icons.Outlined.Build, "Log New Service", { onNavigate("LogNewService") }, Modifier.weight(1f))
-                    CapQuickActionCard(Icons.Outlined.PrecisionManufacturing, "Book In Machine", { onNavigate("BookIn") }, Modifier.weight(1f))
-                }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                    CapQuickActionCard(Icons.Outlined.Assignment, "View Jobs", { onNavigate("Jobs") }, Modifier.weight(1f))
-                    CapQuickActionCard(Icons.Outlined.Groups, "View Clients", { onNavigate("Clients") }, Modifier.weight(1f))
+        if (quickActions.isNotEmpty()) {
+            item {
+                // 2 per row rather than 4-across: four tiles on one phone-width row left each
+                // label truncated and each target under the comfortable touch size. Each tile is
+                // gated on the same permission key that gates the screen it opens, so a user
+                // never taps through to a screen they cannot use (MoreScreen already did this;
+                // the dashboard did not).
+                Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                    CapSectionHeader(title = "Quick actions")
+                    quickActions.chunked(2).forEach { row ->
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                            row.forEach { action ->
+                                CapQuickActionCard(action.icon, action.label, { onNavigate(action.route) }, Modifier.weight(1f))
+                            }
+                            if (row.size == 1) Spacer(Modifier.weight(1f))
+                        }
+                    }
                 }
             }
         }
@@ -824,6 +851,10 @@ private fun ClientsScreen(data: RecordsState, user: CapUser, save: (String, Stri
     var editMachine by remember { mutableStateOf<CapRecord?>(null) }
     var selectedClient by remember { mutableStateOf<CapRecord?>(null) }
     var query by remember { mutableStateOf("") }
+
+    // Detail views here are local state, not nav destinations, so without this the system back
+    // gesture left the whole section instead of returning to the list.
+    BackHandler(enabled = selectedClient != null) { selectedClient = null }
 
     val activeClient = selectedClient
     if (activeClient != null) {
@@ -984,7 +1015,7 @@ private fun ClientDetailScreen(
                                     subtitle = listOfNotNull(
                                         service.text("service_date").ifBlank { null },
                                         service.text("work_performed").ifBlank { null }
-                                    ).joinToString(" · ")
+                                    ).joinToString(" · ").ifBlank { null }
                                 )
                             }
                         }
@@ -1004,7 +1035,7 @@ private fun ClientDetailScreen(
                                     subtitle = listOfNotNull(
                                         job.text("status").ifBlank { null },
                                         job.text("fault_description").ifBlank { null }
-                                    ).joinToString(" · ")
+                                    ).joinToString(" · ").ifBlank { null }
                                 )
                             }
                         }
@@ -1026,6 +1057,8 @@ private fun MachinesScreen(data: RecordsState, user: CapUser, save: (String, Str
     var selectedMachine by remember { mutableStateOf<CapRecord?>(null) }
     var query by remember { mutableStateOf("") }
     val clientNames = clients.associate { it.id to it.text("company_name") }
+
+    BackHandler(enabled = selectedMachine != null) { selectedMachine = null }
 
     val activeMachine = selectedMachine
     if (activeMachine != null) {
@@ -1059,8 +1092,14 @@ private fun MachinesScreen(data: RecordsState, user: CapUser, save: (String, Str
             }
             if (filteredMachines.isEmpty()) {
                 item {
+                    // The add-machine FAB is hidden until a client exists (a machine must belong
+                    // to one), so the empty state has to say why rather than leave a dead end.
                     CapEmptyState(
-                        if (machines.isEmpty()) "No machines yet. Add the first machine." else "No machines match your search.",
+                        when {
+                            machines.isNotEmpty() -> "No machines match your search."
+                            clients.isEmpty() -> "No clients yet. Add a client before adding machines."
+                            else -> "No machines yet. Add the first machine."
+                        },
                         modifier = Modifier.fillMaxWidth().wrapContentHeight()
                     )
                 }
@@ -1149,7 +1188,7 @@ private fun MachineDetailScreen(
                                     subtitle = listOfNotNull(
                                         service.text("technician_name").ifBlank { null },
                                         service.text("work_performed").ifBlank { null }
-                                    ).joinToString(" · ")
+                                    ).joinToString(" · ").ifBlank { null }
                                 )
                             }
                         }
@@ -1230,20 +1269,149 @@ private fun ServiceRecordDetailScreen(
 @Composable
 private fun SignedPhotoStrip(paths: List<String>, vm: MainViewModel) {
     var urls by remember(paths) { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var resolving by remember(paths) { mutableStateOf(true) }
+    var viewerUrl by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(paths) {
+        resolving = true
         val resolved = mutableMapOf<String, String>()
         paths.forEach { path ->
             runCatching { vm.createPhotoSignedUrl(path) }.getOrNull()?.let { resolved[path] = it }
         }
         urls = resolved
+        resolving = false
     }
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-        paths.forEach { path ->
-            Box(Modifier.size(88.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) {
-                val url = urls[path]
-                if (url != null) {
-                    AsyncImage(model = url, contentDescription = null, modifier = Modifier.fillMaxSize())
+        paths.forEachIndexed { index, path ->
+            PhotoThumbnail(
+                url = urls[path],
+                resolving = resolving,
+                contentDescription = "Photo ${index + 1} of ${paths.size}. Tap to view full screen.",
+                onClick = { urls[path]?.let { viewerUrl = it } }
+            )
+        }
+    }
+    viewerUrl?.let { url -> CapPhotoViewerDialog(url) { viewerUrl = null } }
+}
+
+/**
+ * One square record-photo thumbnail. [url] is a signed URL the caller has already resolved --
+ * null while [resolving] is true, or null afterwards when signing failed. Both the
+ * still-resolving and the failed case are shown explicitly rather than left as a silent blank
+ * tile, and a loaded photo opens full screen in [CapPhotoViewerDialog] on tap.
+ */
+@Composable
+private fun PhotoThumbnail(
+    url: String?,
+    resolving: Boolean,
+    contentDescription: String,
+    onClick: () -> Unit,
+    size: Dp = 88.dp,
+    trailing: @Composable BoxScope.() -> Unit = {}
+) {
+    var failed by remember(url) { mutableStateOf(false) }
+    val openable = url != null && !failed
+    Box(
+        Modifier
+            .size(size)
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .then(if (openable) Modifier.clickable(onClick = onClick) else Modifier),
+        contentAlignment = Alignment.Center
+    ) {
+        when {
+            url == null && resolving -> CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+            url == null || failed -> Icon(
+                Icons.Outlined.BrokenImage,
+                contentDescription = "Photo unavailable",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            else -> AsyncImage(
+                model = url,
+                contentDescription = contentDescription,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop,
+                onState = { state -> if (state is AsyncImagePainter.State.Error) failed = true }
+            )
+        }
+        trailing()
+    }
+}
+
+/**
+ * Remove affordance overlaid on an upload-preview thumbnail. The dark scrim behind it is what
+ * keeps it visible over an arbitrary photo — the previous untinted icon disappeared entirely on
+ * light images.
+ */
+@Composable
+private fun BoxScope.RemovePhotoButton(onRemove: () -> Unit) {
+    Box(
+        Modifier
+            .align(Alignment.TopEnd)
+            .padding(Spacing.xs)
+            .size(32.dp)
+            .clip(CircleShape)
+            .background(Color.Black.copy(alpha = 0.55f))
+            .clickable(onClick = onRemove),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            Icons.Outlined.Close,
+            contentDescription = "Remove photo",
+            tint = Color.White,
+            modifier = Modifier.size(18.dp)
+        )
+    }
+}
+
+/**
+ * In-app full-screen photo viewer. Deliberately stays inside the app (no browser/external
+ * intent) -- [url] is a short-lived signed Storage URL that must never be handed to another
+ * app. Dismissed by the close button, a tap anywhere on the backdrop, or the system back
+ * gesture.
+ */
+@Composable
+private fun CapPhotoViewerDialog(url: String, onDismiss: () -> Unit) {
+    var failed by remember(url) { mutableStateOf(false) }
+    var loading by remember(url) { mutableStateOf(true) }
+    val backdropInteraction = remember { MutableInteractionSource() }
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.94f))
+                .clickable(interactionSource = backdropInteraction, indication = null, onClick = onDismiss),
+            contentAlignment = Alignment.Center
+        ) {
+            if (failed) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(Spacing.sm)
+                ) {
+                    Icon(Icons.Outlined.BrokenImage, contentDescription = null, Modifier.size(40.dp), tint = Color.White)
+                    Text(
+                        "This photo could not be loaded.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White
+                    )
                 }
+            } else {
+                AsyncImage(
+                    model = url,
+                    contentDescription = "Photo, full screen",
+                    modifier = Modifier.fillMaxSize().safeDrawingPadding().padding(Spacing.md),
+                    contentScale = ContentScale.Fit,
+                    onState = { state ->
+                        loading = state is AsyncImagePainter.State.Loading
+                        failed = state is AsyncImagePainter.State.Error
+                    }
+                )
+                if (loading) CircularProgressIndicator(color = Color.White)
+            }
+            IconButton(
+                onClick = onDismiss,
+                modifier = Modifier.align(Alignment.TopEnd).safeDrawingPadding().padding(Spacing.sm)
+            ) {
+                Icon(Icons.Outlined.Close, contentDescription = "Close photo", tint = Color.White)
             }
         }
     }
@@ -1287,6 +1455,7 @@ private fun LogNewServiceScreen(
     var photoUrls by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var uploadingPhoto by remember { mutableStateOf(false) }
     var photoError by remember { mutableStateOf<String?>(null) }
+    var viewerUrl by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
@@ -1411,27 +1580,35 @@ private fun LogNewServiceScreen(
                 if (photoError != null) {
                     Text(photoError!!, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                 }
-                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                    photos.forEach { path ->
-                        Box(Modifier.size(80.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) {
-                            val url = photoUrls[path]
-                            if (url != null) {
-                                AsyncImage(model = url, contentDescription = null, modifier = Modifier.fillMaxSize())
-                            }
-                            IconButton(
-                                onClick = { removePickedPhoto(path) },
-                                modifier = Modifier.align(Alignment.TopEnd).size(24.dp)
-                            ) {
-                                Icon(Icons.Outlined.Close, contentDescription = "Remove photo", tint = MaterialTheme.colorScheme.onSurface)
-                            }
+                if (photos.isEmpty()) {
+                    Text(
+                        if (machineId.isBlank()) "Select a machine to start adding photos."
+                        else "No photos added yet.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                        photos.forEachIndexed { index, path ->
+                            PhotoThumbnail(
+                                url = photoUrls[path],
+                                resolving = false,
+                                contentDescription = "Photo ${index + 1} of ${photos.size}. Tap to view full screen.",
+                                onClick = { photoUrls[path]?.let { viewerUrl = it } },
+                                size = 80.dp,
+                                trailing = { RemovePhotoButton { removePickedPhoto(path) } }
+                            )
                         }
                     }
-                    CapOutlinedButton(
-                        text = if (uploadingPhoto) "Uploading…" else "Add Photo",
-                        onClick = { pickPhotoLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-                        enabled = !uploadingPhoto && machineId.isNotBlank()
-                    )
                 }
+                // Deliberately outside the horizontally scrolling strip above: inside it, the
+                // primary "Add Photo" action scrolled off-screen once a few photos existed.
+                CapOutlinedButton(
+                    text = "Add Photo",
+                    onClick = { pickPhotoLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                    enabled = machineId.isNotBlank(),
+                    loading = uploadingPhoto
+                )
             }
         }
         CapPrimaryButton(
@@ -1457,6 +1634,7 @@ private fun LogNewServiceScreen(
             loading = submitting
         )
     }
+    viewerUrl?.let { url -> CapPhotoViewerDialog(url) { viewerUrl = null } }
 }
 
 @Composable
@@ -1487,6 +1665,7 @@ private fun BookInScreen(
     var photoUrls by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var uploadingPhoto by remember { mutableStateOf(false) }
     var photoError by remember { mutableStateOf<String?>(null) }
+    var viewerUrl by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
@@ -1615,27 +1794,35 @@ private fun BookInScreen(
                 if (photoError != null) {
                     Text(photoError!!, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                 }
-                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                    photos.forEach { path ->
-                        Box(Modifier.size(80.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) {
-                            val url = photoUrls[path]
-                            if (url != null) {
-                                AsyncImage(model = url, contentDescription = null, modifier = Modifier.fillMaxSize())
-                            }
-                            IconButton(
-                                onClick = { removePickedPhoto(path) },
-                                modifier = Modifier.align(Alignment.TopEnd).size(24.dp)
-                            ) {
-                                Icon(Icons.Outlined.Close, contentDescription = "Remove photo", tint = MaterialTheme.colorScheme.onSurface)
-                            }
+                if (photos.isEmpty()) {
+                    Text(
+                        if (clientId.isBlank() || machineId.isBlank()) "Select a client and machine to start adding photos."
+                        else "No arrival photos added yet.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                        photos.forEachIndexed { index, path ->
+                            PhotoThumbnail(
+                                url = photoUrls[path],
+                                resolving = false,
+                                contentDescription = "Arrival photo ${index + 1} of ${photos.size}. Tap to view full screen.",
+                                onClick = { photoUrls[path]?.let { viewerUrl = it } },
+                                size = 80.dp,
+                                trailing = { RemovePhotoButton { removePickedPhoto(path) } }
+                            )
                         }
                     }
-                    CapOutlinedButton(
-                        text = if (uploadingPhoto) "Uploading…" else "Add Photo",
-                        onClick = { pickPhotoLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-                        enabled = !uploadingPhoto && clientId.isNotBlank() && machineId.isNotBlank()
-                    )
                 }
+                // See LogNewServiceScreen: the action stays outside the scrolling strip so it
+                // cannot scroll off-screen once several photos have been added.
+                CapOutlinedButton(
+                    text = "Add Photo",
+                    onClick = { pickPhotoLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                    enabled = clientId.isNotBlank() && machineId.isNotBlank(),
+                    loading = uploadingPhoto
+                )
             }
         }
         CapPrimaryButton(
@@ -1663,6 +1850,7 @@ private fun BookInScreen(
             loading = submitting
         )
     }
+    viewerUrl?.let { url -> CapPhotoViewerDialog(url) { viewerUrl = null } }
 }
 
 @Composable
@@ -1675,6 +1863,8 @@ private fun ServicesScreen(data: RecordsState, user: CapUser, save: (String, Str
     var creating by remember { mutableStateOf(false) }
     var selectedService by remember { mutableStateOf<CapRecord?>(null) }
     var query by remember { mutableStateOf("") }
+
+    BackHandler(enabled = selectedService != null) { selectedService = null }
 
     val activeService = selectedService
     if (activeService != null) {
@@ -1720,7 +1910,11 @@ private fun ServicesScreen(data: RecordsState, user: CapUser, save: (String, Str
             if (filteredServices.isEmpty()) {
                 item {
                     CapEmptyState(
-                        if (services.isEmpty()) "No service records yet." else "No service records match your search.",
+                        when {
+                            services.isNotEmpty() -> "No service records match your search."
+                            machines.isEmpty() -> "No machines yet. Add a machine before logging a service."
+                            else -> "No service records yet."
+                        },
                         modifier = Modifier.fillMaxWidth().wrapContentHeight()
                     )
                 }
@@ -1732,7 +1926,7 @@ private fun ServicesScreen(data: RecordsState, user: CapUser, save: (String, Str
                         subtitle = listOfNotNull(
                             service.text("service_date").ifBlank { null },
                             service.text("technician_name").ifBlank { null }
-                        ).joinToString(" · "),
+                        ).joinToString(" · ").ifBlank { null },
                         showNavArrow = true,
                         onClick = { selectedService = service }
                     )
@@ -1761,6 +1955,8 @@ private fun JobsScreen(data: RecordsState, user: CapUser, save: (String, String?
     var selectedJob by remember { mutableStateOf<CapRecord?>(null) }
     var query by remember { mutableStateOf("") }
     val clientNames = clients.associate { it.id to it.text("company_name") }
+
+    BackHandler(enabled = selectedJob != null) { selectedJob = null }
 
     val activeJob = selectedJob
     if (activeJob != null) {
@@ -1796,7 +1992,11 @@ private fun JobsScreen(data: RecordsState, user: CapUser, save: (String, String?
             if (filteredJobs.isEmpty()) {
                 item {
                     CapEmptyState(
-                        if (jobs.isEmpty()) "No job cards yet. Add the first job." else "No job cards match your search.",
+                        when {
+                            jobs.isNotEmpty() -> "No job cards match your search."
+                            clients.isEmpty() || machines.isEmpty() -> "No job cards yet. Add a client and a machine first."
+                            else -> "No job cards yet. Add the first job."
+                        },
                         modifier = Modifier.fillMaxWidth().wrapContentHeight()
                     )
                 }
@@ -1808,7 +2008,7 @@ private fun JobsScreen(data: RecordsState, user: CapUser, save: (String, String?
                         subtitle = listOfNotNull(
                             clientNames[job.text("client_id")]?.ifBlank { null },
                             job.text("fault_description").ifBlank { null }
-                        ).joinToString(" · "),
+                        ).joinToString(" · ").ifBlank { null },
                         trailing = { CapStatusBadge(job.text("status").ifBlank { "Booked In" }, jobStatusTone(job.text("status"))) },
                         showNavArrow = true,
                         onClick = { selectedJob = job }
@@ -1902,6 +2102,8 @@ private fun CalendarScreen(data: RecordsState, user: CapUser, vm: MainViewModel)
     var selectedService by remember { mutableStateOf<CapRecord?>(null) }
     var editing by remember { mutableStateOf<CapRecord?>(null) }
 
+    BackHandler(enabled = selectedService != null) { selectedService = null }
+
     val activeService = selectedService
     if (activeService != null) {
         val machine = machinesById[activeService.text("machine_id")]
@@ -1988,7 +2190,7 @@ private fun CalendarScreen(data: RecordsState, user: CapUser, vm: MainViewModel)
                             subtitle = listOfNotNull(
                                 client?.text("company_name")?.ifBlank { null },
                                 service.text("technician_name").ifBlank { null }
-                            ).joinToString(" · "),
+                            ).joinToString(" · ").ifBlank { null },
                             trailing = { CapStatusBadge(badgeLabel, badgeTone) },
                             showNavArrow = true,
                             onClick = { selectedService = service }
@@ -2165,6 +2367,8 @@ private fun KnowledgeBaseScreen(data: RecordsState, user: CapUser, save: (String
     var selectedMachine by remember { mutableStateOf<CapRecord?>(null) }
     var query by remember { mutableStateOf("") }
 
+    BackHandler(enabled = selectedMachine != null) { selectedMachine = null }
+
     val activeMachine = selectedMachine
     if (activeMachine != null) {
         KnowledgeBaseDetailScreen(
@@ -2212,12 +2416,15 @@ private fun KnowledgeBaseScreen(data: RecordsState, user: CapUser, save: (String
                         machine.text("model_name").ifBlank { null },
                         machine.text("variant").ifBlank { null }
                     ).joinToString(" ").ifBlank { "Unnamed machine" },
-                    subtitle = machine.text("product_code"),
+                    subtitle = machine.text("product_code").ifBlank { null },
                     leading = {
                         Text(
                             machine.text("manufacturer").ifBlank { "?" },
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.widthIn(max = 80.dp)
                         )
                     },
                     showNavArrow = true,
@@ -2241,6 +2448,7 @@ private fun KnowledgeBaseDetailScreen(
 ) {
     val uriHandler = LocalUriHandler.current
     val canManage = user.role != "accountant"
+    var viewerUrl by remember(machine.id) { mutableStateOf<String?>(null) }
     var noteTitle by remember(machine.id) { mutableStateOf("") }
     var noteContent by remember(machine.id) { mutableStateOf("") }
     var revealedCodes by remember(machine.id) { mutableStateOf(setOf<String>()) }
@@ -2318,7 +2526,7 @@ private fun KnowledgeBaseDetailScreen(
                             notes.forEach { note ->
                                 CapListItem(
                                     title = note.text("title").ifBlank { "Note" },
-                                    subtitle = note.text("content")
+                                    subtitle = note.text("content").ifBlank { null }
                                 )
                             }
                         }
@@ -2360,9 +2568,11 @@ private fun KnowledgeBaseDetailScreen(
                                 val fileUrl = photo.text("file_url")
                                 CapListItem(
                                     title = photo.text("caption").ifBlank { photo.text("original_filename").ifBlank { "Photo" } },
-                                    subtitle = photo.text("original_filename"),
+                                    subtitle = photo.text("original_filename").ifBlank { null },
                                     showNavArrow = fileUrl.isNotBlank(),
-                                    onClick = if (fileUrl.isNotBlank()) ({ uriHandler.openUri(fileUrl) }) else null
+                                    // Photos open in the app's own viewer rather than a browser;
+                                    // documents below still need an external handler (PDF etc.).
+                                    onClick = if (fileUrl.isNotBlank()) ({ viewerUrl = fileUrl }) else null
                                 )
                             }
                         }
@@ -2403,7 +2613,7 @@ private fun KnowledgeBaseDetailScreen(
                                 val fileUrl = doc.text("file_url")
                                 CapListItem(
                                     title = doc.text("title").ifBlank { doc.text("original_filename").ifBlank { "Document" } },
-                                    subtitle = doc.text("original_filename"),
+                                    subtitle = doc.text("original_filename").ifBlank { null },
                                     showNavArrow = fileUrl.isNotBlank(),
                                     onClick = if (fileUrl.isNotBlank()) ({ uriHandler.openUri(fileUrl) }) else null
                                 )
@@ -2414,6 +2624,7 @@ private fun KnowledgeBaseDetailScreen(
             }
         }
     }
+    viewerUrl?.let { url -> CapPhotoViewerDialog(url) { viewerUrl = null } }
 }
 
 /**
@@ -2606,7 +2817,7 @@ fun StatusScreen(vm: MainViewModel) {
         item {
             CapScreenHeader(
                 title = "Connection and Sync",
-                subtitle = "Live view of this device's link to the CAP Firebase backend"
+                subtitle = "Live view of this device's link to the CAP backend"
             )
         }
         item {

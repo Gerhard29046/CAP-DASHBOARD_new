@@ -1,9 +1,20 @@
 ---
 name: project-android-supabase-migration
-description: Separate, explicitly-authorized migration project (started 2026-08-13) moving mobile-android/ off Firebase (Auth+Firestore) onto Supabase Auth+Postgres/RLS, following the user's own A-J phase structure. Phase D (core data) complete as of 2026-08-14. Phases E-J not started, each for a stated reason. Check current phase before assuming more progress happened.
+description: Separate, explicitly-authorized migration project (started 2026-08-13) moving mobile-android/ off Firebase (Auth+Firestore) onto Supabase Auth+Postgres/RLS, following the user's own A-J phase structure. A-D, E1, E2 done as of 2026-08-15; Phase F (UI/UX) now in progress. Check current phase before assuming more progress happened.
 metadata:
   type: project
 ---
+
+**UPDATE 2026-08-15**: E1 gate passed 2026-08-14 (see [[project_e1_reliability_fix_paused]]).
+E2 (photo upload, web+Android) landed and was real-device tested by the user. Phase F (UI/UX
+consistency) is now in progress — first pass fixed real photo-viewer bugs (blank thumbnails,
+no way to open a photo) plus a screen-by-screen sweep, and was genuinely CLI-build-verified for
+the first time ever in this project (23/23 unit tests, lint clean, real APK). **The
+"this machine's CLI Gradle build doesn't work" constraint below is now SUPERSEDED for how to
+think about it going forward — see [[project_android_gradle_tls_avast_resolved]] for the real
+root cause (Avast TLS interception, not a CA/project defect) and the working-but-not-yet-durable
+fix.** Still true: `supabase-android-bee`/`migration-audit-bee` were not invocable this session
+either (same recurring agent-registration gap, still unfixed, still unexplained).
 
 Separate from the (completed) web Firebase→Supabase migration — do not conflate the two, the
 user was explicit about this. Full living record: `docs/android/ANDROID_SUPABASE_MIGRATION.md`
