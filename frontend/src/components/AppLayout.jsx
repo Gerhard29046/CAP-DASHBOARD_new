@@ -204,9 +204,14 @@ export default function AppLayout() {
   );
 }
 
+// Cross-platform parity Phase 7: the one entry point to the new self-service /account page --
+// every existing consumer of this component (mobile drawer + desktop sidebar) gets it for free.
 function UserCard({ userName, role }) {
   return (
-    <div className="flex items-center gap-3 px-3 py-2.5 mb-4 rounded-xl bg-secondary/60">
+    <Link
+      to="/account"
+      className="flex items-center gap-3 px-3 py-2.5 mb-4 rounded-xl bg-secondary/60 hover:bg-secondary transition-colors"
+    >
       <div className="w-8 h-8 rounded-full bg-primary/15 flex items-center justify-center shrink-0">
         <User2 className="w-4 h-4 text-primary" />
       </div>
@@ -217,6 +222,6 @@ function UserCard({ userName, role }) {
         </p>
         <p className="text-xs text-muted-foreground">{role}</p>
       </div>
-    </div>
+    </Link>
   );
 }

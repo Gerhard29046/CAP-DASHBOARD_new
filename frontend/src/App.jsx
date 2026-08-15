@@ -34,6 +34,7 @@ import KnowledgeMachineForm from '@/pages/KnowledgeMachineForm';
 import KnowledgeMachineDetail from '@/pages/KnowledgeMachineDetail';
 import CalendarPage from '@/pages/CalendarPage';
 import Settings from '@/pages/Settings';
+import Account from '@/pages/Account';
 
 
 const AuthenticatedApp = () => {
@@ -83,6 +84,10 @@ const AuthenticatedApp = () => {
           <Route path="/knowledge-base/:id" element={<KnowledgeMachineDetail />} />
           <Route path="/knowledge-base/:id/edit" element={<RoleGuard allowedRoles={["admin"]}><KnowledgeMachineForm /></RoleGuard>} />
           <Route path="/settings" element={<RoleGuard requiredPermission="settings.access"><Settings /></RoleGuard>} />
+          {/* No RoleGuard: this is the signed-in user's own account, available to every active
+              user regardless of role/permissions -- matches /clients/:id, /machines/:id,
+              /job-cards/:id's existing "auth-only, no extra permission" pattern above. */}
+          <Route path="/account" element={<Account />} />
         </Route>
       </Route>
 

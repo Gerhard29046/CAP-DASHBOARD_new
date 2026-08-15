@@ -35,8 +35,39 @@ export async function uploadFile(bucket, path, file, { upsert = false, optimizeI
 
 // Convenience wrapper matching the profile-images bucket's RLS path convention
 // (`{auth.uid()}/...`). Callers should not construct this path manually.
+// Superseded by uploadProfilePhoto() below (cross-platform parity Phase 7) -- kept, unused,
+// rather than deleted, since its raw upload() response shape is a reasonable low-level
+// primitive and nothing else in this file assumed it would stay the public entry point.
 export async function uploadProfileImage(userId, file, fileName = "avatar.webp") {
   return uploadFile(BUCKETS.profileImages, `${userId}/${fileName}`, file, { upsert: true });
+}
+
+// Cross-platform parity Phase 7 (profile photo). PERMANENT-path storage for
+// public.users.photo_path (migration 0026, NOT yet applied -- see
+// docs/ai-memory/KNOWN_ISSUES.md / ROADMAP.md's matching Phase 7 entries), matching the exact
+// same discipline as uploadRecordPhoto() below: never persist a signed URL, only the permanent
+// path, and resolve a fresh signed URL at display time. One fixed path per user
+// (`{userId}/avatar.webp`, upsert-overwritten on every re-upload), unlike the record-photo
+// functions' ever-growing set of uniquely-named files -- profile-images' RLS (as corrected by
+// 0026) already expects exactly this one-file-per-user shape.
+export async function uploadProfilePhoto(userId, file) {
+  const optimized = await optimizeImageForUpload(file);
+  const path = `${userId}/avatar.webp`;
+  await uploadFile(BUCKETS.profileImages, path, optimized, { upsert: true, optimizeImage: false });
+  return path;
+}
+
+// Fresh signed URL for displaying a stored profile-photo path -- call at render/display time,
+// never persist the result (it expires; the stored path does not).
+export async function getProfilePhotoSignedUrl(path, expiresInSeconds = 60 * 60) {
+  return getSignedUrl(BUCKETS.profileImages, path, expiresInSeconds);
+}
+
+// Best-effort delete for "remove my photo". Callers must clear public.users.photo_path via
+// their own entity update() regardless of whether this succeeds, same contract as
+// deleteRecordPhoto() below.
+export async function deleteProfilePhoto(path) {
+  await deleteFile(BUCKETS.profileImages, path);
 }
 
 export async function getPublicUrl(bucket, path) {
