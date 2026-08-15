@@ -20,3 +20,14 @@ val CapBorder = Color(0xFF20283C)
 // tones against the blue-navy palette above rather than clashing neon accents.
 val CapSuccessGreen = Color(0xFF22C55E)
 val CapWarningAmber = Color(0xFFF59E0B)
+
+// Dashboard note accents — the same four hue families the website's sticky notes use
+// (amber / sky / emerald / rose), but taken at a mid-tone that stays legible when applied
+// as a low-alpha tint on the dark navy surface, instead of the web's pastel `-50` fills
+// which would wash out to near-white here. Kept separate from CapWarningAmber above so a
+// yellow note never reads as a warning. The four keys are the only values the
+// `dashboard_notes_color_valid` CHECK constraint accepts.
+val CapNoteYellow = Color(0xFFFBBF24)
+val CapNoteBlue = Color(0xFF38BDF8)
+val CapNoteGreen = Color(0xFF34D399)
+val CapNotePink = Color(0xFFFB7185)

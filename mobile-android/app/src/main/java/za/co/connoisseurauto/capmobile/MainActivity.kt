@@ -87,6 +87,10 @@ import com.CAPDATABASE.capdatabase.ui.navigation.CapBottomNavigation
 import com.CAPDATABASE.capdatabase.ui.navigation.CapNavDestination
 import com.CAPDATABASE.capdatabase.ui.navigation.CapNavRoute
 import com.CAPDATABASE.capdatabase.ui.navigation.CapTopAppBar
+import com.CAPDATABASE.capdatabase.ui.theme.CapNoteBlue
+import com.CAPDATABASE.capdatabase.ui.theme.CapNoteGreen
+import com.CAPDATABASE.capdatabase.ui.theme.CapNotePink
+import com.CAPDATABASE.capdatabase.ui.theme.CapNoteYellow
 import com.CAPDATABASE.capdatabase.ui.theme.CapSuccessGreen
 import com.CAPDATABASE.capdatabase.ui.theme.CapTheme
 import com.CAPDATABASE.capdatabase.ui.theme.CapWarningAmber
@@ -756,7 +760,7 @@ private fun ScreenContent(
         return
     }
     when (selected) {
-        "Dashboard" -> DashboardScreen(data, user, onNavigate, onOpen)
+        "Dashboard" -> DashboardScreen(data, user, onNavigate, onOpen, vm::save, vm::delete)
         "Clients" -> ClientsScreen(data, user, vm::save, onOpen)
         "Machines" -> MachinesScreen(data, user, vm::save, onOpen)
         "Services" -> ServicesScreen(data, user, vm::save, onOpen)
@@ -1040,7 +1044,9 @@ private fun DashboardScreen(
     data: RecordsState,
     user: CapUser,
     onNavigate: (String) -> Unit,
-    onOpen: (String) -> Unit
+    onOpen: (String) -> Unit,
+    save: (String, String?, Map<String, Any?>, String) -> Unit,
+    delete: (String, String, String) -> Unit
 ) {
     val clients = data.collection("clients")
     val machines = data.collection("machines")
@@ -1220,6 +1226,326 @@ private fun DashboardScreen(
                         ClientSummary(client, relatedRecords(machines, "client_id", client.id))
                     }
                 }
+            }
+        }
+        item {
+            DashboardNotesSection(
+                notes = data.collection("dashboard_notes"),
+                clients = clients,
+                user = user,
+                save = save,
+                delete = delete,
+                onOpen = onOpen
+            )
+        }
+    }
+}
+
+/** Server-side `dashboard_notes_content_length` CHECK (migration 0023) — validated here too so
+ *  an over-long note is caught in the form instead of failing the insert. */
+private const val NOTE_CONTENT_MAX_LENGTH = 2000
+
+/** The only values `dashboard_notes_color_valid` (migration 0023) accepts. Order matters: a new
+ *  note takes `noteColorKeys[noteCount % 4]`, the same round-robin the web client uses so
+ *  consecutive notes don't all come out the same colour. */
+private val noteColorKeys = listOf("yellow", "blue", "green", "pink")
+
+private fun noteAccentColor(colorKey: String): Color = when (colorKey) {
+    "blue" -> CapNoteBlue
+    "green" -> CapNoteGreen
+    "pink" -> CapNotePink
+    // Also the fallback for a blank/unrecognised value, matching the web client's `|| COLORS.yellow`.
+    else -> CapNoteYellow
+}
+
+/** `created_at` arrives as an ISO-8601 timestamp; only its date part is shown, and anything
+ *  unparseable (or a row that has never been written back from the server) shows nothing at all
+ *  rather than a raw string. */
+private fun shortNoteDate(raw: String): String? {
+    val isoDate = raw.take(10)
+    if (isoDate.length < 10) return null
+    return runCatching {
+        val parsed = SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(isoDate) ?: return null
+        SimpleDateFormat("d MMM", Locale.US).format(parsed)
+    }.getOrNull()
+}
+
+/**
+ * Dashboard sticky notes, matching the web client's `StickyNotes.jsx` — embedded at the bottom of
+ * the Dashboard rather than given its own destination, exactly where the web renders it.
+ *
+ * Every signed-in user sees every note; only the note's creator or an admin may edit or delete
+ * one. [canManage] below is a UX hint only — the real gate is Postgres RLS
+ * (`supabase/migrations/0023_dashboard_notes_direct_rls.sql`), which also pins `created_by_name`
+ * server-side, so that field is only ever read back from the record, never assumed from the
+ * local user.
+ */
+@Composable
+private fun DashboardNotesSection(
+    notes: List<CapRecord>,
+    clients: List<CapRecord>,
+    user: CapUser,
+    save: (String, String?, Map<String, Any?>, String) -> Unit,
+    delete: (String, String, String) -> Unit,
+    onOpen: (String) -> Unit
+) {
+    var adding by remember { mutableStateOf(false) }
+    var editing by remember { mutableStateOf<CapRecord?>(null) }
+    var deleting by remember { mutableStateOf<CapRecord?>(null) }
+    val clientsById = clients.associateBy { it.id }
+    val nextColor = noteColorKeys[notes.size % noteColorKeys.size]
+
+    CapCard {
+        CapSectionHeader(
+            title = "Notes",
+            action = {
+                TextButton(onClick = { adding = true }) {
+                    Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(Spacing.xs))
+                    Text("Add note", style = MaterialTheme.typography.labelMedium)
+                }
+            }
+        )
+        if (notes.isEmpty()) {
+            CapEmptyState(
+                "No notes yet. Add a quick reminder — visible to the whole team.",
+                modifier = Modifier.fillMaxWidth().wrapContentHeight()
+            )
+        } else {
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                notes.forEach { note ->
+                    DashboardNoteCard(
+                        note = note,
+                        client = clientsById[note.text("client_id")],
+                        canManage = sameRecordId(note.fields["created_by"], user.id) ||
+                            user.role.equals("admin", ignoreCase = true),
+                        onEdit = { editing = note },
+                        onDelete = { deleting = note },
+                        onOpenClient = { clientId -> onOpen(CapNavRoute.ClientDetail.of(clientId)) }
+                    )
+                }
+            }
+        }
+    }
+
+    if (adding) {
+        NoteDialog(initial = null, clients = clients, onDismiss = { adding = false }) { content, clientId ->
+            // `created_by` must be sent explicitly: the insert policy is
+            // `with check (created_by = auth.uid())`, not a server-side default.
+            save(
+                "dashboard_notes",
+                null,
+                mapOf(
+                    "created_by" to user.id,
+                    "content" to content,
+                    "color" to nextColor,
+                    "client_id" to clientId
+                ),
+                "Note"
+            )
+            adding = false
+        }
+    }
+    editing?.let { note ->
+        NoteDialog(initial = note, clients = clients, onDismiss = { editing = null }) { content, _ ->
+            // Content only, matching the web client — `color`/`client_id`/`created_by_name` are
+            // never re-sent on an edit.
+            save("dashboard_notes", note.id, mapOf("content" to content), "Note")
+            editing = null
+        }
+    }
+    deleting?.let { note ->
+        CapConfirmDialog(
+            title = "Delete note?",
+            message = "This note will be removed for everyone on the team.",
+            confirmLabel = "Delete",
+            onConfirm = { delete("dashboard_notes", note.id, "Note"); deleting = null },
+            onDismiss = { deleting = null }
+        )
+    }
+}
+
+@Composable
+private fun DashboardNoteCard(
+    note: CapRecord,
+    client: CapRecord?,
+    canManage: Boolean,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+    onOpenClient: (String) -> Unit
+) {
+    val accent = noteAccentColor(note.text("color"))
+    val author = note.text("created_by_name").ifBlank { "Someone" }
+    val date = shortNoteDate(note.text("created_at"))
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.medium,
+        colors = CardDefaults.cardColors(containerColor = accent.copy(alpha = 0.14f)),
+        border = BorderStroke(1.dp, accent.copy(alpha = 0.45f))
+    ) {
+        Column(Modifier.fillMaxWidth().padding(Spacing.sm), verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+            Text(
+                note.text("content").ifBlank { "Empty note" },
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 8,
+                overflow = TextOverflow.Ellipsis
+            )
+            if (client != null) {
+                NoteClientBadge(
+                    name = client.text("company_name").ifBlank { "Linked client" },
+                    onClick = { onOpenClient(client.id) }
+                )
+            }
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+            ) {
+                Text(
+                    listOfNotNull(author, date).joinToString(" · "),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                if (canManage) {
+                    IconButton(onClick = onEdit) {
+                        Icon(Icons.Outlined.Edit, "Edit note", Modifier.size(20.dp))
+                    }
+                    IconButton(onClick = onDelete) {
+                        Icon(
+                            Icons.Outlined.DeleteOutline,
+                            "Delete note",
+                            Modifier.size(20.dp),
+                            tint = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** The "linked to a client" chip. Uses the Primary tint rather than the note's own colour so it
+ *  stays legible on all four note backgrounds, matching the web client's decision. */
+@Composable
+private fun NoteClientBadge(name: String, modifier: Modifier = Modifier, onClick: (() -> Unit)? = null) {
+    Row(
+        modifier = modifier
+            .clip(MaterialTheme.shapes.small)
+            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f))
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(horizontal = Spacing.sm, vertical = Spacing.xs),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Spacing.xs)
+    ) {
+        Icon(
+            Icons.Outlined.Business,
+            contentDescription = null,
+            modifier = Modifier.size(14.dp),
+            tint = MaterialTheme.colorScheme.primary
+        )
+        Text(
+            name,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.primary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+/**
+ * Add/edit form for a note. On edit only the content is offered, because the update path sends
+ * nothing else — showing a client picker there would imply a change that would never be saved.
+ */
+@Composable
+private fun NoteDialog(
+    initial: CapRecord?,
+    clients: List<CapRecord>,
+    onDismiss: () -> Unit,
+    onSave: (content: String, clientId: String?) -> Unit
+) {
+    var content by remember(initial) { mutableStateOf(initial?.text("content").orEmpty()) }
+    var linkedClientId by remember(initial) { mutableStateOf("") }
+    var picking by remember(initial) { mutableStateOf(false) }
+    var clientQuery by remember(initial) { mutableStateOf("") }
+
+    val trimmed = content.trim()
+    val tooLong = content.length > NOTE_CONTENT_MAX_LENGTH
+    val linkedClient = clients.firstOrNull { it.id == linkedClientId }
+    val matches = clients
+        .filter { clientQuery.isBlank() || it.text("company_name").contains(clientQuery, ignoreCase = true) }
+        .take(6)
+
+    EditDialog(
+        title = if (initial == null) "Add note" else "Edit note",
+        onDismiss = onDismiss,
+        valid = trimmed.isNotEmpty() && !tooLong,
+        onSave = { onSave(trimmed, linkedClientId.ifBlank { null }) }
+    ) {
+        CapTextField(
+            label = "Note",
+            value = content,
+            onValueChange = { content = it },
+            placeholder = "Type a note…",
+            required = true,
+            singleLine = false,
+            errorMessage = if (tooLong) {
+                "Notes are limited to $NOTE_CONTENT_MAX_LENGTH characters (currently ${content.length})."
+            } else {
+                null
+            }
+        )
+
+        if (initial == null) {
+            when {
+                linkedClient != null -> Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+                ) {
+                    NoteClientBadge(
+                        name = linkedClient.text("company_name").ifBlank { "Linked client" },
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    TextButton(onClick = { linkedClientId = "" }) { Text("Remove") }
+                }
+
+                picking -> {
+                    CapTextField(
+                        label = "Search clients",
+                        value = clientQuery,
+                        onValueChange = { clientQuery = it }
+                    )
+                    if (matches.isEmpty()) {
+                        Text(
+                            if (clients.isEmpty()) "No clients available to link." else "No clients match your search.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        // A plain Column, not a LazyColumn: this sits inside EditDialog's own
+                        // vertical scroll, and the match list is capped at 6.
+                        Column(Modifier.fillMaxWidth()) {
+                            matches.forEach { client ->
+                                CapListItem(
+                                    title = client.text("company_name").ifBlank { "Unnamed client" },
+                                    onClick = {
+                                        linkedClientId = client.id
+                                        picking = false
+                                        clientQuery = ""
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    TextButton(onClick = { picking = false; clientQuery = "" }) { Text("Cancel") }
+                }
+
+                else -> CapSecondaryButton(text = "Link a client (optional)", onClick = { picking = true })
             }
         }
     }
