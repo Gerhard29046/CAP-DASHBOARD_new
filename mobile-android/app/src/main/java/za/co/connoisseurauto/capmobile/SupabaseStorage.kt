@@ -52,23 +52,34 @@ import javax.inject.Singleton
  * this codebase's existing "never log tokens or raw error bodies" convention.
  */
 
-/** The only two valid namespaces -- matches migration 0024's `can_access_service_record_photo`/
- *  `can_access_job_card_photo` prefix checks exactly. */
+/** Valid namespaces -- matches migration 0024's `can_access_service_record_photo`/
+ *  `can_access_job_card_photo` prefix checks, plus 0026's `can_access_profile_photo` (added for
+ *  cross-platform parity Phase 7, profile photos -- same bucket, same path shape, just a third
+ *  namespace: `avatars/{userId}/...`, so no new repository methods were needed at all, only a
+ *  new accepted namespace value here). */
 object RecordPhotoNamespace {
     const val SERVICE_RECORD = "service-records"
     const val JOB_CARD = "job-cards"
+    const val AVATAR = "avatars"
 }
 
 /**
  * Pure path construction, no network/Android dependency -- unit-tested directly. Must exactly
- * match the path shape migration 0024 expects: `{namespace}/{recordId}/{uuid}-{fileName}`,
+ * match the path shape migrations 0024/0026 expect: `{namespace}/{recordId}/{uuid}-{fileName}`,
  * exactly 2 folder segments before the filename. This is the ONLY place a record-photo path is
  * constructed -- callers of [SupabaseStorageRepository.uploadPhoto] supply a namespace + record
  * id, never a raw path, so it is structurally impossible for a caller to construct an arbitrary
- * path that bypasses the intended namespace/record-id design.
+ * path that bypasses the intended namespace/record-id design. For [RecordPhotoNamespace.AVATAR],
+ * `recordId` is the uploading user's own id (`CapUser.id`) -- 0026's RLS only permits a write
+ * where the path's id segment equals `auth.uid()` (or an admin), so a caller passing any other
+ * user's id here will have the upload rejected server-side regardless.
  */
 fun buildRecordPhotoPath(namespace: String, recordId: String, fileName: String): String {
-    require(namespace == RecordPhotoNamespace.SERVICE_RECORD || namespace == RecordPhotoNamespace.JOB_CARD) {
+    require(
+        namespace == RecordPhotoNamespace.SERVICE_RECORD ||
+            namespace == RecordPhotoNamespace.JOB_CARD ||
+            namespace == RecordPhotoNamespace.AVATAR
+    ) {
         "buildRecordPhotoPath: invalid namespace \"$namespace\""
     }
     require(recordId.isNotBlank()) { "buildRecordPhotoPath: recordId is required" }
