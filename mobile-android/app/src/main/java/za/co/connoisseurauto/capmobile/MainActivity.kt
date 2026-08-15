@@ -2814,7 +2814,11 @@ private fun KnowledgeBaseScreen(data: RecordsState, onOpen: (String) -> Unit) {
             }
         }
         items(filteredMachines, key = { it.id }) { machine ->
-            CapCard {
+            val summary = machine.text("summary").ifBlank { null }
+            val cardRefrigerants = stringList(machine.fields["supported_refrigerants"])
+            // The whole card is the tap target (not just the CapListItem row) so the summary and
+            // refrigerant preview below are part of the same drill-in, matching the web card.
+            CapCard(Modifier.clickable { onOpen(CapNavRoute.KnowledgeBaseDetail.of(machine.id)) }) {
                 CapListItem(
                     title = listOfNotNull(
                         machine.text("model_name").ifBlank { null },
@@ -2831,9 +2835,32 @@ private fun KnowledgeBaseScreen(data: RecordsState, onOpen: (String) -> Unit) {
                             modifier = Modifier.widthIn(max = 80.dp)
                         )
                     },
-                    showNavArrow = true,
-                    onClick = { onOpen(CapNavRoute.KnowledgeBaseDetail.of(machine.id)) }
+                    showNavArrow = true
                 )
+                if (summary != null || cardRefrigerants.isNotEmpty()) {
+                    Column(
+                        Modifier.fillMaxWidth().padding(horizontal = Spacing.sm),
+                        verticalArrangement = Arrangement.spacedBy(Spacing.xs)
+                    ) {
+                        if (summary != null) {
+                            Text(
+                                summary,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        if (cardRefrigerants.isNotEmpty()) {
+                            Row(
+                                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(Spacing.xs)
+                            ) {
+                                cardRefrigerants.forEach { refrigerant -> CapStatusBadge(refrigerant, StatusTone.Info) }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -2963,17 +2990,40 @@ private fun KnowledgeBaseDetailScreen(
                     if (media.isEmpty()) {
                         CapEmptyState("No photos yet.", modifier = Modifier.fillMaxWidth().wrapContentHeight())
                     } else {
-                        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-                            media.forEach { photo ->
-                                val fileUrl = photo.text("file_url")
-                                CapListItem(
-                                    title = photo.text("caption").ifBlank { photo.text("original_filename").ifBlank { "Photo" } },
-                                    subtitle = photo.text("original_filename").ifBlank { null },
-                                    showNavArrow = fileUrl.isNotBlank(),
-                                    // Photos open in the app's own viewer rather than a browser;
-                                    // documents below still need an external handler (PDF etc.).
-                                    onClick = if (fileUrl.isNotBlank()) ({ viewerUrl = fileUrl }) else null
-                                )
+                        // Reuses the app's existing PhotoThumbnail + CapPhotoViewerDialog pair
+                        // (same as SignedPhotoStrip) rather than a second photo pattern. Unlike
+                        // service/job photos, knowledge_media.file_url is stored as a complete
+                        // signed URL by the web uploader (frontend/src/api/supabaseApiClient.js's
+                        // integrations.Core.UploadFile), not a Storage path -- so it is loaded
+                        // directly and there is nothing here to sign. An expired URL simply fails
+                        // to load and PhotoThumbnail shows its "unavailable" state.
+                        Row(
+                            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+                        ) {
+                            media.forEachIndexed { index, photo ->
+                                val fileUrl = photo.text("file_url").ifBlank { null }
+                                val label = photo.text("caption")
+                                    .ifBlank { photo.text("original_filename") }
+                                    .ifBlank { "Photo ${index + 1}" }
+                                Column(
+                                    Modifier.width(88.dp),
+                                    verticalArrangement = Arrangement.spacedBy(Spacing.xs)
+                                ) {
+                                    PhotoThumbnail(
+                                        url = fileUrl,
+                                        resolving = false,
+                                        contentDescription = "$label. Photo ${index + 1} of ${media.size}. Tap to view full screen.",
+                                        onClick = { fileUrl?.let { viewerUrl = it } }
+                                    )
+                                    Text(
+                                        label,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
                             }
                         }
                     }
