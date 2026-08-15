@@ -91,6 +91,19 @@
   touch target is below Material's 48dp minimum — flagged as a disclosed tradeoff (a 48dp
   target on an 80dp thumbnail would cover over a third of it), not silently fixed.
 
+**UPDATE (2026-08-15, round 2, commit `95e7c1c`) — all three deferred items resolved, also
+real-build-verified**: the 32dp touch target is now a 48dp tap area (nested Box, visible scrim
+unchanged at 32dp — disclosed tradeoff: the tap region is now the thumbnail's whole top-right
+48×48 corner, ~36% of an 80dp tile, inherent to a compliant target at that tile size, only
+affects not-yet-uploaded picked photos which are trivially re-pickable); `SimpleRecordsScreen`
+(Users) now has the same `CapSearchField` pattern as every other list screen; the Google
+Calendar empty state no longer references the deleted web System Settings page (feature/section/
+`GoogleCalendarRepository` itself untouched, that removal stays a separate Phase I call).
+`testing-bee` reused the Avast trust-store workaround for another real build: 23/23 unit tests,
+0 lint errors/31 pre-existing warnings (caught and corrected its own stale-lint-report near-miss
+before reporting), real 26MB APK. Still unverified: on-device/runtime behavior for all of Phase
+F (compilation/packaging proven, actual device behavior not).
+
 ## Web: photo click opens a new browser tab instead of an in-app viewer — logged, deferred (found 2026-08-15, user real-world testing)
 
 - User: photo upload/display works correctly end-to-end on `frontend/`, but clicking an
