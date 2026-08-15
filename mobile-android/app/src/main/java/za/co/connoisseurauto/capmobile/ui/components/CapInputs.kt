@@ -1,6 +1,7 @@
 package com.CAPDATABASE.capdatabase.ui.components
 
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Clear
@@ -23,6 +24,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -41,6 +43,8 @@ fun CapTextField(
     singleLine: Boolean = true,
     enabled: Boolean = true,
     keyboardType: KeyboardType = KeyboardType.Text,
+    imeAction: ImeAction = ImeAction.Default,
+    keyboardActions: KeyboardActions = KeyboardActions.Default,
     errorMessage: String? = null
 ) {
     OutlinedTextField(
@@ -53,7 +57,8 @@ fun CapTextField(
         enabled = enabled,
         isError = errorMessage != null,
         supportingText = errorMessage?.let { { Text(it) } },
-        keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
+        keyboardOptions = KeyboardOptions(keyboardType = keyboardType, imeAction = imeAction),
+        keyboardActions = keyboardActions,
         shape = MaterialTheme.shapes.medium
     )
 }
@@ -64,7 +69,10 @@ fun CapPasswordField(
     value: String,
     onValueChange: (String) -> Unit,
     modifier: Modifier = Modifier,
-    label: String = "Password"
+    label: String = "Password",
+    enabled: Boolean = true,
+    imeAction: ImeAction = ImeAction.Default,
+    keyboardActions: KeyboardActions = KeyboardActions.Default
 ) {
     var visible by remember { mutableStateOf(false) }
     OutlinedTextField(
@@ -73,10 +81,12 @@ fun CapPasswordField(
         modifier = modifier.fillMaxWidth(),
         label = { Text(label) },
         singleLine = true,
+        enabled = enabled,
         visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = imeAction),
+        keyboardActions = keyboardActions,
         trailingIcon = {
-            IconButton(onClick = { visible = !visible }) {
+            IconButton(onClick = { visible = !visible }, enabled = enabled) {
                 Icon(
                     if (visible) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
                     contentDescription = if (visible) "Hide password" else "Show password"
@@ -99,7 +109,8 @@ fun CapDropdownField(
     selectedKey: String,
     onSelected: (String) -> Unit,
     modifier: Modifier = Modifier,
-    required: Boolean = false
+    required: Boolean = false,
+    errorMessage: String? = null
 ) {
     var expanded by remember { mutableStateOf(false) }
     val selectedLabel = options.firstOrNull { it.first == selectedKey }?.second
@@ -113,6 +124,8 @@ fun CapDropdownField(
             onValueChange = {},
             readOnly = true,
             label = { Text(label + if (required) " *" else "") },
+            isError = errorMessage != null,
+            supportingText = errorMessage?.let { { Text(it) } },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
             modifier = Modifier
                 .fillMaxWidth()
@@ -167,7 +180,8 @@ fun CapDateField(
     onValueChange: (String) -> Unit,
     modifier: Modifier = Modifier,
     required: Boolean = false,
-    placeholder: String = "YYYY-MM-DD"
+    placeholder: String = "YYYY-MM-DD",
+    errorMessage: String? = null
 ) {
     OutlinedTextField(
         value = value,
@@ -176,6 +190,8 @@ fun CapDateField(
         label = { Text(label + if (required) " *" else "") },
         placeholder = { Text(placeholder) },
         singleLine = true,
+        isError = errorMessage != null,
+        supportingText = errorMessage?.let { { Text(it) } },
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
         shape = MaterialTheme.shapes.medium
     )

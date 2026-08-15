@@ -95,6 +95,35 @@ fun CapErrorState(
     }
 }
 
+/**
+ * Inline failure message for a section or a whole form — sign-in failures, photo-upload
+ * failures, and similar. Field-level validation belongs in the field's own `errorMessage`
+ * instead; this is the treatment for everything that has no single field to attach to.
+ */
+@Composable
+fun CapInlineError(message: String, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.error.copy(alpha = 0.16f), MaterialTheme.shapes.medium)
+            .padding(horizontal = Spacing.sm, vertical = Spacing.sm),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+    ) {
+        Icon(
+            Icons.Outlined.ErrorOutline,
+            contentDescription = null,
+            modifier = Modifier.size(18.dp),
+            tint = MaterialTheme.colorScheme.error
+        )
+        Text(
+            message,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error
+        )
+    }
+}
+
 /** Slim banner communicating an offline state. Dismiss logic is a later-phase concern. */
 @Composable
 fun CapOfflineBanner(modifier: Modifier = Modifier) {

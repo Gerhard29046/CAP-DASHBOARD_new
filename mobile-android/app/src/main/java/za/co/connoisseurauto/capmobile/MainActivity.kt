@@ -19,8 +19,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.*
 import androidx.compose.material.icons.outlined.*
@@ -29,13 +28,17 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -60,6 +63,7 @@ import com.CAPDATABASE.capdatabase.ui.components.CapDetailField
 import com.CAPDATABASE.capdatabase.ui.components.CapDropdownField
 import com.CAPDATABASE.capdatabase.ui.components.CapEmptyState
 import com.CAPDATABASE.capdatabase.ui.components.CapErrorState
+import com.CAPDATABASE.capdatabase.ui.components.CapInlineError
 import com.CAPDATABASE.capdatabase.ui.components.CapKeyValueRow
 import com.CAPDATABASE.capdatabase.ui.components.CapListItem
 import com.CAPDATABASE.capdatabase.ui.components.CapLoadingState
@@ -263,6 +267,16 @@ fun CapApp(vm: MainViewModel = hiltViewModel()) {
 fun LoginScreen(error: String?, loading: Boolean, login: (String, String) -> Unit) {
     var email by remember { mutableStateOf(BuildConfig.DEFAULT_LOGIN_EMAIL) }
     var password by remember { mutableStateOf("") }
+    val focusManager = LocalFocusManager.current
+    val canSubmit = !loading && email.isNotBlank() && password.isNotBlank()
+    // Clearing focus also dismisses the keyboard, so the button-press and the keyboard's own
+    // "Done" action both leave the screen in the same state while the request is in flight.
+    val submit: () -> Unit = {
+        if (canSubmit) {
+            focusManager.clearFocus()
+            login(email.trim(), password)
+        }
+    }
     LazyColumn(
         Modifier
             .fillMaxSize()
@@ -278,35 +292,31 @@ fun LoginScreen(error: String?, loading: Boolean, login: (String, String) -> Uni
                 Modifier.widthIn(max = 460.dp),
             ) {
                 Column(
-                    Modifier.fillMaxWidth(),
+                    Modifier.fillMaxWidth().padding(vertical = Spacing.sm),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(Spacing.md)
                 ) {
-                    Icon(Icons.Outlined.Engineering, null, Modifier.size(48.dp), tint = MaterialTheme.colorScheme.primary)
-                    Text("CAP Mobile", style = MaterialTheme.typography.headlineMedium)
-                    Text(
-                        "Connoisseur Automotive Products",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    LoginIdentity()
                     CapTextField(
                         label = "Email Address",
                         value = email,
                         onValueChange = { email = it },
-                        keyboardType = KeyboardType.Email
+                        enabled = !loading,
+                        keyboardType = KeyboardType.Email,
+                        imeAction = ImeAction.Next,
+                        keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) })
                     )
-                    CapPasswordField(value = password, onValueChange = { password = it })
-                    error?.let {
-                        Text(
-                            it,
-                            color = MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.bodySmall,
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                        )
-                    }
+                    CapPasswordField(
+                        value = password,
+                        onValueChange = { password = it },
+                        enabled = !loading,
+                        imeAction = ImeAction.Done,
+                        keyboardActions = KeyboardActions(onDone = { submit() })
+                    )
+                    error?.let { CapInlineError(it) }
                     CapPrimaryButton(
                         text = "Sign In",
-                        onClick = { login(email.trim(), password) },
+                        onClick = submit,
                         enabled = email.isNotBlank() && password.isNotBlank(),
                         loading = loading
                     )
@@ -318,6 +328,51 @@ fun LoginScreen(error: String?, loading: Boolean, login: (String, String) -> Uni
                 }
             }
         }
+    }
+}
+
+/**
+ * The sign-in identity lockup: the app mark in a Primary-tinted container, the product name,
+ * then the company name. The tinted container is the same low-alpha treatment
+ * [CapQuickActionCard] and [CapStatusBadge] use, so the first screen of the app already reads as
+ * the same product as everything behind it. Grouped in its own tighter-spaced column so the
+ * three parts read as one mark rather than three evenly spaced items.
+ */
+@Composable
+private fun LoginIdentity() {
+    Column(
+        Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(Spacing.xs)
+    ) {
+        Box(
+            Modifier
+                .size(72.dp)
+                .background(
+                    MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
+                    MaterialTheme.shapes.extraLarge
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                Icons.Outlined.Engineering,
+                contentDescription = null,
+                modifier = Modifier.size(36.dp),
+                tint = MaterialTheme.colorScheme.primary
+            )
+        }
+        Text(
+            "CAP Mobile",
+            style = MaterialTheme.typography.headlineLarge,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(top = Spacing.sm)
+        )
+        Text(
+            "Connoisseur Automotive Products",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center
+        )
     }
 }
 
@@ -1376,7 +1431,7 @@ private fun PhotoThumbnail(
     Box(
         Modifier
             .size(size)
-            .clip(RoundedCornerShape(12.dp))
+            .clip(MaterialTheme.shapes.large)
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .then(if (openable) Modifier.clickable(onClick = onClick) else Modifier),
         contentAlignment = Alignment.Center
@@ -1396,7 +1451,34 @@ private fun PhotoThumbnail(
                 onState = { state -> if (state is AsyncImagePainter.State.Error) failed = true }
             )
         }
+        if (openable) ViewPhotoHint()
         trailing()
+    }
+}
+
+/**
+ * Corner glyph marking a loaded thumbnail as openable — without it a loaded photo looks exactly
+ * like a decorative image. Deliberately bottom-start: [RemovePhotoButton] occupies the top-end
+ * corner on upload previews, so the two affordances never sit on top of each other. The dark
+ * scrim is what keeps it legible over an arbitrary photo, same reasoning as the remove button.
+ */
+@Composable
+private fun BoxScope.ViewPhotoHint() {
+    Box(
+        Modifier
+            .align(Alignment.BottomStart)
+            .padding(Spacing.xs)
+            .size(22.dp)
+            .clip(CircleShape)
+            .background(Color.Black.copy(alpha = 0.55f)),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            Icons.Outlined.ZoomIn,
+            contentDescription = null,
+            tint = Color.White,
+            modifier = Modifier.size(14.dp)
+        )
     }
 }
 
@@ -1617,39 +1699,25 @@ private fun LogNewServiceScreen(
                     options = availableMachines.map { it.id to machineTitle(it) },
                     selectedKey = machineId,
                     onSelected = { machineId = it },
-                    required = true
+                    required = true,
+                    errorMessage = if (machineError) "Machine is required." else null
                 )
-                if (machineError) {
-                    Text(
-                        "Machine is required.",
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
                 CapDateField(
                     label = "Service date",
                     value = date,
                     onValueChange = { date = it },
-                    required = true
+                    required = true,
+                    errorMessage = if (dateError) "Service date is required." else null
                 )
-                if (dateError) {
-                    Text(
-                        "Service date is required.",
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
                 CapTextField(label = "Technician", value = technician, onValueChange = { technician = it })
                 CapTextField(label = "Work performed", value = workPerformed, onValueChange = { workPerformed = it })
-                CapTextField(label = "Next service due", value = nextServiceDue, onValueChange = { nextServiceDue = it })
+                CapDateField(label = "Next service due", value = nextServiceDue, onValueChange = { nextServiceDue = it })
             }
         }
         CapCard {
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
                 CapSectionHeader("Photos")
-                if (photoError != null) {
-                    Text(photoError!!, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-                }
+                photoError?.let { CapInlineError(it) }
                 if (photos.isEmpty()) {
                     Text(
                         if (machineId.isBlank()) "Select a machine to start adding photos."
@@ -1818,29 +1886,17 @@ private fun BookInScreen(
                         clientId = selected
                         machineId = machines.firstOrNull { sameRecordId(it.fields["client_id"], selected) }?.id.orEmpty()
                     },
-                    required = true
+                    required = true,
+                    errorMessage = if (clientError) "Client is required." else null
                 )
-                if (clientError) {
-                    Text(
-                        "Client is required.",
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
                 CapDropdownField(
                     label = "Machine",
                     options = availableMachines.map { it.id to machineTitle(it) },
                     selectedKey = machineId,
                     onSelected = { machineId = it },
-                    required = true
+                    required = true,
+                    errorMessage = if (machineError) "Machine is required." else null
                 )
-                if (machineError) {
-                    Text(
-                        "Machine is required.",
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
                 CapDateField(
                     label = "Date received",
                     value = date,
@@ -1848,22 +1904,19 @@ private fun BookInScreen(
                     required = true
                 )
                 CapTextField(label = "Technician", value = technician, onValueChange = { technician = it })
-                CapTextField(label = "Fault description", value = fault, onValueChange = { fault = it })
-                if (faultError) {
-                    Text(
-                        "Fault description is required.",
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
+                CapTextField(
+                    label = "Fault description",
+                    value = fault,
+                    onValueChange = { fault = it },
+                    required = true,
+                    errorMessage = if (faultError) "Fault description is required." else null
+                )
             }
         }
         CapCard {
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
                 CapSectionHeader("Arrival Photos")
-                if (photoError != null) {
-                    Text(photoError!!, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-                }
+                photoError?.let { CapInlineError(it) }
                 if (photos.isEmpty()) {
                     Text(
                         if (clientId.isBlank() || machineId.isBlank()) "Select a client and machine to start adding photos."
@@ -2514,9 +2567,9 @@ private fun KnowledgeBaseDetailScreen(
                         }
                     }
                     if (canManage) {
-                        Column(Modifier.fillMaxWidth().padding(top = Spacing.sm), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-                            CapTextField(label = "Title", value = noteTitle, onValueChange = { noteTitle = it })
-                            CapTextField(label = "Content", value = noteContent, onValueChange = { noteContent = it }, singleLine = false)
+                        Column(Modifier.fillMaxWidth().padding(top = Spacing.sm), verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                            CapTextField(label = "Title", value = noteTitle, onValueChange = { noteTitle = it }, required = true)
+                            CapTextField(label = "Content", value = noteContent, onValueChange = { noteContent = it }, required = true, singleLine = false)
                             CapSecondaryButton(
                                 text = "Add Note",
                                 enabled = noteTitle.isNotBlank() && noteContent.isNotBlank(),
@@ -2712,10 +2765,10 @@ private fun ServiceDialog(machines: List<CapRecord>, initial: CapRecord?, onDism
         onSave(mapOf("machine_id" to machineId, "service_date" to date, "technician_name" to technician.trim(), "work_performed" to work.trim(), "next_service_due" to nextDue.trim()))
     }) {
         SelectInput("Machine", machines.map { it.id to machineTitle(it) }, machineId) { machineId = it }
-        TextInput("Service date (YYYY-MM-DD)", date, { date = it }, true)
+        CapDateField("Service date", date, { date = it }, required = true)
         TextInput("Technician", technician, { technician = it })
         TextInput("Work performed", work, { work = it })
-        TextInput("Next service due", nextDue, { nextDue = it })
+        CapDateField("Next service due", nextDue, { nextDue = it })
     }
 }
 
