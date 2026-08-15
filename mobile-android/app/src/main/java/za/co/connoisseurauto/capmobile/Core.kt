@@ -48,7 +48,11 @@ data class CapUser(
     val email: String,
     val role: String,
     val active: Boolean,
-    val permissions: Set<String> = emptySet()
+    val permissions: Set<String> = emptySet(),
+    /** Permanent Storage object path (never a signed URL) -- cross-platform parity Phase 7,
+     *  see `public.users.photo_path` (migration 0026, NOT yet applied). Null until a user
+     *  uploads a photo, or on any account this app hasn't re-fetched since 0026 landed. */
+    val photoPath: String? = null
 ) {
     fun hasPermission(key: String) = key in permissions
     fun hasAnyPermission(keys: Collection<String>) = keys.any(::hasPermission)

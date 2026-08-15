@@ -118,7 +118,8 @@ class MainViewModel @Inject constructor(
     private val auth: AuthRepository,
     private val statusRepo: StatusRepository,
     private val recordsRepository: RecordsRepository,
-    private val storageRepository: SupabaseStorageRepository
+    private val storageRepository: SupabaseStorageRepository,
+    private val avatarRepository: SupabaseAvatarRepository
 ) : ViewModel() {
     var state by mutableStateOf(AuthState())
         private set
@@ -246,6 +247,20 @@ class MainViewModel @Inject constructor(
     /** Best-effort Storage delete. Callers must remove the path from the record's array via
      *  [save] regardless of whether this succeeds. */
     suspend fun deleteRecordPhoto(path: String) = storageRepository.deletePhoto(path)
+
+    /** Uploads (overwriting any previous avatar) and returns the permanent path. The caller
+     *  persists this into `public.users.photo_path` via [save] (`"users"`, the signed-in user's
+     *  own id) -- never persist the result of [createAvatarSignedUrl]. */
+    suspend fun uploadAvatar(userId: String, bytes: ByteArray, contentType: String): String =
+        avatarRepository.uploadAvatar(userId, bytes, contentType)
+
+    /** Fresh signed URL for displaying an already-stored avatar path -- never persist the
+     *  result, it expires; the stored path does not. */
+    suspend fun createAvatarSignedUrl(path: String): String = avatarRepository.createAvatarSignedUrl(path)
+
+    /** Best-effort Storage delete for "remove my photo". Callers must clear
+     *  `public.users.photo_path` via [save] regardless of whether this succeeds. */
+    suspend fun deleteAvatar(path: String) = avatarRepository.deleteAvatar(path)
 
     fun clearMessage() { actionMessage = null }
     fun checkHealth() = viewModelScope.launch { statusRepo.checkHealth() }

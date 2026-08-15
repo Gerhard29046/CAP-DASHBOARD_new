@@ -81,6 +81,23 @@ private const val EXPIRY_SKEW_MS = 60_000L
 private const val FALLBACK_TTL_MS = 5 * 60_000L
 
 /**
+ * Shared `select=` column list for [SupabaseAuthRepository.loadProfile]/[SupabaseAuthRepository.updateProfile]
+ * so the two can never silently drift into parsing/returning a different row shape.
+ *
+ * DELIBERATELY does NOT include `photo_path` yet, even though [CapUser]/[JSONObject.toCapUser]
+ * already have the field wired end-to-end (cross-platform parity Phase 7) -- this SELECT clause
+ * runs on every single login and session restore, unconditionally. Adding an unknown column to
+ * it would make PostgREST 400 that request outright, which would break EVERY login app-wide the
+ * moment this shipped, not just the new photo feature -- a fundamentally bigger blast radius than
+ * a write payload for a not-yet-applied migration (which only fails the one save it's part of).
+ * Migration 0026 (`public.users.photo_path`) is written but genuinely NOT applied as of this
+ * comment. Add `,photo_path` to this constant ONLY after 0026 is confirmed live -- until then,
+ * `CapUser.photoPath` will simply always be null (the JSON key is absent, `optStringOrNull`
+ * degrades to null gracefully), which is safe, not broken.
+ */
+private const val PROFILE_COLUMNS = "id,email,full_name,role,is_active,effective_permissions"
+
+/**
  * @param isNetworkError the request never reached Supabase (connectivity/timeout). Transient --
  *        must NOT be treated as "the session is gone", or a tunnel ride would sign the user out.
  * @param isSessionExpired the session is genuinely, terminally unusable (refresh token expired,
@@ -279,7 +296,7 @@ class SupabaseAuthRepository @Inject constructor(
     /** Loads the caller's own `public.users` row via PostgREST, authorized by their own
      *  access token (RLS-gated, never the service-role key). */
     suspend fun loadProfile(userId: String): CapUser = withContext(Dispatchers.IO) {
-        val url = "$baseUrl/rest/v1/users?id=eq.$userId&select=id,email,full_name,role,is_active,effective_permissions"
+        val url = "$baseUrl/rest/v1/users?id=eq.$userId&select=$PROFILE_COLUMNS"
         // Same refresh-once-then-retry-once contract as SupabaseData: a 401 here (long-idle app
         // resumed, token aged out) gets one refresh and one retry, never a loop.
         var token = validAccessToken()
@@ -292,6 +309,48 @@ class SupabaseAuthRepository @Inject constructor(
         }
         val rows = JSONArray(body)
         if (rows.length() == 0) throw SupabaseAuthException("User profile not found.")
+        rows.getJSONObject(0).toCapUser()
+    }
+
+    /**
+     * Cross-platform parity Phase 7 (Account editing + profile photo). Updates the caller's OWN
+     * `public.users` row -- deliberately a direct PostgREST call here, in the same file/class as
+     * [loadProfile], rather than routed through [RecordsRepository]'s generic
+     * `update("users", ...)`. That generic path still targets Firestore for `"users"` (it is not
+     * in [SUPABASE_MIGRATED_TABLES] yet -- the separate, still-read-only "Users" list screen is
+     * the ONLY thing that still legitimately reads Firestore's `users` collection, per Core.kt's
+     * own KDoc on that distinction) -- routing a real profile edit through it would silently
+     * write to the wrong backend, or fail outright. The signed-in user's OWN identity has always
+     * come from here (`loadProfile`, PostgREST), authoritatively, since Phase C; this is simply
+     * the write side of that same, already-correct path.
+     *
+     * `fields` is intentionally narrow at the call-site level (only `full_name`/`photo_path` are
+     * meant to be sent) but this method itself does not enforce that allowlist -- the real
+     * enforcement is `restrict_self_user_update_trigger` (`0002_rls_policies.sql`), which already
+     * rejects a non-admin self-update touching role/is_active/effective_permissions/email. A
+     * caller attempting to smuggle one of those through here gets a real server-side rejection,
+     * not a silently-accepted no-op.
+     *
+     * Uses PATCH with `Prefer: return=representation` so the updated row (including anything the
+     * server changed, e.g. `updated_at`) comes back in one round-trip, parsed the same way
+     * [loadProfile] parses a fetch -- callers should replace their in-memory [CapUser] with this
+     * method's result rather than assuming their own submitted values took effect verbatim.
+     */
+    suspend fun updateProfile(userId: String, fields: Map<String, String?>): CapUser = withContext(Dispatchers.IO) {
+        val url = "$baseUrl/rest/v1/users?id=eq.$userId&select=$PROFILE_COLUMNS"
+        val body = JSONObject().apply {
+            fields.forEach { (key, value) -> put(key, value ?: JSONObject.NULL) }
+        }
+        var token = validAccessToken()
+        val responseText = try {
+            patchJson(url, body, token.value)
+        } catch (error: SupabaseAuthException) {
+            if (!error.isUnauthorized) throw error
+            token = refreshAfterUnauthorized(token)
+            patchJson(url, body, token.value)
+        }
+        val rows = JSONArray(responseText)
+        if (rows.length() == 0) throw SupabaseAuthException("Unable to update your profile.")
         rows.getJSONObject(0).toCapUser()
     }
 
@@ -317,6 +376,31 @@ class SupabaseAuthRepository @Inject constructor(
             connection.setRequestProperty("Content-Type", "application/json")
             connection.setRequestProperty("Accept", "application/json")
             if (authToken != null) connection.setRequestProperty("Authorization", "Bearer $authToken")
+            connection.connectTimeout = 15_000
+            connection.readTimeout = 20_000
+            OutputStreamWriter(connection.outputStream, Charsets.UTF_8).use { it.write(body.toString()) }
+            return readResponse(connection)
+        } catch (error: IOException) {
+            throw SupabaseAuthException("Network unavailable. Please check your connection.", isNetworkError = true)
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    /** Same shape as [postJson], but PATCH and with `Prefer: return=representation` so PostgREST
+     *  returns the updated row instead of an empty 204 -- [updateProfile] needs the server's own
+     *  view of the row back (e.g. its own `updated_at`), not just an assumption the submitted
+     *  values took effect verbatim. */
+    private fun patchJson(urlString: String, body: JSONObject, authToken: String): String {
+        val connection = URL(urlString).openConnection() as HttpURLConnection
+        try {
+            connection.requestMethod = "PATCH"
+            connection.doOutput = true
+            connection.setRequestProperty("apikey", anonKey)
+            connection.setRequestProperty("Content-Type", "application/json")
+            connection.setRequestProperty("Accept", "application/json")
+            connection.setRequestProperty("Prefer", "return=representation")
+            connection.setRequestProperty("Authorization", "Bearer $authToken")
             connection.connectTimeout = 15_000
             connection.readTimeout = 20_000
             OutputStreamWriter(connection.outputStream, Charsets.UTF_8).use { it.write(body.toString()) }
@@ -402,7 +486,9 @@ private fun JSONObject.toCapUser(): CapUser {
         email = optStringOrNull("email") ?: "",
         role = optStringOrNull("role") ?: "",
         active = optBoolean("is_active", false),
-        permissions = permissions
+        permissions = permissions,
+        // Absent entirely (0026 not applied yet) and blank both parse the same way: no photo.
+        photoPath = optStringOrNull("photo_path")
     )
 }
 

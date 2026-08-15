@@ -52,33 +52,30 @@ import javax.inject.Singleton
  * this codebase's existing "never log tokens or raw error bodies" convention.
  */
 
-/** Valid namespaces -- matches migration 0024's `can_access_service_record_photo`/
- *  `can_access_job_card_photo` prefix checks, plus 0026's `can_access_profile_photo` (added for
- *  cross-platform parity Phase 7, profile photos -- same bucket, same path shape, just a third
- *  namespace: `avatars/{userId}/...`, so no new repository methods were needed at all, only a
- *  new accepted namespace value here). */
+/** The only two valid namespaces -- matches migration 0024's `can_access_service_record_photo`/
+ *  `can_access_job_card_photo` prefix checks exactly. Profile photos (cross-platform parity
+ *  Phase 7) deliberately do NOT use this namespace/path shape -- they reuse the pre-existing
+ *  `profile-images` bucket instead, which already has a different, simpler, one-file-per-user
+ *  path convention (`{auth.uid()}/...`, no per-upload UUID) established in
+ *  `0004_storage_buckets.sql` before this session, matching the web client's already-existing
+ *  (if previously unwired) `uploadProfileImage()`. See [SupabaseAvatarRepository] below. */
 object RecordPhotoNamespace {
     const val SERVICE_RECORD = "service-records"
     const val JOB_CARD = "job-cards"
-    const val AVATAR = "avatars"
 }
 
 /**
  * Pure path construction, no network/Android dependency -- unit-tested directly. Must exactly
- * match the path shape migrations 0024/0026 expect: `{namespace}/{recordId}/{uuid}-{fileName}`,
+ * match the path shape migration 0024 expects: `{namespace}/{recordId}/{uuid}-{fileName}`,
  * exactly 2 folder segments before the filename. This is the ONLY place a record-photo path is
  * constructed -- callers of [SupabaseStorageRepository.uploadPhoto] supply a namespace + record
  * id, never a raw path, so it is structurally impossible for a caller to construct an arbitrary
- * path that bypasses the intended namespace/record-id design. For [RecordPhotoNamespace.AVATAR],
- * `recordId` is the uploading user's own id (`CapUser.id`) -- 0026's RLS only permits a write
- * where the path's id segment equals `auth.uid()` (or an admin), so a caller passing any other
- * user's id here will have the upload rejected server-side regardless.
+ * path that bypasses the intended namespace/record-id design.
  */
 fun buildRecordPhotoPath(namespace: String, recordId: String, fileName: String): String {
     require(
         namespace == RecordPhotoNamespace.SERVICE_RECORD ||
-            namespace == RecordPhotoNamespace.JOB_CARD ||
-            namespace == RecordPhotoNamespace.AVATAR
+            namespace == RecordPhotoNamespace.JOB_CARD
     ) {
         "buildRecordPhotoPath: invalid namespace \"$namespace\""
     }
@@ -238,6 +235,183 @@ class SupabaseStorageRepository @Inject constructor(
     }
 
     /** Upload/delete responses aren't parsed, but the stream must still be drained/closed. */
+    private fun drainForClose(connection: HttpURLConnection, code: Int) {
+        val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+        stream?.use { it.readBytes() }
+    }
+}
+
+/**
+ * Cross-platform parity Phase 7 (profile photo). Deliberately a separate, small class rather
+ * than another [SupabaseStorageRepository] namespace -- the `profile-images` bucket
+ * (`0004_storage_buckets.sql`) has a genuinely different contract from the `photos` bucket
+ * [SupabaseStorageRepository] already owns: one fixed path per user (`{userId}/avatar.webp`,
+ * always the same object, upsert-overwritten on every re-upload) rather than an ever-growing
+ * set of uniquely-named record photos. Reuses that bucket rather than creating a new one or
+ * bending it to fit the record-photo shape -- matches the web client's own pre-existing (if
+ * previously unwired) `uploadProfileImage()` (`frontend/src/services/supabase/storage.js`),
+ * same bucket, same one-file-per-user path.
+ *
+ * `photo_path` (`public.users.photo_path`, migration 0026, NOT YET APPLIED as of this file being
+ * written) stores this permanent path, never a signed URL -- same permanent-path/sign-at-display
+ * discipline as [SupabaseStorageRepository], deliberately not the 7-day-signed-URL mistake found
+ * live in Knowledge Base uploads this same session (see docs/ai-memory/KNOWN_ISSUES.md).
+ *
+ * WIRE FORMAT NOTE, disclosed rather than asserted as confirmed: upload uses an `x-upsert: true`
+ * header on the same `POST {baseUrl}/storage/v1/object/profile-images/{path}` shape
+ * [SupabaseStorageRepository.uploadBytes] already uses and has confirmed live for the `photos`
+ * bucket -- `x-upsert` is Supabase Storage's documented mechanism for "overwrite if exists"
+ * instead of a create-only POST erroring on conflict. Unlike every other wire-format detail in
+ * this file, this one has NOT been independently confirmed against the live project, because
+ * migration 0026 (which changes `profile-images`' RLS to actually permit this feature to work at
+ * all) has not been applied yet -- there is no live policy to test an upload against until then.
+ * Verify this specific detail for real once 0026 is applied, rather than trusting this comment.
+ */
+@Singleton
+class SupabaseAvatarRepository @Inject constructor(
+    private val supabaseAuth: SupabaseAuthRepository
+) {
+    private val baseUrl = BuildConfig.SUPABASE_URL
+    private val anonKey = BuildConfig.SUPABASE_ANON_KEY
+
+    private companion object {
+        const val BUCKET = "profile-images"
+        const val FILE_NAME = "avatar.webp"
+    }
+
+    /** Always the same path for a given user -- matches `profile-images`' existing
+     *  `{auth.uid()}/...` RLS path convention (0004_storage_buckets.sql), one folder segment,
+     *  no per-upload uniqueness. Re-uploading replaces the previous avatar at the same path. */
+    fun avatarPath(userId: String): String {
+        require(userId.isNotBlank()) { "avatarPath: userId is required" }
+        return "$userId/$FILE_NAME"
+    }
+
+    /** Uploads (overwriting any existing avatar) and returns the permanent path -- the caller
+     *  persists this into `public.users.photo_path` via the existing generic
+     *  `RecordsRepository.update("users", userId, mapOf("photo_path" to path))`, never a signed
+     *  URL. [userId] must be the caller's own id -- 0026's RLS permits a write only where the
+     *  path's id segment equals `auth.uid()` (or an admin), so uploading under any other id is
+     *  rejected server-side regardless of what this method is given. */
+    suspend fun uploadAvatar(userId: String, bytes: ByteArray, contentType: String): String =
+        withContext(Dispatchers.IO) {
+            val path = avatarPath(userId)
+            withAuth { token -> uploadBytes(path, bytes, contentType, token) }
+            path
+        }
+
+    /** Fresh signed URL for displaying an already-known avatar path. Never persist the result. */
+    suspend fun createAvatarSignedUrl(path: String, expiresInSeconds: Long = 3_600L): String =
+        withContext(Dispatchers.IO) {
+            withAuth { token -> signUrl(path, expiresInSeconds, token) }
+        }
+
+    /** Best-effort delete (e.g. "remove my photo"). Callers must clear `photo_path` via their
+     *  own `update()` regardless of whether this succeeds, same contract as
+     *  [SupabaseStorageRepository.deletePhoto]. */
+    suspend fun deleteAvatar(path: String): Unit = withContext(Dispatchers.IO) {
+        withAuth { token -> deleteObject(path, token) }
+    }
+
+    /** Same refresh-once-then-retry-once contract every Supabase REST file in this codebase
+     *  duplicates independently -- see [SupabaseStorageRepository.withAuth]'s identical comment
+     *  for why this isn't shared/extracted. */
+    private suspend fun <T> withAuth(block: (String) -> T): T {
+        val token = try {
+            supabaseAuth.validAccessToken()
+        } catch (error: SupabaseAuthException) {
+            throw error.asStorageException()
+        }
+        return try {
+            block(token.value)
+        } catch (_: StorageUnauthorizedException) {
+            val refreshed = try {
+                supabaseAuth.refreshAfterUnauthorized(token)
+            } catch (error: SupabaseAuthException) {
+                throw error.asStorageException()
+            }
+            try {
+                block(refreshed.value)
+            } catch (_: StorageUnauthorizedException) {
+                throw SessionExpiredException("Your session has expired. Sign in again.")
+            }
+        }
+    }
+
+    private fun uploadBytes(path: String, bytes: ByteArray, contentType: String, token: String) {
+        val connection = URL("$baseUrl/storage/v1/object/$BUCKET/$path").openConnection() as HttpURLConnection
+        try {
+            connection.requestMethod = "POST"
+            connection.doOutput = true
+            connection.setRequestProperty("apikey", anonKey)
+            connection.setRequestProperty("Authorization", "Bearer $token")
+            connection.setRequestProperty("Content-Type", contentType)
+            // See this class's own KDoc: unlike every other header in this file, x-upsert has
+            // not been independently confirmed live yet (0026 isn't applied).
+            connection.setRequestProperty("x-upsert", "true")
+            connection.connectTimeout = 15_000
+            connection.readTimeout = 30_000
+            connection.outputStream.use { it.write(bytes) }
+            val code = connection.responseCode
+            drainForClose(connection, code)
+            if (code == 401) throw StorageUnauthorizedException()
+            if (code !in 200..299) throw ApiException("Unable to upload your photo. Please try again.")
+        } catch (error: IOException) {
+            throw ApiException("Network unavailable. Please check your connection.")
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun signUrl(path: String, expiresInSeconds: Long, token: String): String {
+        val connection = URL("$baseUrl/storage/v1/object/sign/$BUCKET/$path").openConnection() as HttpURLConnection
+        try {
+            connection.requestMethod = "POST"
+            connection.doOutput = true
+            connection.setRequestProperty("apikey", anonKey)
+            connection.setRequestProperty("Authorization", "Bearer $token")
+            connection.setRequestProperty("Content-Type", "application/json")
+            connection.connectTimeout = 15_000
+            connection.readTimeout = 20_000
+            val body = JSONObject().put("expiresIn", expiresInSeconds).toString()
+            connection.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+            val code = connection.responseCode
+            val text = readBody(connection, code)
+            if (code == 401) throw StorageUnauthorizedException()
+            if (code !in 200..299) throw ApiException("Unable to load your photo right now. Please try again.")
+            val relative = JSONObject(text).getString("signedURL")
+            return "$baseUrl/storage/v1$relative"
+        } catch (error: IOException) {
+            throw ApiException("Network unavailable. Please check your connection.")
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun deleteObject(path: String, token: String) {
+        val connection = URL("$baseUrl/storage/v1/object/$BUCKET/$path").openConnection() as HttpURLConnection
+        try {
+            connection.requestMethod = "DELETE"
+            connection.setRequestProperty("apikey", anonKey)
+            connection.setRequestProperty("Authorization", "Bearer $token")
+            connection.connectTimeout = 15_000
+            connection.readTimeout = 20_000
+            val code = connection.responseCode
+            drainForClose(connection, code)
+            if (code == 401) throw StorageUnauthorizedException()
+            if (code !in 200..299) throw ApiException("Unable to remove your photo. Please try again.")
+        } catch (error: IOException) {
+            throw ApiException("Network unavailable. Please check your connection.")
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun readBody(connection: HttpURLConnection, code: Int): String {
+        val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+        return stream?.let { BufferedReader(InputStreamReader(it, Charsets.UTF_8)).use(BufferedReader::readText) }.orEmpty()
+    }
+
     private fun drainForClose(connection: HttpURLConnection, code: Int) {
         val stream = if (code in 200..299) connection.inputStream else connection.errorStream
         stream?.use { it.readBytes() }
