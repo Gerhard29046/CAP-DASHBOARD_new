@@ -118,6 +118,13 @@ val syncResources = listOf(
  * already-correct path since Phase C) -- this addition is specifically about the Users LIST
  * screen and role-editing, a different real use case for the same table, not a duplicate of
  * that path.
+ *
+ * `permissions` and `role_permissions` are added alongside `users` for the same phase: the Users
+ * screen's permission matrix is derived from them (a permission's "role default" is whether
+ * `role_permissions` has a row for that (role, permission_key) pair), so without them the matrix
+ * could only be a hardcoded stand-in. Both are read-only from this app -- RLS
+ * (`0002_rls_policies.sql`) grants `select` to any active profile and restricts writes to admins,
+ * and nothing here writes to either table.
  */
 val SUPABASE_MIGRATED_TABLES = setOf(
     "clients",
@@ -131,7 +138,9 @@ val SUPABASE_MIGRATED_TABLES = setOf(
     "knowledge_media",
     "knowledge_documents",
     "dashboard_notes",
-    "users"
+    "users",
+    "permissions",
+    "role_permissions"
 )
 
 data class CapRecord(
@@ -540,11 +549,11 @@ class AuthRepository @Inject constructor(
 // DocumentSnapshot.toCapUser() (the old Firestore users/{uid} -> CapUser mapper) was removed
 // here in Phase C -- AuthRepository's identity/profile now comes from Supabase
 // (SupabaseAuth.kt's JSONObject.toCapUser()), not Firestore. Note this is specifically about
-// the SIGNED-IN user's own identity: the separate, still-Firestore-backed "Users" list screen
-// (SimpleRecordsScreen("users", ...) in MainActivity.kt, reading generic CapRecords via
-// RecordsRepository, unchanged this phase) is a different, currently-inconsistent data
-// source for "users" than the logged-in user's own profile -- a known, disclosed, temporary
-// artifact of a partial migration, resolved once Firestore itself migrates in a later phase.
+// the SIGNED-IN user's own identity: the separate "Users" administration screen
+// (UsersScreen/UserDetailScreen in MainActivity.kt, reading generic CapRecords via
+// RecordsRepository) is a different read of the same table. Both now hit the same Supabase
+// public.users rows -- the temporary Firestore/Supabase inconsistency noted here previously
+// ended when "users" joined SUPABASE_MIGRATED_TABLES.
 
 private fun Throwable.connectionStatus(): ConnectionStatus = when (this) {
     is FirebaseAuthException -> ConnectionStatus.AuthRequired

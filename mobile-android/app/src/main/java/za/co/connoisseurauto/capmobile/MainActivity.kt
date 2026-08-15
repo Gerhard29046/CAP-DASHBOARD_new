@@ -13,6 +13,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -33,6 +34,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
@@ -163,6 +165,12 @@ class MainViewModel @Inject constructor(
             Triple("knowledge_documents", "knowledge_base.view", true),
             Triple("knowledge_service_codes", "knowledge_base.view", true),
             Triple("users", "users.view", true),
+            // The permission catalog and the role -> permission defaults behind the Users
+            // screen's permission matrix. Read-only here, and RLS grants select on both to any
+            // active profile (0002_rls_policies.sql), so gating them on the same "users.view"
+            // key that already gates the Users list is both correct and the narrowest fit.
+            Triple("permissions", "users.view", true),
+            Triple("role_permissions", "users.view", true),
             // Global read for any signed-in user (RLS-enforced, see Core.kt's dashboard_notes
             // KDoc) -- the web client shows StickyNotes.jsx on the Dashboard for every user
             // unconditionally, with no permission check of its own. "dashboard.view" is the
@@ -615,6 +623,7 @@ private fun labelForRouteId(routeId: String?): String = when (routeId) {
     CapNavRoute.JobDetail.route -> CapNavRoute.JobDetail.label
     CapNavRoute.ServiceRecordDetail.route -> CapNavRoute.ServiceRecordDetail.label
     CapNavRoute.KnowledgeBaseDetail.route -> CapNavRoute.KnowledgeBaseDetail.label
+    CapNavRoute.UserDetail.route -> CapNavRoute.UserDetail.label
     CapNavRoute.Home.route -> "Dashboard"
     CapNavRoute.Clients.route -> "Clients"
     CapNavRoute.Machines.route -> "Machines"
@@ -678,6 +687,7 @@ fun AdaptiveShell(vm: MainViewModel) {
         CapNavRoute.JobDetail.label -> "Job Card"
         CapNavRoute.ServiceRecordDetail.label -> "Service Record"
         CapNavRoute.KnowledgeBaseDetail.label -> "Knowledge Base"
+        CapNavRoute.UserDetail.label -> "User"
         else -> destinations.firstOrNull { it.label == selected }?.label ?: selected
     }
 
@@ -765,6 +775,9 @@ fun AdaptiveShell(vm: MainViewModel) {
                 composable(CapNavRoute.KnowledgeBaseDetail.route) { entry ->
                     DetailContent(CapNavRoute.KnowledgeBaseDetail, entry.arguments?.getString(CapNavRoute.KnowledgeBaseDetail.ARG), vm, user, openRoute)
                 }
+                composable(CapNavRoute.UserDetail.route) { entry ->
+                    DetailContent(CapNavRoute.UserDetail, entry.arguments?.getString(CapNavRoute.UserDetail.ARG), vm, user, openRoute)
+                }
             }
         }
     }
@@ -797,7 +810,7 @@ private fun ScreenContent(
         "Calendar" -> CalendarScreen(data, onOpen)
         "Knowledge Base" -> KnowledgeBaseScreen(data, onOpen)
         "Invoices" -> InvoiceScreen(data)
-        "Users" -> SimpleRecordsScreen("users", data, "name", "email", "No users found.", searchPlaceholder = "Search users", noMatches = "No users match your search.")
+        "Users" -> UsersScreen(data, onOpen)
         "Status" -> StatusScreen(vm)
         "More" -> MoreScreen(user, onNavigate, vm::logout)
         "Account" -> AccountScreen(user, vm, vm::logout)
@@ -837,6 +850,7 @@ private fun DetailContent(
         CapNavRoute.JobDetail -> "job_cards"
         CapNavRoute.ServiceRecordDetail -> "service_records"
         CapNavRoute.KnowledgeBaseDetail -> "knowledge_machines"
+        CapNavRoute.UserDetail -> "users"
         else -> return
     }
     val record = recordId?.let { id -> data.collection(collection).firstOrNull { it.id == id } }
@@ -906,6 +920,13 @@ private fun DetailContent(
             documents = relatedRecords(data.collection("knowledge_documents"), "knowledge_machine_id", record.id),
             serviceCodes = relatedRecords(data.collection("knowledge_service_codes"), "knowledge_machine_id", record.id),
             user = user,
+            save = vm::save
+        )
+
+        CapNavRoute.UserDetail -> UserDetailScreen(
+            profile = record,
+            permissions = data.collection("permissions"),
+            rolePermissions = data.collection("role_permissions"),
             save = vm::save
         )
 
@@ -3650,26 +3671,47 @@ private fun KnowledgeBaseDetailScreen(
     viewerUrl?.let { url -> CapPhotoViewerDialog(url) { viewerUrl = null } }
 }
 
+/** Display name for a `public.users.role` value. The set of roles offered anywhere in this app is
+ *  always derived from real `role_permissions` rows — this only decides how a role reads on
+ *  screen, and falls back to the raw value for any role it doesn't recognise. */
+private fun roleLabel(role: String): String = when (role.lowercase(Locale.US)) {
+    "admin" -> "Administrator"
+    "technician" -> "Technician"
+    "accountant" -> "Accountant"
+    "staff" -> "Staff"
+    "custom" -> "Custom"
+    else -> role.ifBlank { "No role" }.replaceFirstChar { it.uppercase() }
+}
+
+private fun permissionName(permission: CapRecord): String =
+    permission.text("name").ifBlank { permission.text("key") }
+
 /**
- * Generic read-only list (currently only the Users screen). Restyled onto CapCard/CapListItem so
- * it matches every other list in the app; the record fields shown are unchanged.
+ * How a permission's current state relates to its role default — the same four states the web
+ * User Management page shows (frontend/src/pages/UserAdmin.jsx), so an admin reading one screen
+ * can read the other.
+ */
+private fun permissionStateBadge(effective: Boolean, roleDefault: Boolean): Pair<String, StatusTone> = when {
+    effective && roleDefault -> "Role default" to StatusTone.Success
+    !effective && !roleDefault -> "Not included" to StatusTone.Neutral
+    effective -> "Added for this user" to StatusTone.Info
+    else -> "Removed for this user" to StatusTone.Warning
+}
+
+/**
+ * Users list. Only accounts the signed-in user is allowed to read appear here: `users_select`
+ * (0002_rls_policies.sql) returns the caller's own row plus, for an admin, everyone else's — so a
+ * non-admin legitimately sees a one-row list rather than an error.
  */
 @Composable
-private fun SimpleRecordsScreen(
-    collection: String,
-    data: RecordsState,
-    titleKey: String,
-    subtitleKey: String,
-    empty: String,
-    searchPlaceholder: String = "Search",
-    noMatches: String = "No records match your search."
-) {
+private fun UsersScreen(data: RecordsState, onOpen: (String) -> Unit) {
     var query by remember { mutableStateOf("") }
-    val records = data.collection(collection)
-    val filtered = records.filter { record ->
+    val users = data.collection("users")
+    val filtered = users.filter { profile ->
         query.isBlank() ||
-            record.text(titleKey).contains(query, ignoreCase = true) ||
-            record.text(subtitleKey).contains(query, ignoreCase = true)
+            profile.text("full_name").contains(query, ignoreCase = true) ||
+            profile.text("email").contains(query, ignoreCase = true) ||
+            roleLabel(profile.text("role")).contains(query, ignoreCase = true)
     }
     LazyColumn(
         Modifier.fillMaxSize(),
@@ -3680,27 +3722,408 @@ private fun SimpleRecordsScreen(
             CapSearchField(
                 value = query,
                 onValueChange = { query = it },
-                placeholder = searchPlaceholder,
+                placeholder = "Search name, email, or role",
                 modifier = Modifier.fillMaxWidth().padding(bottom = Spacing.xs)
             )
         }
         if (filtered.isEmpty()) {
             item {
                 CapEmptyState(
-                    if (records.isEmpty()) empty else noMatches,
+                    if (users.isEmpty()) "No users found." else "No users match your search.",
                     modifier = Modifier.fillMaxWidth().wrapContentHeight()
                 )
             }
         }
-        items(filtered, key = { it.id }) { record ->
-            val name = record.text(titleKey).ifBlank { record.id }
+        items(filtered.sortedBy { it.text("full_name").ifBlank { it.text("email") }.lowercase(Locale.US) }, key = { it.id }) { profile ->
+            val name = profile.text("full_name").ifBlank { profile.text("email") }.ifBlank { "Unnamed user" }
+            val active = profile.fields["is_active"] as? Boolean ?: true
+            val permissionCount = stringList(profile.fields["effective_permissions"]).size
             CapCard {
                 CapListItem(
                     title = name,
-                    subtitle = record.text(subtitleKey).ifBlank { null },
-                    leading = { CapUserAvatar(initialsOf(name)) }
+                    subtitle = listOfNotNull(
+                        profile.text("email").ifBlank { null },
+                        "$permissionCount permissions"
+                    ).joinToString(" · "),
+                    leading = { CapUserAvatar(initialsOf(name)) },
+                    trailing = {
+                        Column(
+                            horizontalAlignment = Alignment.End,
+                            verticalArrangement = Arrangement.spacedBy(Spacing.xs)
+                        ) {
+                            CapStatusBadge(roleLabel(profile.text("role")), StatusTone.Info)
+                            if (!active) CapStatusBadge("Disabled", StatusTone.Neutral)
+                        }
+                    },
+                    showNavArrow = true,
+                    onClick = { onOpen(CapNavRoute.UserDetail.of(profile.id)) }
                 )
             }
+        }
+    }
+}
+
+/**
+ * Editing one account's profile, role, active status, and permission matrix — the Android
+ * counterpart of the web User Management editor.
+ *
+ * Deliberately a full detail destination rather than a dialog: the matrix is one row per row of
+ * `public.permissions` (dozens), which no phone-sized dialog can show without becoming a scroll
+ * trap. It also means the back arrow and the system back button both already work through the
+ * app's normal back stack, with no screen-local back handling.
+ *
+ * Edit-only, exactly like the web page: `public.users.id` is a foreign key to `auth.users(id)`,
+ * populated by a trigger when someone signs up, so an account cannot be created from a client at
+ * all — and there is no password column here to reset (Supabase Auth owns credentials).
+ *
+ * Authorization is the server's: `users_update_admin` plus `restrict_self_user_update_trigger`
+ * (0002_rls_policies.sql) reject a non-admin changing role/is_active/effective_permissions/email,
+ * and that rejection surfaces through the shared [MainViewModel.actionMessage] snackbar. Nothing
+ * here hides a control to "enforce" that, because hiding a control is not enforcement.
+ */
+@Composable
+private fun UserDetailScreen(
+    profile: CapRecord,
+    permissions: List<CapRecord>,
+    rolePermissions: List<CapRecord>,
+    save: (String, String?, Map<String, Any?>, String) -> Unit
+) {
+    val savedName = profile.text("full_name")
+    val savedEmail = profile.text("email")
+    val savedRole = profile.text("role")
+    val savedActive = profile.fields["is_active"] as? Boolean ?: true
+    val savedGranted = stringList(profile.fields["effective_permissions"]).toSet()
+
+    var name by remember(profile.id) { mutableStateOf(savedName) }
+    var email by remember(profile.id) { mutableStateOf(savedEmail) }
+    var role by remember(profile.id) { mutableStateOf(savedRole) }
+    var active by remember(profile.id) { mutableStateOf(savedActive) }
+    var granted by remember(profile.id) { mutableStateOf(savedGranted) }
+    var query by remember(profile.id) { mutableStateOf("") }
+    var roleChanged by remember(profile.id) { mutableStateOf(false) }
+
+    // "Role default" is defined by real role_permissions rows, never by a hardcoded list. The
+    // account's own saved role is kept as an option even if no role_permissions row mentions it
+    // (e.g. the schema's 'staff' default), so selecting another role is never a one-way door.
+    val roleDefaults = rolePermissions.filter { it.text("role") == role }.map { it.text("permission_key") }.toSet()
+    val roleOptions = (rolePermissions.map { it.text("role") } + savedRole)
+        .filter { it.isNotBlank() }
+        .distinct()
+        .sorted()
+        .map { it to roleLabel(it) }
+
+    val visiblePermissions = permissions.filter { permission ->
+        query.isBlank() ||
+            permissionName(permission).contains(query, ignoreCase = true) ||
+            permission.text("description").contains(query, ignoreCase = true) ||
+            permission.text("key").contains(query, ignoreCase = true)
+    }
+    val grouped = visiblePermissions
+        .sortedWith(
+            compareBy<CapRecord> { it.text("group").lowercase(Locale.US) }
+                .thenBy { permissionName(it).lowercase(Locale.US) }
+        )
+        .groupBy { it.text("group").ifBlank { "Other" } }
+
+    val enabled = permissions.count { it.text("key") in granted }
+    val inherited = permissions.count { it.text("key") in granted && it.text("key") in roleDefaults }
+    val added = enabled - inherited
+    val removed = permissions.count { it.text("key") !in granted && it.text("key") in roleDefaults }
+
+    val valid = name.trim().isNotBlank() && email.trim().isNotBlank()
+    val dirty = name.trim() != savedName ||
+        email.trim() != savedEmail ||
+        role != savedRole ||
+        active != savedActive ||
+        granted != savedGranted
+
+    LazyColumn(
+        Modifier.fillMaxSize().imePadding(),
+        verticalArrangement = Arrangement.spacedBy(Spacing.md),
+        contentPadding = PaddingValues(bottom = 84.dp)
+    ) {
+        item {
+            CapCard {
+                Column(
+                    Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(Spacing.sm)
+                ) {
+                    CapUserAvatar(initialsOf(savedName.ifBlank { savedEmail }))
+                    Text(
+                        savedName.ifBlank { savedEmail }.ifBlank { "Unnamed user" },
+                        style = MaterialTheme.typography.titleLarge,
+                        textAlign = TextAlign.Center,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (savedEmail.isNotBlank()) {
+                        Text(
+                            savedEmail,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                        CapStatusBadge(roleLabel(savedRole), StatusTone.Info)
+                        CapStatusBadge(
+                            if (savedActive) "Active" else "Disabled",
+                            if (savedActive) StatusTone.Success else StatusTone.Neutral
+                        )
+                    }
+                }
+            }
+        }
+
+        item {
+            CapSectionCard(title = "Account details") {
+                CapTextField(
+                    label = "Full name",
+                    value = name,
+                    onValueChange = { name = it },
+                    required = true,
+                    errorMessage = if (name.isBlank()) "Full name cannot be empty." else null
+                )
+                CapTextField(
+                    label = "Email",
+                    value = email,
+                    onValueChange = { email = it },
+                    required = true,
+                    keyboardType = KeyboardType.Email
+                )
+                CapDropdownField(
+                    label = "Primary role",
+                    options = roleOptions,
+                    selectedKey = role,
+                    onSelected = { selected ->
+                        if (selected != role) {
+                            role = selected
+                            // Same behaviour as the web editor: picking a role loads that role's
+                            // recommended permissions, which the admin can then customise.
+                            granted = rolePermissions
+                                .filter { it.text("role") == selected }
+                                .map { it.text("permission_key") }
+                                .toSet()
+                            roleChanged = true
+                        }
+                    },
+                    required = true
+                )
+                ToggleRow(
+                    label = "Active account",
+                    description = "A disabled account keeps its data but cannot sign in.",
+                    checked = active,
+                    onCheckedChange = { active = it }
+                )
+                if (roleChanged) {
+                    Text(
+                        "The selected role has loaded its recommended permissions. Customise them below if this person needs something different.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Text(
+                    "Role, permissions, email, and account status can only be changed by an administrator — the server rejects anyone else, and the result is shown after saving.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        item {
+            CapSectionHeader(
+                title = "Permissions ($enabled)",
+                action = {
+                    TextButton(
+                        onClick = { granted = roleDefaults },
+                        enabled = granted != roleDefaults
+                    ) { Text("Reset to role defaults") }
+                }
+            )
+        }
+
+        if (permissions.isEmpty()) {
+            item {
+                CapEmptyState(
+                    "No permissions are defined yet, so there is nothing to assign.",
+                    modifier = Modifier.fillMaxWidth().wrapContentHeight()
+                )
+            }
+        } else {
+            item {
+                CapSearchField(
+                    value = query,
+                    onValueChange = { query = it },
+                    placeholder = "Search permissions"
+                )
+            }
+            if (grouped.isEmpty()) {
+                item {
+                    CapEmptyState(
+                        "No permissions match your search.",
+                        modifier = Modifier.fillMaxWidth().wrapContentHeight()
+                    )
+                }
+            }
+            grouped.forEach { (group, groupPermissions) ->
+                item(key = "permission_group_$group") {
+                    val keys = groupPermissions.map { it.text("key") }
+                    val allSelected = keys.all { it in granted }
+                    CapCard {
+                        CapSectionHeader(
+                            title = group,
+                            action = {
+                                TextButton(onClick = {
+                                    granted = if (allSelected) granted - keys else granted + keys
+                                }) { Text(if (allSelected) "Clear group" else "Select group") }
+                            }
+                        )
+                        groupPermissions.forEach { permission ->
+                            val key = permission.text("key")
+                            val effective = key in granted
+                            val (stateLabel, stateTone) = permissionStateBadge(effective, key in roleDefaults)
+                            PermissionRow(
+                                name = permissionName(permission),
+                                description = permission.text("description"),
+                                stateLabel = stateLabel,
+                                stateTone = stateTone,
+                                checked = effective,
+                                onCheckedChange = { checked ->
+                                    granted = if (checked) granted + key else granted - key
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        item {
+            CapCard {
+                Text(
+                    "$enabled enabled · $inherited from role · $added added · $removed removed",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Row(
+                    Modifier.fillMaxWidth().padding(top = Spacing.sm),
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+                ) {
+                    Box(Modifier.weight(1f)) {
+                        CapSecondaryButton(
+                            text = "Discard",
+                            onClick = {
+                                name = savedName
+                                email = savedEmail
+                                role = savedRole
+                                active = savedActive
+                                granted = savedGranted
+                                roleChanged = false
+                            },
+                            enabled = dirty
+                        )
+                    }
+                    Box(Modifier.weight(1f)) {
+                        CapPrimaryButton(
+                            text = "Save changes",
+                            onClick = {
+                                save(
+                                    "users",
+                                    profile.id,
+                                    mapOf(
+                                        "full_name" to name.trim(),
+                                        "email" to email.trim(),
+                                        "role" to role,
+                                        "is_active" to active,
+                                        "effective_permissions" to granted.toList().sorted()
+                                    ),
+                                    "User"
+                                )
+                                roleChanged = false
+                            },
+                            enabled = valid && dirty
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Label + supporting text with a trailing switch. The whole row is one toggleable node (the
+ * switch itself takes no separate click handler), so a screen reader announces one control rather
+ * than a label and an unrelated switch, and the tap target is the full row rather than the switch.
+ */
+@Composable
+private fun ToggleRow(
+    label: String,
+    description: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.medium)
+            .toggleable(value = checked, role = Role.Switch, onValueChange = onCheckedChange)
+            .defaultMinSize(minHeight = 48.dp)
+            .padding(vertical = Spacing.xs),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(label, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Switch(checked = checked, onCheckedChange = null)
+    }
+}
+
+/**
+ * One permission in the matrix. The state badge sits under the name rather than beside it: badge
+ * text such as "Added for this user" would otherwise squeeze the permission name to an ellipsis on
+ * a small phone.
+ */
+@Composable
+private fun PermissionRow(
+    name: String,
+    description: String,
+    stateLabel: String,
+    stateTone: StatusTone,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.medium)
+            .toggleable(value = checked, role = Role.Checkbox, onValueChange = onCheckedChange)
+            .defaultMinSize(minHeight = 48.dp)
+            .padding(vertical = Spacing.xs),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+    ) {
+        Checkbox(checked = checked, onCheckedChange = null)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+            Text(name, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            if (description.isNotBlank()) {
+                Text(
+                    description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            CapStatusBadge(stateLabel, stateTone)
         }
     }
 }

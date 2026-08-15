@@ -86,6 +86,11 @@ sealed class CapNavRoute(val route: String, val label: String) {
         fun of(entryId: String) = "knowledge_base_detail/${Uri.encode(entryId)}"
     }
 
+    data object UserDetail : CapNavRoute("user_detail/{userId}", "User Detail") {
+        const val ARG = "userId"
+        fun of(userId: String) = "user_detail/${Uri.encode(userId)}"
+    }
+
     companion object {
         /** Argument-free destinations reachable directly by label from the nav bar or "More". */
         val topLevel: List<CapNavRoute> = listOf(
@@ -95,7 +100,8 @@ sealed class CapNavRoute(val route: String, val label: String) {
 
         /** Detail destinations, addressed by record id rather than by label. */
         val details: List<CapNavRoute> = listOf(
-            ClientDetail, MachineDetail, JobDetail, ServiceRecordDetail, KnowledgeBaseDetail
+            ClientDetail, MachineDetail, JobDetail, ServiceRecordDetail, KnowledgeBaseDetail,
+            UserDetail
         )
     }
 }
