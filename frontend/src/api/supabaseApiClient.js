@@ -251,10 +251,18 @@ async function request(path, options = {}) {
   if (method === "PUT" || method === "PATCH") {
     const body = parseBody(options);
     if (table === "users" && body.permissions) {
+      // BUGFIX (2026-08-16, found while scoping Android Phase 8 parity): this handler used to
+      // also set body.permission_overrides = body.permissions and send body.name through
+      // untouched. Neither `permission_overrides` nor `name` are real columns on public.users
+      // (see 0001_initial_schema.sql -- the columns are `full_name` and `effective_permissions`
+      // text[] only). PostgREST rejects an update/insert outright if the payload references an
+      // unknown column, so every single "Save User" in UserAdmin.jsx -- role changes, active/
+      // disabled toggles, and permission edits alike -- was failing with a 400 in production.
+      // `effective_permissions` (below) is the one real, authoritative permission-state column;
+      // there is no separate persisted "override" concept, so it isn't reconstructed here.
       body.effective_permissions = Object.entries(body.permissions)
         .filter(([, allowed]) => allowed)
         .map(([key]) => key);
-      body.permission_overrides = body.permissions;
       delete body.permissions;
       delete body.password;
       delete body.password_confirmation;

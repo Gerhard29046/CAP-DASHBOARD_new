@@ -10,11 +10,19 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import PageHeader from "@/components/PageHeader";
 import EmptyState from "@/components/EmptyState";
-import { Plus, Search, UserPlus, ShieldCheck, User2, X } from "lucide-react";
+import { Search, UserPlus, ShieldCheck, User2, X } from "lucide-react";
 
-const blank = { name: "", email: "", password: "", password_confirmation: "", role: "technician", is_active: true };
+// BUGFIX (2026-08-16): `name` and a client-editable `password`/`password_confirmation` pair
+// were never real. public.users has no `name` column (it's `full_name` -- see
+// 0001_initial_schema.sql) and no `password` column at all (Supabase Auth owns credentials in
+// auth.users, separate from this profile table). The old shape silently 400'd every save (see
+// supabaseApiClient.js's PUT/PATCH handler for the write-side half of this fix) and, even once
+// that's fixed, could never have actually reset another user's password -- there was no code
+// path that could reach auth.users from here. Real password resets go through the existing
+// self-service ForgotPassword.jsx email flow; this form no longer pretends otherwise.
+const blank = { full_name: "", email: "", role: "technician", is_active: true };
 const ROLE_LABELS = { admin: "Administrator", technician: "Technician", accountant: "Accountant", custom: "Custom" };
-const FIELD_LABELS = { name: "Name", email: "Email", password: "Password", password_confirmation: "Password Confirmation" };
+const FIELD_LABELS = { full_name: "Full Name", email: "Email" };
 
 // Explains a permission's current state relative to its role default -- makes
 // the matrix legible at a glance instead of requiring the admin to read text.
@@ -50,7 +58,7 @@ export default function UserAdmin() {
   const edit = async (user) => {
     const result = await apiClient.request(`/users/${user.id}/permissions`);
     setSelected(user);
-    setForm({ ...blank, ...user, password: "", password_confirmation: "" });
+    setForm({ ...blank, ...user });
     setMatrix(result.permissions);
     setMessage("");
   };
@@ -70,16 +78,17 @@ export default function UserAdmin() {
   const enabled = matrix.filter((p) => p.effective).length;
   const overrides = matrix.filter((p) => p.effective !== p.role_default).length;
 
+  // Edit-only: account creation is self-service (see startNew() below), so `selected` is
+  // always set by the time this form can be submitted.
   const save = async (event) => {
     event.preventDefault();
-    if (saving) return;
+    if (saving || !selected) return;
     setMessage(""); setFieldErrors({}); setSaving(true);
     try {
       const permissions = Object.fromEntries(matrix.map((p) => [p.key, p.effective]));
       const body = { ...form, permissions };
-      if (selected && !body.password) { delete body.password; delete body.password_confirmation; }
-      await apiClient.request(selected ? `/users/${selected.id}` : "/users", {
-        method: selected ? "PUT" : "POST",
+      await apiClient.request(`/users/${selected.id}`, {
+        method: "PUT",
         body: JSON.stringify(body),
       });
       await load();
@@ -93,12 +102,17 @@ export default function UserAdmin() {
     }
   };
 
+  // BUGFIX (2026-08-16): this used to populate a blank create form that saved via POST /users,
+  // i.e. a plain insert into public.users. That was never functional: public.users.id is a
+  // foreign key to auth.users(id) (0001_initial_schema.sql), auto-populated by a trigger when
+  // someone actually signs up through Supabase Auth -- there is no client-safe way to create a
+  // real auth account (and therefore a valid public.users row) from here without a service_role
+  // key, which frontend code must never hold. New accounts are created via self-service sign-up
+  // (Register.jsx); an admin's role here is to select that person afterward and configure their
+  // role/permissions, not to originate the account.
   const startNew = () => {
-    setSelected(null); setForm(blank); setMessage("");
-    const defaults = new Set(roles.technician?.permissions || []);
-    apiClient.request("/permissions").then((groups) => setMatrix(
-      Object.values(groups).flat().map((p) => ({ ...p, role_default: defaults.has(p.key), effective: defaults.has(p.key), user_override: null }))
-    ));
+    setSelected(null); setMatrix([]); setForm(blank);
+    setMessage("New accounts are created by the person themselves at the Register page (email sign-up). Once they've registered, select their name from the list on the left to assign a role and permissions.");
   };
 
   const cancel = () => { setSelected(null); setMatrix([]); setMessage(""); };
@@ -111,7 +125,7 @@ export default function UserAdmin() {
         title="User Management"
         subtitle="Configure individual access without changing role defaults."
         action={hasPermission("users.create") && (
-          <Button onClick={startNew} className="gap-2"><UserPlus className="w-4 h-4" /> Create User</Button>
+          <Button onClick={startNew} variant="outline" className="gap-2"><UserPlus className="w-4 h-4" /> New user?</Button>
         )}
       />
 
@@ -129,7 +143,7 @@ export default function UserAdmin() {
               {[0, 1, 2].map((i) => <Skeleton key={i} className="h-16 rounded-lg" />)}
             </div>
           ) : users.length === 0 ? (
-            <EmptyState icon={User2} title="No users yet" description="Create the first user account." />
+            <EmptyState icon={User2} title="No users yet" description="New accounts appear here once someone registers at the Register page." />
           ) : (
             <div className="space-y-1">
               {users.map((user) => (
@@ -140,7 +154,7 @@ export default function UserAdmin() {
                     selected?.id === user.id ? "bg-primary/10" : "hover:bg-secondary"
                   }`}
                 >
-                  <p className="text-sm font-medium text-foreground truncate">{user.name}</p>
+                  <p className="text-sm font-medium text-foreground truncate">{user.full_name || user.email}</p>
                   <p className="text-xs text-muted-foreground truncate mt-0.5">{user.email}</p>
                   <div className="flex items-center gap-1.5 mt-2 flex-wrap">
                     <Badge variant="neutral">{ROLE_LABELS[user.role] || user.role}</Badge>
@@ -156,32 +170,25 @@ export default function UserAdmin() {
         {/* Editor */}
         {!showEditor ? (
           <div className="bg-card border border-dashed border-border rounded-xl">
-            <EmptyState icon={ShieldCheck} title="Select a user" description="Choose a user from the list to view or edit their access, or create a new one." />
+            <EmptyState icon={ShieldCheck} title="Select a user" description="Choose a user from the list to view or edit their role and permissions." />
           </div>
         ) : (
           <form onSubmit={save} className="space-y-4">
             <div className="bg-card border border-border rounded-xl p-5">
               <h2 className="font-heading font-semibold text-foreground text-sm mb-4">
-                {selected ? "Account Details" : "New User"}
+                Account Details
               </h2>
               <div className="grid md:grid-cols-2 gap-4">
                 {Object.keys(FIELD_LABELS).map((key) => (
                   <div key={key}>
                     <Label>{FIELD_LABELS[key]}</Label>
                     <Input
-                      type={key.includes("password") ? "password" : "text"}
-                      autoComplete={key.includes("password") ? "new-password" : undefined}
+                      type="text"
                       value={form[key] || ""}
                       onChange={(e) => setForm({ ...form, [key]: e.target.value })}
-                      required={!selected}
+                      required
                       className="mt-1.5 h-10"
                     />
-                    {key === "password" && (
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        {selected ? "Leave blank to keep the current password. " : ""}
-                        8+ characters with uppercase, lowercase, a number, and a symbol.
-                      </p>
-                    )}
                     {fieldErrors[key]?.map((error) => <p key={error} className="mt-1 text-xs text-destructive">{error}</p>)}
                   </div>
                 ))}
@@ -271,7 +278,7 @@ export default function UserAdmin() {
                   <X className="w-3.5 h-3.5" /> Cancel
                 </Button>
                 <Button disabled={saving} className="gap-1.5">
-                  <Plus className="w-3.5 h-3.5" /> {saving ? "Saving…" : "Save User"}
+                  <ShieldCheck className="w-3.5 h-3.5" /> {saving ? "Saving…" : "Save Changes"}
                 </Button>
               </div>
             </div>
