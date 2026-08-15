@@ -49,12 +49,21 @@
   23/23 unit tests, lint 0 errors, real APK assembled.** Same verification pass also
   root-caused and solved this machine's long-standing CLI-build TLS gap (Avast HTTPS
   interception, not a project defect — see `KNOWN_ISSUES.md`'s new RESOLVED entry; not yet made
-  durable, needs the user's approval for a permanent trust-store fix). Only genuinely
-  unverified layer left: on-device visual/runtime behavior (no device run performed this pass).
-  See `KNOWN_ISSUES.md`'s matching 2026-08-15 entries for full detail, including what was
-  deliberately reported-not-fixed (`StatusScreen`'s Firebase labels — needs a real Supabase
-  health-check capability from `supabase-android-bee`, not invocable this session; dead Google
-  Calendar UI; Users screen missing search — both flagged as product calls). Phases G–J still
+  durable, needs the user's approval for a permanent trust-store fix). See `KNOWN_ISSUES.md`'s
+  matching 2026-08-15 entries for full detail.
+
+  **Phase G (branding/visual identity) — COMPLETE as of 2026-08-15, all 3 rounds committed
+  and real-build-verified** (`477918d`/`3907b62`/`f1ac1fe`): theme/status polish, Dashboard +
+  navigation branding, dead Google Calendar UI fully removed (its backend was already gone),
+  Login screen premium redesign, forms/empty/loading/error-state consistency, photo tap
+  affordance, and — the app's first-ever launcher icon (a derived "C" monogram, no source
+  logo asset exists in the repo). A real, build-breaking XML bug in the icon's first draft was
+  caught and fixed before commit. **Only genuinely unverified layer across all of Phase G:
+  on-device visual/runtime behavior** — every round is compiler/build/lint-verified, not one
+  has been seen running on a real screen by anyone in this pipeline. Latest APK installed to
+  the user's connected device this session. See `KNOWN_ISSUES.md`'s matching entry for the
+  full itemized list of what's still deferred (`StatusScreen` Firebase labels, back-navigation
+  affordance consistency) and why. Phases H (testing)/I (Firebase removal)/J (final build)
   not started.
 
 - **UX redesign resumed (2026-08-13, after the Supabase cutover), functional fixes +

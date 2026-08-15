@@ -1,5 +1,39 @@
 # Known Issues
 
+## Android Phase G (branding/visual identity) complete, real-build-verified — on-device visual confirmation still needed (2026-08-15)
+
+- All 3 rounds committed: `477918d` (theme/status polish, Dashboard, navigation, icon
+  consistency, dead Google Calendar UI removal), `3907b62` (Login screen redesign, forms
+  consistency, empty/loading/error states, photo tap affordance), `f1ac1fe` (launcher icon —
+  the app had never had one at all; a derived "C" monogram on `CapPrimary` blue, since no
+  source logo asset exists anywhere in the repo). Every round got a real, full clean CLI
+  Gradle build via `testing-bee` (23/23 unit tests, 0 lint errors throughout, warnings
+  dropped 31→30 after the icon landed), not just code review.
+- **Real bug caught before shipping**: round 3's first draft had `--` inside an XML comment
+  (forbidden by the XML spec) that would have produced a completely blank rendered icon —
+  caught by `testing-bee` actually running the vector art through a renderer, not just
+  parsing it. Fixed, re-verified clean.
+- **What's still genuinely unverified, and can only be verified by the user**: on-device
+  visual/runtime behavior for all of Phase G — does the launcher icon actually look good on a
+  real home screen (OEM mask shape, real rasterization, Android 13+ themed-icon tinting),
+  does the Login screen's IME flow/field-lockout work as intended, does the new session-restore
+  splash moment feel right, does the Dashboard's ticking clock/greeting render correctly on a
+  small phone. `testing-bee` rendered the icon through Android Studio's own desktop vector
+  renderer (not a real device) and confirmed it produces a clean, well-formed, optically
+  centred white "C" — real evidence, but not the same as seeing it on an actual launcher.
+  Latest APK (`25,628,917` bytes, matches the final committed state) installed to the user's
+  connected device this session via `adb install -r`.
+- **Deliberately deferred, not silently dropped** (each has its own reason, see `git log`
+  commit messages for full detail): `StatusScreen` still shows literal "Firebase"/
+  "Firestore"/`capdatabasefb2` labels — genuinely accurate today (that screen really does
+  still probe Firestore), a truthful fix needs a Supabase health-check capability that's
+  `supabase-android-bee`'s scope (not invocable this session, same recurring
+  agent-registration gap). No consistent top-bar back/up affordance for the 8 screens reached
+  from `MoreScreen` (they already have in-content `CapBackRow`s; adding a top-bar arrow too
+  would double up — a real design decision, not a mechanical fix). `ServerStatusIndicator`
+  now shows dot-only when healthy (frees app-bar width) — flagged by the implementer as the
+  one change most likely to draw an objection, a 4-line revert if so.
+
 ## URGENT, LIKELY LIVE-BREAKING — `job_cards.accessories_received`/`arrival_condition_notes` columns missing; migration written and committed, NOT YET APPLIED (found 2026-08-15, mid-session, while cleaning up unrelated stray files)
 
 - Found sitting **uncommitted and untracked** in the working tree (`supabase/migrations/

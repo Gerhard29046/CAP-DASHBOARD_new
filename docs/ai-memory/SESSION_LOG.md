@@ -1,5 +1,48 @@
 # Session Log
 
+## 2026-08-15 (same day, continued) — Android Phase G: branding/visual identity, all 3 rounds shipped and real-build-verified
+- Objective: continue directly from Phase F (same session) into a full branding/visual-identity
+  pass per detailed user direction (27 numbered points) — audit existing visual language first,
+  build on it rather than replace it, derive a launcher icon tastefully (no source logo exists
+  anywhere in the repo), proceed autonomously except for genuine branding/product decisions.
+- Audit found the visual system (`ui/theme/`, `CapStatus.kt`) was already mature from earlier
+  work — Phase G was refinement, not a rebuild. Real gap found: no launcher icon existed at all.
+- **Round 1** (`477918d`): icon-consistency fixes (9 deprecated icons), full removal of the
+  Google Calendar UI (confirmed mechanical — backend already deleted 2026-08-12), Dashboard
+  real time-aware greeting + live clock + real due-services count, nav/quick-action restyling,
+  a real nav-title bug fix. `testing-bee` found an incremental-build APK-size false negative;
+  insisted on clean builds from then on.
+- **Round 2** (`3907b62`): Login screen redesign + a real fixed bug (fields stayed editable
+  mid-login-request), forms `errorMessage` consistency + a found-and-fixed missing `required`
+  marker, confirmed the central loading/error gate already covers every screen, photo
+  tap-affordance icon.
+- **Round 3** (`f1ac1fe`): the launcher icon — a derived "C" monogram, reasoned rejection of
+  both a literal icon reproduction and a gear shape. `testing-bee` caught a real,
+  build-breaking XML bug (`--` in a comment, produced a blank rendered icon) before it shipped,
+  and went further than packaging checks by actually rendering the vector art to confirm the
+  geometry is correct. Fixed, re-verified, committed.
+- Every round: `android-ui-bee` implements (manual review only, no Bash), `testing-bee`
+  independently real-build-verifies (reused the Avast trust-store CLI workaround from Phase F)
+  before Queen Bee commits. 23/23 unit tests unchanged throughout; lint 0 errors throughout,
+  warnings 31→30 once the icon landed.
+- Files changed: `MainActivity.kt` (all 3 rounds), `ui/components/CapCards.kt`,
+  `ui/navigation/CapBottomNavigation.kt`, `ui/components/CapInputs.kt`,
+  `ui/components/CapStates.kt`, `AndroidManifest.xml`, 5 new icon resource files under
+  `res/drawable/` and `res/mipmap-anydpi/`; `GoogleCalendarRepository.kt` deleted;
+  `app/build.gradle.kts` (removed a now-fully-dead `FUNCTIONS_BASE_URL` build config field).
+- Tests/builds run: 3 full real clean CLI Gradle builds (one per round, via `testing-bee`),
+  plus one immediate re-verification after the round-3 XML fix.
+- Result: latest APK (25,628,917 bytes) installed to the user's connected device via
+  `adb install -r` at the end of the session.
+- Remaining/not done: **on-device visual/runtime behavior for all of Phase G is unverified** —
+  every round is build/lint/compiler-verified only; nobody in this pipeline has seen it running
+  on a real screen. `StatusScreen`'s literal "Firebase"/Firestore labels deliberately left
+  alone (needs `supabase-android-bee`, unavailable this session). Back-navigation-affordance
+  consistency (top-bar arrow vs. in-content `CapBackRow`) flagged as a real design decision, not
+  resolved. `ServerStatusIndicator`'s dot-only-when-healthy change flagged as the one most
+  likely to need a revert. Migration `0025` (found earlier same session) still not applied.
+  Phases H/I/J not started.
+
 ## 2026-08-15 — Android Phase F kickoff: photo-viewer bugs fixed + real CLI build verification (first ever); unrelated job_cards migration recovered
 - Objective: install the E2 build to the user's phone (done, `adb install -r`, device
   `24116RACCG`), then continue systematically through the Android migration's remaining phases

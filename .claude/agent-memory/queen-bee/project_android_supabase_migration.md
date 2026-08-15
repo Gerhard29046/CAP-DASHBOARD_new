@@ -7,14 +7,25 @@ metadata:
 
 **UPDATE 2026-08-15**: E1 gate passed 2026-08-14 (see [[project_e1_reliability_fix_paused]]).
 E2 (photo upload, web+Android) landed and was real-device tested by the user. Phase F (UI/UX
-consistency) is now in progress — first pass fixed real photo-viewer bugs (blank thumbnails,
-no way to open a photo) plus a screen-by-screen sweep, and was genuinely CLI-build-verified for
-the first time ever in this project (23/23 unit tests, lint clean, real APK). **The
-"this machine's CLI Gradle build doesn't work" constraint below is now SUPERSEDED for how to
-think about it going forward — see [[project_android_gradle_tls_avast_resolved]] for the real
-root cause (Avast TLS interception, not a CA/project defect) and the working-but-not-yet-durable
-fix.** Still true: `supabase-android-bee`/`migration-audit-bee` were not invocable this session
-either (same recurring agent-registration gap, still unfixed, still unexplained).
+consistency, 2 rounds) then **Phase G (branding/visual identity, 3 rounds) both completed the
+same session** — every round: `android-ui-bee` implements (no Bash, manual review only),
+`testing-bee` independently real-build-verifies before Queen Bee commits. All 5 rounds combined:
+23/23 unit tests unchanged, 0 lint errors throughout. **The "this machine's CLI Gradle build
+doesn't work" constraint below is now SUPERSEDED for how to think about it going forward — see
+[[project_android_gradle_tls_avast_resolved]] for the real root cause (Avast TLS interception,
+not a CA/project defect) and the working-but-not-yet-durable fix.** Phase G shipped the app's
+first-ever launcher icon (derived "C" monogram — no source logo asset exists anywhere in the
+repo) and fully removed the Google Calendar UI (its backend was already dead). `testing-bee`
+caught a real, build-breaking bug in the icon's first draft (`--` inside an XML comment) by
+actually rendering the vector art, not just parsing it — see [[technique_subagent_report_retrieval]]
+for how these reports get retrieved, and note testing-bee's verification bar is genuinely
+strong: it renders artifacts, extracts jars from the Gradle cache to prove classes exist, and
+checks APK dex/manifest contents directly rather than trusting "the build succeeded."
+**Consistent gap across all of Phase F+G: on-device visual/runtime behavior is never verified
+by any agent in this pipeline** — only compile/lint/package. Latest APK installed to the user's
+device via `adb install -r` at the end of the Phase G session specifically so a real check is
+possible. Still true: `supabase-android-bee`/`migration-audit-bee` were not invocable this
+session either (same recurring agent-registration gap, still unfixed, still unexplained).
 
 Separate from the (completed) web Firebase→Supabase migration — do not conflate the two, the
 user was explicit about this. Full living record: `docs/android/ANDROID_SUPABASE_MIGRATION.md`

@@ -1,5 +1,76 @@
 # Project State
-_Last verified: 2026-08-15 (Android Phase F kickoff — photo-viewer bugs fixed and, for the
+_Last verified: 2026-08-15 (Android Phase G — branding/visual identity — complete, all 3
+rounds real-build-verified, latest APK installed to the user's device). Full narrative:
+
+**Phase G, continuing directly from Phase F in the same session.** User asked for a full
+branding/visual-identity/premium-UI-polish pass with wide-ranging, detailed direction (27
+numbered points) — audit first, build on the existing visual system rather than replace it,
+derive a launcher icon tastefully since no source logo exists, don't invent fake data, proceed
+autonomously except for genuine branding/product decisions.
+
+**Audit finding that shaped everything else**: the visual system (`ui/theme/`: navy
+background/blue primary, full Material3 token mapping, tuned type scale, radius/spacing
+scales) and a status-badge system (`CapStatus.kt`: `StatusTone` Success/Warning/Error/Info/
+Neutral) were already mature from earlier redesign work — zero raw hex colors existed outside
+theme files. Phase G was a refinement/completion pass, not a from-scratch build. Real gap
+found: **no launcher icon existed at all** (`AndroidManifest.xml` had no `android:icon`
+attribute; `res/` had zero mipmap/drawable resources — corroborated independently by lint's
+pre-existing `MissingApplicationIcon` warning) and **no image logo file exists anywhere in
+this repository**, web or Android.
+
+**3 rounds, each delegated to `android-ui-bee` then independently real-build-verified by
+`testing-bee` before commit** (all reused/re-derived the Avast trust-store CLI-build
+workaround from Phase F — see `KNOWN_ISSUES.md`):
+- **Round 1** (`477918d`): fixed 9 deprecated `Icons.Outlined.*` → `Icons.AutoMirrored.*`
+  icons; **removed the entire Google Calendar UI** (ViewModel state, `CalendarScreen` section,
+  the repository file itself) — confirmed genuinely mechanical since its Cloud Functions
+  backend was already deleted 2026-08-12, so the feature was provably non-functional, not a
+  product-scope call; gave `DashboardScreen` a real time-aware greeting (mirrors the web
+  dashboard's exact copy/cutoffs) + live clock + a real due-services count (no fabricated
+  data); restyled `CapQuickActionCard` and `CapBottomNavigation`'s selected state; fixed a
+  real nav-title bug ("Calendar" shown where every other entry point says "Upcoming
+  Services"). `testing-bee` caught that an *incremental* build's APK size can misleadingly
+  look unchanged — insisted on full clean builds from then on.
+- **Round 2** (`3907b62`): Login screen redesign (new tinted-icon identity mark, real IME
+  focus flow, fields now correctly disable mid-login-request — a real pre-existing bug, not
+  just polish); forms consistency (shared `errorMessage` wiring across `CapDropdownField`/
+  `CapDateField`, found and fixed a genuinely missing `required` marker on Book In's Fault
+  Description field and 2 date fields that were plain text inputs); confirmed the app's
+  central `ScreenContent` loading/error gate already covers every screen correctly (no gaps
+  found); added a small tap-affordance icon to photo thumbnails.
+- **Round 3** (`f1ac1fe`): the launcher icon itself — a derived "C" monogram (white on
+  `CapPrimary` blue), explicitly not a literal reproduction of the in-app Engineering glyph
+  (too detailed to survive adaptive-icon masking) and explicitly not a gear (home-screen
+  confusion risk with the Settings icon) — both reasoned, disclosed judgment calls. Full
+  adaptive-icon setup (background/foreground/monochrome layers, no legacy raster needed since
+  `minSdk=26` already implies adaptive-icon support). **`testing-bee` caught a real,
+  build-breaking bug before commit**: the icon's first draft had `--` inside an XML comment
+  (forbidden by the XML spec), which a renderer confirmed produced a completely blank icon (0
+  painted pixels) — not caught by static review, only by actually rendering it. Fixed
+  (one-character change + a redundant `mipmap-anydpi-v26`→`mipmap-anydpi` rename, both applied
+  directly rather than another full round-trip), re-verified clean. **`testing-bee` went
+  beyond packaging checks and actually rendered the vector art** via Android Studio's own
+  desktop vector renderer — confirmed it produces the intended shape (a clean, optically
+  centred white C, comfortably inside the guaranteed-visible safe zone) — real evidence the
+  geometry is correct, though still not the same as seeing it on a real launcher.
+
+**Verification bar for all 3 rounds**: real clean CLI Gradle builds throughout (23/23 unit
+tests unchanged every round; lint 0 errors throughout, warning count dropped 31→30 once the
+icon landed and cleared both `MissingApplicationIcon` and a self-introduced `ObsoleteSdkInt`).
+**What remains genuinely unverified — the one consistent gap across every round**: on-device
+visual/runtime behavior. Nobody in this pipeline has seen any of Phase G running on a real
+screen. The final APK (`25,628,917` bytes, matches the exact committed state) was installed to
+the user's connected device (`adb install -r`) at the end of this session specifically so a
+real visual check is possible.
+
+**Also this session, found incidentally (unrelated to Android), already recorded in Phase F's
+entry below**: a real, previously-uncommitted migration (`0025_job_cards_accessories_and_
+arrival_notes.sql`) likely fixing a currently-broken Book In save in production — committed
+but **still not applied**, needs the SQL Editor.
+
+---
+
+_Last verified before that: 2026-08-15 (Android Phase F — photo-viewer bugs fixed and, for the
 first time in this project, genuinely CLI-build-verified). Full narrative:
 
 **Context**: Phase E2 (photo upload, commit `0c9a068`) had already landed and was real-device
