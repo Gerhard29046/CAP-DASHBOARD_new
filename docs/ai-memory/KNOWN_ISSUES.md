@@ -1,5 +1,49 @@
 # Known Issues
 
+## LIVE BUG, WEB — Knowledge Base photo/document uploads permanently break 7 days after upload (found 2026-08-15, during Android parity Phase 5, independently verified)
+
+- `frontend/src/api/supabaseApiClient.js`'s `integrations.Core.UploadFile()` uploads to the
+  `documents` Storage bucket, then persists a **7-day signed URL** as `file_url` — it never
+  stores the underlying object path. Once that URL expires, the photo/document is
+  unrecoverable through the UI (the path was never saved anywhere to re-sign from), even
+  though the file is still safely sitting in Storage.
+- **This was disclosed as a real risk in the code itself, 2026-08-04, before any real caller
+  existed**: "if a caller persists this `file_url` value for long-term reuse rather than
+  displaying it immediately, it will eventually stop working... store `path` and generate a
+  fresh signed URL each time... Not solved here since no caller exists yet." That caller now
+  exists: `frontend/src/pages/KnowledgeMachineDetail.jsx`'s `upload()` (both the Photos and
+  Documents sections) writes `file_url` straight from `UploadFile()`'s response into
+  `knowledge_media`/`knowledge_documents` rows. **The predicted failure is now live** — every
+  KB photo/document ever uploaded via the website will silently stop loading exactly 7 days
+  after upload, permanently.
+- Confirmed independently, not taken on the finding's word alone: read `UploadFile()`'s
+  exact code (`60 * 60 * 24 * 7` signed-URL expiry, no `path` in the returned object) and
+  `0013_knowledge_subcollections_real_fields.sql` (renamed `storage_path` → `file_url`
+  specifically because this flow only ever writes a URL, confirming there is no
+  permanent-path fallback anywhere in the schema for this table either).
+- **Real-world impact unknown but plausibly nonzero** — no scripted or live check has been run
+  to determine whether any real (non-test) KB photo/document has actually been uploaded via
+  this flow yet and is now past 7 days old and broken. Worth checking directly (`file_url`'s
+  embedded `token`/expiry parameters, or Storage bucket contents vs. `knowledge_media`/
+  `knowledge_documents` row count) before assuming impact is zero.
+- **The correct fix is a cross-platform data-contract change, not an Android-only one**:
+  store the permanent object path (a new/renamed column, migration required) and re-sign at
+  display time — the same pattern `service_records.photos`/`job_cards.arrival_photos`
+  already correctly use (`0024_photos_bucket_record_scoped_rls.sql`). Both `UploadFile()`'s
+  write path and every reader (`KnowledgeMachineDetail.jsx`'s `window.open(item.file_url)`,
+  and Android's just-added `PhotoThumbnail` reuse — see the matching Phase 5 entry below)
+  would need updating together, plus checking whether `0016_storage_generic_buckets_owner_or_admin.sql`'s
+  owner-only read policy on the `documents` bucket even allows one user to view another's
+  upload at all (a knowledge-base photo uploaded by one technician needs to be visible to
+  every technician, which the current owner-scoped policy may not permit regardless of the
+  URL-expiry issue — needs checking as part of the same fix, not assumed either way).
+- **Not fixed this session** — found while scoping Android Knowledge Base upload parity
+  (Phase 5 of the cross-platform initiative); Android's own upload capability was deliberately
+  NOT built against this same broken contract (would have doubled the exposure, not added a
+  workaround) — see `docs/ai-memory/ROADMAP.md`'s Phase 5 entry. This needs its own dedicated,
+  reviewed migration + web fix + Android upload implementation, following this project's
+  existing migration-approval process (never apply without explicit sign-off).
+
 ## Android Phase G (branding/visual identity) complete, real-build-verified — on-device visual confirmation still needed (2026-08-15)
 
 - All 3 rounds committed: `477918d` (theme/status polish, Dashboard, navigation, icon

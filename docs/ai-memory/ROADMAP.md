@@ -20,7 +20,7 @@ compare, extend not fork, verify full flow, report parity). Maps directly onto t
 | 2 | Navigation architecture (real routes, back-button rule, no state loss) | **DONE** — `ec13917`, real-build-verified |
 | 3 | Book In field parity | **DONE** — `0b7664c`, real-build-verified (23/23 tests, 0 lint errors/30 warnings). All 5 fields (job_number/machine_type/accessories_received/arrival_condition/arrival_condition_notes) added to BookInScreen + JobDetailScreen + JobDialog; real Previous Jobs section |
 | 4 | Calendar (day/week/month, CAP data, no Google Calendar) | **DONE** — `e9003b9`, real-build-verified. Deliberate no-grid-library call (web itself drops to agenda view under 640px); bucketed agenda (Overdue/Today/This week/Later this month/Later/Completed) + range filter chips + richer detail (serial/refrigerant/notes/findings/status + cross-links). Reschedule confirmed already existed. |
-| 5 | Knowledge Base rework | NOT DONE |
+| 5 | Knowledge Base rework | **PARTIAL** — `600a097`, real-build-verified. List-card summary/refrigerant preview + real photo-grid reuse (PhotoThumbnail/CapPhotoViewerDialog) done. Upload capability deliberately deferred — found a real, live web bug blocking it correctly, see `KNOWN_ISSUES.md`'s matching entry |
 | 6 | Notes (`dashboard_notes` on Android) | NOT DONE — confirmed zero Android consumer today |
 | 7 | Account/Profile edit + profile photo (web AND Android — neither has this today) | NOT DONE |
 | 8 | Users + roles editable | NOT DONE — sequenced after Firebase removal (see below) |
