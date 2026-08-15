@@ -85,6 +85,16 @@ val syncResources = listOf(
  * service_code; file_url/caption/original_filename/title) -- so this is a pure backend swap
  * with no UI change, exactly like Phase D.
  *
+ * Cross-platform parity Phase 6 (Notes, 2026-08-15): `dashboard_notes` added. Genuinely new to
+ * Android -- unlike every table above, this one was never on Firestore at all, so there is no
+ * "migration" here, just a new generic table this repository already knows how to talk to.
+ * Global read for any authenticated user, creator-or-admin write/delete -- enforced entirely by
+ * Postgres RLS (`supabase/migrations/0023_dashboard_notes_direct_rls.sql`'s
+ * `public.is_admin()`-based policies plus a `BEFORE INSERT/UPDATE` trigger that server-side
+ * pins `created_by_name` so a client can never spoof it), not by anything in this file or the
+ * UI layer -- matches the web client's own `dashboardNotesClient.js`, which is likewise a thin
+ * pass-through with no authorization logic of its own.
+ *
  * NOT yet migrated: `users` (web-only administration; Android's Users screen is read-only) --
  * still reads Firestore, unchanged, via [RecordsRepository]'s Firestore branch below.
  */
@@ -98,7 +108,8 @@ val SUPABASE_MIGRATED_TABLES = setOf(
     "knowledge_notes",
     "knowledge_service_codes",
     "knowledge_media",
-    "knowledge_documents"
+    "knowledge_documents",
+    "dashboard_notes"
 )
 
 data class CapRecord(

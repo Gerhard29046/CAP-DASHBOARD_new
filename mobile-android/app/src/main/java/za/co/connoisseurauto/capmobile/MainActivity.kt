@@ -157,7 +157,13 @@ class MainViewModel @Inject constructor(
             Triple("knowledge_media", "knowledge_base.view", true),
             Triple("knowledge_documents", "knowledge_base.view", true),
             Triple("knowledge_service_codes", "knowledge_base.view", true),
-            Triple("users", "users.view", true)
+            Triple("users", "users.view", true),
+            // Global read for any signed-in user (RLS-enforced, see Core.kt's dashboard_notes
+            // KDoc) -- the web client shows StickyNotes.jsx on the Dashboard for every user
+            // unconditionally, with no permission check of its own. "dashboard.view" is the
+            // closest real equivalent to "no gate" in this permission-keyed list: every real
+            // account already has it, since it's what shows the Dashboard tab at all.
+            Triple("dashboard_notes", "dashboard.view", true)
         ).filter { (_, permission) -> user.hasPermission(permission) }.map { it.first }
         recordsJob?.cancel()
         recordsJob = viewModelScope.launch {
