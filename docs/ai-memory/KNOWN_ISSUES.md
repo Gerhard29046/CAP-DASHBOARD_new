@@ -40,9 +40,11 @@
   not introduced by this fix; worth a future decision on whether to hide that field or wire it
   to a real `auth.admin.updateUserById` call (also service_role-gated, same constraint as
   account creation above).
-- Directly informs Android Phase 8 (Users + Roles): Android's own role/permission-editing UI
-  should write `effective_permissions` only, the same real column this fix confirmed is
-  authoritative — not replicate web's now-removed `permission_overrides` pattern.
+- **UPDATE (2026-08-16, same day): Android Phase 8 landed**, `e703177`, real-build-verified
+  (`BUILD SUCCESSFUL`, 23/23 tests, 0 lint errors/30 warnings, real APK) — `UsersScreen`/
+  `UserDetailScreen` write exactly `{full_name, email, role, is_active, effective_permissions}`,
+  confirming the prediction below and not replicating web's now-removed `permission_overrides`
+  pattern. See `ROADMAP.md`'s Phase 8 entry for full detail.
 
 ## LIVE BUG, WEB — Knowledge Base photo/document uploads permanently break 7 days after upload (found 2026-08-15, during Android parity Phase 5, independently verified)
 
