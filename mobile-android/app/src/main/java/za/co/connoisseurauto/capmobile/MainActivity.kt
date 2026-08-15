@@ -262,6 +262,20 @@ class MainViewModel @Inject constructor(
      *  `public.users.photo_path` via [save] regardless of whether this succeeds. */
     suspend fun deleteAvatar(path: String) = avatarRepository.deleteAvatar(path)
 
+    /**
+     * Saves the signed-in user's own editable profile fields (`full_name`/`photo_path`) and
+     * replaces [state]'s in-memory [CapUser] with the row the server actually returned -- so the
+     * saved value is what's shown, not what was submitted, and it is visible immediately rather
+     * than only after the next restore. Suspending and propagating like the upload wrappers
+     * above, so the calling screen owns its own loading/error state instead of this going
+     * through [actionMessage].
+     */
+    suspend fun updateProfile(userId: String, fields: Map<String, String?>): CapUser {
+        val updated = auth.updateProfile(userId, fields)
+        state = state.copy(user = updated)
+        return updated
+    }
+
     fun clearMessage() { actionMessage = null }
     fun checkHealth() = viewModelScope.launch { statusRepo.checkHealth() }
     fun sync() = state.user?.let { user -> viewModelScope.launch { statusRepo.sync(user) } }
@@ -786,7 +800,7 @@ private fun ScreenContent(
         "Users" -> SimpleRecordsScreen("users", data, "name", "email", "No users found.", searchPlaceholder = "Search users", noMatches = "No users match your search.")
         "Status" -> StatusScreen(vm)
         "More" -> MoreScreen(user, onNavigate, vm::logout)
-        "Account" -> AccountScreen(user, vm::logout)
+        "Account" -> AccountScreen(user, vm, vm::logout)
         "LogNewService" -> LogNewServiceScreen(data.collection("clients"), data.collection("machines"), vm::save, vm.actionMessage, vm, { onNavigate("Dashboard") }) { onNavigate("Dashboard") }
         "BookIn" -> BookInScreen(data.collection("clients"), data.collection("machines"), data.collection("job_cards"), vm::save, vm.actionMessage, vm, onOpen, { onNavigate("Dashboard") }) { onNavigate("Dashboard") }
     }
@@ -974,46 +988,188 @@ private fun MoreScreen(user: CapUser, onNavigate: (String) -> Unit, onLogout: ()
     }
 }
 
-/** Phase 12 Account screen: identity summary, auth provider, app build, and logout with confirmation. */
+/**
+ * Account screen: editable identity (profile photo + display name), read-only account facts, app
+ * build, and logout with confirmation.
+ *
+ * Cross-platform parity Phase 7 made the photo and name editable. Both writes go through
+ * [MainViewModel.updateProfile], which replaces the in-memory [CapUser] with the row the server
+ * returned — so this screen re-renders from saved state rather than from what it submitted.
+ *
+ * Known live constraint, surfaced honestly rather than hidden: migration 0026 (which adds
+ * `public.users.photo_path` and fixes the `profile-images` bucket's RLS) is not applied to
+ * production yet. Until it is, [CapUser.photoPath] is always null and a real save attempt fails
+ * server-side. That failure is shown as a normal inline error — nothing here fakes success or
+ * disables the controls to paper over it.
+ */
 @Composable
-private fun AccountScreen(user: CapUser, onLogout: () -> Unit) {
+private fun AccountScreen(user: CapUser, vm: MainViewModel, onLogout: () -> Unit) {
     var confirmLogout by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+
+    // Signed URL for display only, re-resolved whenever the stored permanent path changes.
+    // Never persisted — the path is the durable value, the URL expires.
+    var photoUrl by remember(user.photoPath) { mutableStateOf<String?>(null) }
+    var resolvingPhoto by remember(user.photoPath) { mutableStateOf(user.photoPath != null) }
+    var uploadingPhoto by remember { mutableStateOf(false) }
+    var photoError by remember { mutableStateOf<String?>(null) }
+
+    var editingName by remember(user.name) { mutableStateOf(false) }
+    var nameDraft by remember(user.name) { mutableStateOf(user.name) }
+    var savingName by remember { mutableStateOf(false) }
+    var nameError by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(user.photoPath) {
+        val path = user.photoPath
+        if (path == null) {
+            photoUrl = null
+            resolvingPhoto = false
+            return@LaunchedEffect
+        }
+        resolvingPhoto = true
+        photoUrl = runCatching { vm.createAvatarSignedUrl(path) }.getOrNull()
+        resolvingPhoto = false
+    }
+
+    suspend fun uploadPickedAvatar(uri: Uri) {
+        uploadingPhoto = true
+        photoError = null
+        try {
+            val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                ?: throw IllegalStateException("Could not read the selected photo.")
+            val contentType = context.contentResolver.getType(uri) ?: "image/jpeg"
+            val path = vm.uploadAvatar(user.id, bytes, contentType)
+            // Two-step, same as record photos: Storage first, then persist the permanent path.
+            vm.updateProfile(user.id, mapOf("photo_path" to path))
+        } catch (error: Exception) {
+            photoError = error.message ?: "Could not update your profile photo. Please try again."
+        }
+        uploadingPhoto = false
+    }
+
+    val pickPhotoLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) scope.launch { uploadPickedAvatar(uri) }
+    }
+
+    fun saveName() {
+        val trimmed = nameDraft.trim()
+        if (trimmed.isBlank()) {
+            nameError = "Name cannot be empty."
+            return
+        }
+        scope.launch {
+            savingName = true
+            nameError = null
+            try {
+                vm.updateProfile(user.id, mapOf("full_name" to trimmed))
+                editingName = false
+            } catch (error: Exception) {
+                nameError = error.message ?: "Could not save your name. Please try again."
+            }
+            savingName = false
+        }
+    }
 
     Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).imePadding(),
         verticalArrangement = Arrangement.spacedBy(Spacing.md)
     ) {
         CapCard {
-            Row(
+            Column(
                 Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(Spacing.sm)
             ) {
-                CapUserAvatar(initialsOf(user.name))
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        user.name.ifBlank { "Signed-in user" },
-                        style = MaterialTheme.typography.titleMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        user.email,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
+                AccountAvatar(
+                    initials = initialsOf(user.name),
+                    url = photoUrl,
+                    resolving = resolvingPhoto,
+                    uploading = uploadingPhoto,
+                    hasPhoto = user.photoPath != null,
+                    onClick = {
+                        photoError = null
+                        pickPhotoLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                    }
+                )
+                Text(
+                    user.name.ifBlank { "Signed-in user" },
+                    style = MaterialTheme.typography.titleLarge,
+                    textAlign = TextAlign.Center,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    user.email,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
                 CapStatusBadge(user.role.ifBlank { "User" }, StatusTone.Info)
+                photoError?.let { CapInlineError(it) }
             }
         }
 
         CapCard {
-            CapListItem(user.name.ifBlank { "Not set" }, subtitle = "Name", leading = { Icon(Icons.Outlined.Person, null) })
+            if (editingName) {
+                Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                    CapTextField(
+                        label = "Name",
+                        value = nameDraft,
+                        onValueChange = { nameDraft = it; nameError = null },
+                        enabled = !savingName,
+                        imeAction = ImeAction.Done,
+                        keyboardActions = KeyboardActions(onDone = { saveName() }),
+                        errorMessage = nameError
+                    )
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                        Box(Modifier.weight(1f)) {
+                            CapSecondaryButton(
+                                text = "Cancel",
+                                onClick = {
+                                    nameDraft = user.name
+                                    nameError = null
+                                    editingName = false
+                                },
+                                enabled = !savingName
+                            )
+                        }
+                        Box(Modifier.weight(1f)) {
+                            CapPrimaryButton(text = "Save", onClick = { saveName() }, loading = savingName)
+                        }
+                    }
+                }
+            } else {
+                CapListItem(
+                    user.name.ifBlank { "Not set" },
+                    subtitle = "Name",
+                    leading = { Icon(Icons.Outlined.Person, null) },
+                    trailing = {
+                        Icon(
+                            Icons.Outlined.Edit,
+                            "Edit name",
+                            Modifier.size(20.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    },
+                    onClick = {
+                        nameDraft = user.name
+                        nameError = null
+                        editingName = true
+                    }
+                )
+            }
             CapListItem(user.email.ifBlank { "Not set" }, subtitle = "Email", leading = { Icon(Icons.Outlined.Email, null) })
             CapListItem(user.role.ifBlank { "Not set" }, subtitle = "Role", leading = { Icon(Icons.Outlined.Badge, null) })
             CapListItem("Supabase", subtitle = "Authentication provider", leading = { Icon(Icons.Outlined.Security, null) })
+            Text(
+                "Your email address and role are managed by an administrator and can't be changed here.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = Spacing.sm, vertical = Spacing.xs)
+            )
         }
 
         CapCard {
@@ -1031,6 +1187,76 @@ private fun AccountScreen(user: CapUser, onLogout: () -> Unit) {
         LogoutConfirmDialog(onDismiss = { confirmLogout = false }) {
             confirmLogout = false
             onLogout()
+        }
+    }
+}
+
+/**
+ * The account header's profile photo: the user's uploaded image when one exists, otherwise the
+ * same Primary-tinted identity treatment [CapIdentityMark] and [CapUserAvatar] use, so a
+ * photo-less account still reads as part of the product rather than as a broken image. [url] is a
+ * signed URL the caller resolved from the permanent path — never persisted.
+ *
+ * The camera badge is decorative and carries no click handler of its own, so it can't shadow the
+ * avatar's own tap target; the whole circle is one 96dp target, comfortably above Material's
+ * minimum on a small phone.
+ */
+@Composable
+private fun AccountAvatar(
+    initials: String,
+    url: String?,
+    resolving: Boolean,
+    uploading: Boolean,
+    hasPhoto: Boolean,
+    onClick: () -> Unit
+) {
+    var failed by remember(url) { mutableStateOf(false) }
+    val label = if (hasPhoto) "Profile photo. Tap to change it." else "No profile photo. Tap to add one."
+    Box(
+        Modifier
+            .size(96.dp)
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f))
+            .clickable(enabled = !uploading, onClick = onClick)
+            .semantics { contentDescription = label },
+        contentAlignment = Alignment.Center
+    ) {
+        when {
+            uploading || resolving -> CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+            url != null && !failed -> AsyncImage(
+                model = url,
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop,
+                onState = { state -> if (state is AsyncImagePainter.State.Error) failed = true }
+            )
+            hasPhoto -> Icon(
+                Icons.Outlined.BrokenImage,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            else -> Text(
+                initials.take(2).uppercase(),
+                style = MaterialTheme.typography.headlineMedium,
+                color = MaterialTheme.colorScheme.primary
+            )
+        }
+        if (!uploading) {
+            Box(
+                Modifier
+                    .align(Alignment.BottomEnd)
+                    .size(30.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primary),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.Outlined.PhotoCamera,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
         }
     }
 }

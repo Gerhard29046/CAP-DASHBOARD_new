@@ -501,6 +501,18 @@ class AuthRepository @Inject constructor(
         return user
     }
 
+    /**
+     * Write side of [loadProfile] -- the signed-in user's own `public.users` row, PostgREST,
+     * never Firestore's separate `users` collection (see this file's closing note on why those
+     * two are currently different data sources). Deliberately propagates the underlying
+     * exception rather than flattening it into [ApiException] the way login does: the caller
+     * here is a screen that owns its own inline error state and shows `error.message` directly,
+     * and those messages are already user-facing -- including the real server-side rejection
+     * raised when a field is not self-editable.
+     */
+    suspend fun updateProfile(userId: String, fields: Map<String, String?>): CapUser =
+        supabaseAuth.updateProfile(userId, fields)
+
     suspend fun logout() {
         supabaseAuth.logout()
         runCatching { firebaseAuth.signOut() }
