@@ -19,6 +19,10 @@
   `gerhardvanwijk@gmail.com` / `3f30316d2958f170287083b0b7d680b5` now.
 - **Deployment itself is still gated on the user's explicit go-ahead per standing policy** — this
   entry only closes the account-identity blocker, it is not itself authorization to deploy.
+- **UPDATE (2026-08-16, overnight): the user gave that explicit go-ahead** ("push to git and
+  deploy... make sure it is live on cloudflare") and a real deploy was run and independently
+  verified live — see `SESSION_LOG.md`'s matching overnight entry. This account-identity fix is
+  confirmed working under real deploy conditions now, not just via `whoami`/dry-run checks.
 
 
 ## RESOLVED (2026-08-16, later same day) — migration 0027 applied, live-verified end-to-end
