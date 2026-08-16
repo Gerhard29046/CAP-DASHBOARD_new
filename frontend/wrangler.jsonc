@@ -1,6 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "capdashboard",
+  "account_id": "3f30316d2958f170287083b0b7d680b5",
   "compatibility_date": "2026-07-20",
   "assets": {
     "directory": "./dist",
