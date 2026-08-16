@@ -1,5 +1,39 @@
 # Session Log
 
+## 2026-08-16 (later same day) — Delete for Clients/Job Cards/Knowledge Base (both platforms) + CSV importer "update existing customer" — all real-build-verified
+- Objective, direct user request: "make sure i can delete clients... delete clients and jobs
+  that is booked in, knowledge base... import a csv customer data from pastel sage one online
+  accounting... to update the customers... build after this so i can test it on website and
+  android phone." User also confirmed migration 0026 (profile photo) was applied.
+- **Root-caused why Client delete was broken, not guessed**: `ClientDetail.jsx`'s delete dialog
+  promises "delete `<client>` and all its machines," but `machines.client_id` was `on delete
+  restrict` (the opposite) since `0001_initial_schema.sql`. Wrote
+  `supabase/migrations/0027_client_delete_cascade_and_import_updates.sql` (cascade fix + 3
+  delete-permission catalog rows + `client_imports.updated_count`) — **NOT yet applied**,
+  independently confirmed via a new `qa-check-0026-0027-applied.mjs` script (also independently
+  confirmed 0026 IS live, matching the user's report rather than just trusting it).
+- **Job Cards and Knowledge Base had NO delete UI anywhere on web at all** (not broken, never
+  built) — added both, matching `ClientDetail.jsx`'s existing `AlertDialog` pattern exactly.
+  Neither needs a migration (their cascade FKs were already correct).
+- **CSV importer can now update existing customers**, not just create new ones — previously
+  "nothing existing is ever overwritten." New `buildUpdatePayload()` (partial, non-destructive:
+  only fields with a new value are sent, notes are appended not overwritten, `is_active` never
+  touched), 4 new unit tests. Per-row checkbox replaced with a 3-way action select (Skip/Update
+  Existing/Import as New); `exact_match` rows now default to "Update Existing". `.csv` accepted
+  alongside `.xlsx`/`.xls`.
+- **Android parity, same session**: delete UI for Client/Job Card/Knowledge Base detail screens
+  (new `MainViewModel.deleteThenRun()`, `CapConfirmDialog`, permission-gated on the same 3 keys
+  the migration adds), plus `photo_path` added to `SupabaseAuth.kt`'s `PROFILE_COLUMNS` now that
+  0026 is confirmed live — the one remaining wiring gap for avatars to load on login.
+- Verified for real, both platforms: web `lint`/`typecheck`/`test` (24/24)/`build` all clean;
+  Android `BUILD SUCCESSFUL`, 16/16 tests, 0 lint errors/27 warnings, real APK. Commits:
+  `d6d7f20` (migration+script), `798f460` (web), `1d17f20` (Android).
+- **Blocking, needs the user**: apply `0027_client_delete_cascade_and_import_updates.sql` via
+  the SQL Editor before Client deletion (of any client with machines) actually works — Job
+  Card/Knowledge Base deletion already works without it.
+- Remaining phases (9 Settings, 10 Theming, 13 Responsiveness, final parity audit table) still
+  not started, per the user's own explicit note to keep tracking them.
+
 ## 2026-08-16 — Severe web User Admin bug found+fixed; Android Phases 8/11/12 (Users+Roles, real Status checks, complete Firebase removal) all shipped and real-build-verified
 - Objective: continue the cross-platform parity initiative per the user's standing instruction
   ("do not build after each phase, continue until you done"). Started by scoping Android Phase 8

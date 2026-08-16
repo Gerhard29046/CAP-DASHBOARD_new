@@ -9,6 +9,14 @@ process rule this and all future feature work must follow: web first, Android se
 compare, extend not fork, verify full flow, report parity). Maps directly onto the earlier
 13-commit list — nothing lost, just reframed with an explicit web-or-both lens per phase.
 
+**2026-08-16, later same day — out-of-band user request, NOT one of the 15 phases below, does
+not change their status**: delete for Clients/Job Cards/Knowledge Base + CSV importer
+"update existing customer" (both platforms, real-build-verified — see `SESSION_LOG.md`'s
+matching entry and `KNOWN_ISSUES.md`'s migration-0027-not-yet-applied entry). Explicitly
+tracked separately per the user's own instruction ("keep note that we still need to do the
+rest of the phases") — Phases 9/10/13 and the final parity audit table are still NOT started,
+unaffected by this work.
+
 **Running checklist** (updated as each phase lands, not before):
 
 | Phase | Item | Status |

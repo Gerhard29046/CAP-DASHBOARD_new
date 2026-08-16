@@ -1,5 +1,38 @@
 # Known Issues
 
+## LIVE BUG, WEB+ANDROID — "Delete Client" fails for any client with machines; migration 0027 written, NOT yet applied (found+fixed 2026-08-16)
+
+- **Root cause, confirmed against the live schema**: `ClientDetail.jsx`'s delete confirmation
+  dialog has always said "This will permanently delete `<client>` and all its machines," but
+  `0001_initial_schema.sql` defined `machines.client_id` as `references public.clients (id) on
+  delete restrict` — the opposite of what the UI promises. Any client with at least one machine
+  (almost every real one) cannot actually be deleted; Postgres rejects it with a foreign-key-
+  violation error. `sites.client_id`/`job_cards.client_id` were already correct (cascade / set
+  null); `machines` was the one broken link.
+- **Fix written**: `supabase/migrations/0027_client_delete_cascade_and_import_updates.sql` drops
+  and recreates the constraint as `on delete cascade` (constraint name looked up dynamically via
+  `pg_constraint`, not guessed). Same migration adds `clients.delete`/`job_cards.delete`/
+  `knowledge_base.delete` to `public.permissions` (already RLS-enforced, just never in the
+  catalog) and `client_imports.updated_count` (new CSV-importer "update existing customer"
+  feature, see below).
+- **NOT yet applied — independently confirmed live, not assumed**:
+  `supabase/scripts/qa-check-0026-0027-applied.mjs` (service-role, read-only) shows
+  `client_imports.updated_count` missing as of 2026-08-16, meaning migration 0027 itself has not
+  been run yet. **Client deletion will continue to fail for any client with machines until the
+  user applies this migration via the SQL Editor.** The same check independently confirmed
+  migration 0026 (`users.photo_path`) IS live, matching the user's own report — Android's
+  `PROFILE_COLUMNS` was updated to include it on the strength of that independent confirmation,
+  not the report alone.
+- Also delivered this session (both platforms, real-build-verified): delete UI for Job Cards and
+  Knowledge Base entries (neither had ANY delete capability on web before — not broken, simply
+  never built), and a CSV/Excel importer "update existing customer" action (Pastel/Sage One
+  Online Accounting export, explicit user request) — see `SESSION_LOG.md`'s matching entry for
+  full detail on all of the above.
+- Job Cards and Knowledge Base delete do NOT depend on 0027 — `job_card_lines`/`knowledge_notes`/
+  `knowledge_service_codes`/`knowledge_media`/`knowledge_documents` all already cascade
+  correctly (`0001_initial_schema.sql`), so those two work as soon as the code ships, with no
+  migration needed. Only Client deletion (of a client with machines) is blocked on 0027.
+
 ## RESOLVED (2026-08-16) — Web User Admin "Save User" was 400ing in production on every save; "Create User" and "reset another user's password" were both non-functional by design, not just buggy (found while scoping Android Phase 8 parity)
 
 - `frontend/src/pages/UserAdmin.jsx`'s `save()` sent `name` in its payload; `public.users` has
