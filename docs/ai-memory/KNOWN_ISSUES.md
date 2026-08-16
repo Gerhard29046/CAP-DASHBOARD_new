@@ -1,5 +1,26 @@
 # Known Issues
 
+## RESOLVED (2026-08-16) — Cloudflare account mismatch, fully fixed and independently confirmed
+
+- This machine's local Wrangler CLI was authenticated as `gerhard.ark.of.war@gmail.com`
+  (account `72e8ade6697337b0bc2f2746b5570ff6`) — an unrelated account owning only
+  `insightwire`/`lekkervibes` — while the real production `capdashboard` Worker lives under
+  `Gerhardvanwijk@gmail.com's Account` (`3f30316d2958f170287083b0b7d680b5`). First discovered
+  when a deploy attempt was correctly stopped before running (`wrangler deployments list
+  --name capdashboard` returned "This Worker does not exist on your account").
+- **Fixed in two steps, both user-approved, both independently verified rather than taken on
+  trust**: (1) `frontend/wrangler.jsonc` pinned with `"account_id":
+  "3f30316d2958f170287083b0b7d680b5"` (`e54f15c`) — confirmed working by the fact that the
+  exact same `deployments list` command's error changed from "Worker does not exist" to
+  "Authentication error", with Wrangler's own warning explicitly naming the pinned account,
+  proving the pin was being read correctly even while the account itself was still wrong. (2)
+  User re-authenticated (`wrangler logout` + `login`) to the correct account. Re-confirmed
+  independently afterward via a fresh `wrangler whoami` — genuinely shows
+  `gerhardvanwijk@gmail.com` / `3f30316d2958f170287083b0b7d680b5` now.
+- **Deployment itself is still gated on the user's explicit go-ahead per standing policy** — this
+  entry only closes the account-identity blocker, it is not itself authorization to deploy.
+
+
 ## RESOLVED (2026-08-16, later same day) — migration 0027 applied, live-verified end-to-end
 
 - User applied `0027_client_delete_cascade_and_import_updates.sql` via the SQL Editor. Confirmed
