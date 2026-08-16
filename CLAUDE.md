@@ -222,15 +222,16 @@ Use for:
 
 ### `supabase-android-bee`
 
-Use for mobile-android's Supabase Auth/data-layer work — the Android→Supabase migration's
-data/integration side (see `docs/android/ANDROID_SUPABASE_MIGRATION.md` for phase status):
+Use for mobile-android's Supabase Auth/data-layer work (see `docs/android/ANDROID_SUPABASE_MIGRATION.md`
+for phase history — the Android→Supabase migration itself completed 2026-08-16, Firebase fully
+removed, see CLAUDE.md 6.2 and `docs/ai-memory/ROADMAP.md`'s Phase 12 entry):
 
 - Supabase Auth (`SupabaseAuth.kt`) — login, session, token handling;
 - Supabase Postgres access (`SupabaseData.kt`, `Core.kt` repositories/Hilt);
 - RLS-respecting query design — RLS in `supabase/migrations/*.sql` is authoritative, never
   bypassed, never worked around client-side;
-- migrating remaining Firebase-backed screens/repositories onto the shared Supabase backend
-  `frontend/` already uses live (never a separate Android-only backend);
+- ongoing repository/data-layer work on the now-shared Supabase backend `frontend/` already uses
+  live (never a separate Android-only backend);
 - identifying and reporting (not silently rebuilding) any remaining Google Calendar-related
   legacy Android code, since that feature is retired for the web app.
 
@@ -280,8 +281,8 @@ modifies code — only reports, under a fixed heading structure (see its agent d
 This repository contains three applications plus a mostly superseded API:
 
 - `frontend/`: React/Vite web client, deployed to Cloudflare through `wrangler.jsonc`, project name `capdashboard`.
-- `mobile-android/`: Native Kotlin/Compose client using MVVM, Hilt, Room, and WorkManager. **Still on Firebase** — see 6.2.
-- `backend/`: Laravel 13 API using MySQL, Sanctum, models, controllers, middleware, and tests. Superseded by Supabase for the web client (see below); not used by the web/Android clients for normal CRUD.
+- `mobile-android/`: Native Kotlin/Compose client using MVVM, Hilt, Room, and WorkManager. **Fully on Supabase, Firebase completely removed** (2026-08-16) — see 6.2.
+- `backend/`: Laravel 13 API using MySQL, Sanctum, models, controllers, middleware, and tests. Superseded by Supabase for both clients (see below); not used by the web/Android clients for normal CRUD.
 - No backend service beyond `frontend/` and `backend/` (Laravel, superseded). Dashboard notes (sticky notes) are a normal Supabase-backed feature, direct client→Postgres RLS, same as everything else — no Cloud Function, no Worker. `functions/` (the old Firebase Cloud Functions dir) and `workers/dashboard-notes-api/` (a same-day, since-superseded Cloudflare Worker replacement) were both deleted entirely 2026-08-13 — see DECISIONS.md for the full history.
 - `docs/`: API, deployment, setup, and implementation documentation.
 
@@ -325,13 +326,17 @@ Authorization for client data is enforced by Postgres Row Level Security policie
 
 Laravel middleware protects Laravel routes only. It does not protect Supabase client operations.
 
-## 6.2 The Android client (`mobile-android/`) remains on Firebase — deliberately, not yet migrated
+## 6.2 The Android client (`mobile-android/`) — Firebase→Supabase migration complete as of 2026-08-16
 
-Android was explicitly kept out of scope during the web cutover (both the original redesign brief and the cutover instruction itself only addressed the web app). Android still uses Firebase Auth + Firestore directly, unchanged. **Do not assume web's cutover applies to Android.** Firebase project/data for Android has not been touched, deleted, or migrated.
+**UPDATE 2026-08-16: this section previously said Android "remains on Firebase, deliberately, not yet migrated." That is no longer true — the migration ran across several sessions (Phases A–L of `docs/android/ANDROID_SUPABASE_MIGRATION.md` plus the cross-platform parity initiative's Phases 8/11/12) and is now complete.** Android's data layer (`SupabaseData.kt`), auth layer (`SupabaseAuth.kt`), and storage layer (`SupabaseStorage.kt`) talk directly to the same Supabase project the web client uses (`cjvrquipmnoihksijful`), through plain REST (`HttpURLConnection`/`org.json`), authorized by the signed-in user's own Supabase access token against the same Postgres RLS policies web relies on. `RecordsRepository`/`AuthRepository`/`StatusRepository` (`Core.kt`) are now thin pass-throughs to that layer, not Firestore routers.
 
-## 6.3 Old Firebase data — not deleted, just unused by the web client now
+**As of `408fe0e` (2026-08-16), Firebase has been completely removed from `mobile-android/`** — no `firebase-*` Gradle dependency, no `google-services` plugin, no `google-services.json`, no `com.google.firebase.*` import anywhere in the source tree. This was verified for real, not just asserted: a full clean Gradle build, `:app:dependencies` showing zero resolved Firebase artifacts, and the actual built APK's dex files/manifest/resources grepped for "firebase" case-insensitively with zero matches. Do not assume any future Android work needs to account for a Firebase code path — there isn't one anymore. See `docs/ai-memory/ROADMAP.md`'s Phase 12 entry and `docs/ai-memory/DECISIONS.md` for the full history.
 
-Firestore (project `capdatabasefb2`) and Firebase Auth still physically contain the original data (it was never deleted, only superseded as the web client's live data source). Whether to archive, keep, or delete that data/project (and its billing) is the user's decision, not made as part of the cutover — cutting over the web client's code path does not delete anything.
+**One pre-existing, disclosed exception, not yet cleaned up**: `mobile-android/app/src/androidTest/.../LiveFirebaseSmokeTest.kt`, an already-stale instrumented UI test (references deleted UI text, unrelated to the actual Firebase removal — it imports no real Firebase class, so it didn't block removal). Renaming/fixing it is flagged, deliberately deferred, not done.
+
+## 6.3 Old Firebase project data — not deleted, a real open question independent of the code removal above
+
+Firestore (project `capdatabasefb2`) and Firebase Auth still physically contain the original data (it was never deleted, only superseded first as the web client's live data source, 2026-08-13, then as Android's, across the migration above). **Removing Firebase from the Android codebase (6.2) does not delete this project or its data** — those are separate concerns (code vs. hosted data/billing). Whether to archive, keep, or delete that data/project is still the user's decision, not made as part of either cutover.
 
 ## 6.4 PERMANENT POLICY: Firebase is retired for the web app — never reintroduce it, not even for a Cloud Function or a test
 
@@ -340,7 +345,7 @@ The user issued a formal, written, **PERMANENT / NON-NEGOTIABLE** policy on 2026
 - Never create, restore, or extend any Firebase/GCP resource for the web app — no new Firestore collection, Firebase Auth user/config, Firebase Storage bucket, Firebase Cloud Function, Firebase Hosting config, `firebase`/`firebase-admin`/`firebase-functions` dependency, Firebase env var, project ID, or service-account credential. **No exception for testing** — use Supabase test users/records instead, fully cleaned up after.
 - A missing feature, failed test, or deployment problem is **never** authorization to reach for Firebase or enable GCP billing. If something genuinely seems to need Firebase, stop and design it with Supabase (Auth/Postgres/RLS/Storage/Edge Functions) or Cloudflare Workers instead, or report the gap to the user — do not implement it with Firebase and do not silently enable GCP billing to unblock development.
 - The existence of old Firebase Cloud Function code is not permission to create another one. There shouldn't be any server-side service left for the web app at all as of 2026-08-13 — `dashboardNotes` (the last one) went Firebase Cloud Function → Cloudflare Worker → direct Supabase RLS, same day, once it was confirmed RLS could express its authorization rule. Prefer RLS + `public.is_admin()`/`public.has_permission()` over a new server-side service by default; only reach for Supabase Edge Functions/Cloudflare Workers if RLS genuinely cannot express the rule.
-- **`mobile-android/` scope still genuinely unresolved, not silently assumed either way**: Android (see 6.2) remains fully on Firebase, a separate deliberate decision from before this policy existed. The policy's written text doesn't mention Android; Queen Bee asked the user directly whether it extends there too and has not yet received an answer as of the last time this file was updated — check `docs/ai-memory/DECISIONS.md`'s 2026-08-13 entry for the current status before assuming this rule covers Android, and don't assume it doesn't either.
+- **`mobile-android/` — now moot as a written-policy ambiguity, since there is no Firebase code left in Android to reintroduce (6.2)**: this bullet previously flagged that the 2026-08-13 policy's text didn't explicitly mention Android, and that Queen Bee had asked the user directly whether it extended there without receiving an answer. Android's own Firebase→Supabase migration (a separate, independently-authorized decision — see `docs/ai-memory/DECISIONS.md`) reached completion first, closing the question in practice: this policy's substance (never reach for Firebase/GCP to unblock development) now applies uniformly to both clients, even though it was only ever formally written for the web app.
 
 ---
 
@@ -400,13 +405,13 @@ What was removed:
 - Google Calendar endpoints;
 - Sanctum authentication.
 
-Neither active client currently relies on those Laravel endpoints for the main Firebase-backed resources.
+Neither active client currently relies on those Laravel endpoints for the main Supabase-backed resources.
 
 Therefore:
 
 - do not remove Laravel code casually;
 - do not assume a Laravel endpoint change affects the web or Android app;
-- when changing a shared business rule, inspect Firestore, rules, web, Android, and Laravel for duplicated logic;
+- when changing a shared business rule, inspect Postgres RLS policies (`supabase/migrations/*.sql`), web, Android, and Laravel for duplicated logic;
 - backend behavior changes require feature tests;
 - never rewrite existing migrations;
 - never use `migrate:fresh` against real or shared data.
@@ -415,7 +420,9 @@ Therefore:
 
 # 9. Permission model
 
-The permission model exists in both Laravel and Firebase.
+The permission model exists in both Laravel and Supabase. **UPDATE 2026-08-16**: it used to also
+exist separately in Firestore for Android; that is no longer true (see 6.2) — both clients now
+read/write the same Supabase permission model below, through their own repository layers.
 
 ## Laravel
 
@@ -426,7 +433,7 @@ Relevant structures include:
 - `user_permissions`;
 - related models and middleware.
 
-## Supabase (web client, live)
+## Supabase (web AND Android clients, live)
 
 Relevant structures include:
 
@@ -434,20 +441,20 @@ Relevant structures include:
 - `public.role_permissions`;
 - `public.users.effective_permissions`.
 
-Postgres RLS policies (`supabase/migrations/*.sql`) and the web client both read this data.
-
-## Firestore (Android client only)
-
-Android still reads Firebase permission data (`firestore.rules`, `users/{uid}.effective_permissions`) — unrelated to and not synchronized with the Supabase model above since the web/Android clients no longer share a backend.
-
-These models must be kept consistent deliberately within each client's own backend.
+Postgres RLS policies (`supabase/migrations/*.sql`) are the one authorization layer both clients
+read against. Android reads/writes this exactly like web does now: `SupabaseAuth.kt`/
+`SupabaseData.kt` for the signed-in user's own permissions, and `MainActivity.kt`'s
+`UsersScreen`/`UserDetailScreen` (Phase 8, cross-platform parity) for admin role/permission
+editing of other users — the same real columns, same RLS, same
+`restrict_self_user_update_trigger` enforcement web relies on.
 
 When modifying permissions:
 
 1. identify the authoritative behavior expected by active clients;
-2. inspect Postgres RLS policies (web) and Firestore rules (Android) — they are two independent systems now, not one;
+2. inspect Postgres RLS policies (`supabase/migrations/*.sql`) — the one authorization layer both
+   web and Android now share;
 3. inspect web permission checks;
-4. inspect Android permission checks;
+4. inspect Android permission checks (now the same Supabase model, not a separate system);
 5. inspect `dashboard_notes`'s RLS policies (`supabase/migrations/0023_dashboard_notes_direct_rls.sql`) if touching notes — creator-or-admin logic lives in RLS + `public.is_admin()`, not application code;
 6. inspect Laravel duplication;
 7. update tests for all affected active layers;
@@ -569,22 +576,21 @@ Important navigation behavior requires Compose/UI tests when practical.
 - Never run destructive database commands without explicit approval.
 - Do not assume Laravel is the active data path without tracing the client.
 
-## Supabase (web client)
+## Supabase (web AND Android clients)
 
-- Treat `supabase/migrations/*.sql` (RLS policies) as production authorization code.
-- The Supabase service_role key is not currently used by any part of the live web app — nothing should reintroduce it into frontend code. Prefer RLS + `public.is_admin()`/`public.has_permission()` for new authorization rules over a server-side service (see section 6's permission-model guidance).
+- Treat `supabase/migrations/*.sql` (RLS policies) as production authorization code for both clients — as of 2026-08-16 (see 6.2), Android's data/auth layer talks to the exact same Supabase project and RLS as web, not a separate Firestore ruleset.
+- The Supabase service_role key is not currently used by any part of either live client — nothing should reintroduce it into frontend or Android code. Prefer RLS + `public.is_admin()`/`public.has_permission()` for new authorization rules over a server-side service (see section 6's permission-model guidance).
 - Do not apply migrations (SQL Editor) without explicit approval.
-- Review RLS policies whenever adding a new table or query pattern.
+- Review RLS policies whenever adding a new table or query pattern, on either client.
 
 ## Cloudflare Workers (`frontend/` only, currently)
 
 - Do not deploy without explicit user approval. Confirm `npx wrangler whoami` shows the correct account before any real deploy (see KNOWN_ISSUES.md).
 
-## Firebase (Android client only — see 6.4, permanently retired for the web app)
+## Firebase (retired for both clients — see 6.2/6.4)
 
-- `firestore.rules` still governs Android's direct Firestore access — treat it as production authorization code for Android.
-- Never expose OAuth secrets in frontend or Android code.
-- Do not deploy Firestore rules, hosting, or indexes without explicit approval.
+- There is no Firebase code, dependency, or config left anywhere in this repository's active clients as of 2026-08-16 (`mobile-android/`'s removal, `408fe0e`, verified — see 6.2). Do not reintroduce it for either client under any circumstance — see section 6.4's permanent policy, which now applies uniformly.
+- Never expose OAuth secrets in frontend or Android code (this rule is backend-agnostic and stays regardless).
 - Do not create any new Firebase/GCP resource for the web app under any circumstance — see section 6.4.
 
 ---
