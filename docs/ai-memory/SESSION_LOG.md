@@ -1,5 +1,12 @@
 # Session Log
 
+## 2026-08-16 (later still) — Migration 0027 applied by user, live-verified end-to-end: client cascade delete confirmed working
+- User applied `0027_client_delete_cascade_and_import_updates.sql`. Independently verified, not
+  taken on trust: `qa-check-0026-0027-applied.mjs` (columns/permission rows) + a new
+  `qa-verify-0027-cascade-delete.mjs` that creates a throwaway client + machine, deletes the
+  client, and re-queries both rows to confirm they're genuinely gone. PASS, no residual data.
+  Client deletion (of a client with machines) now actually works in production.
+
 ## 2026-08-16 (later same day) — Delete for Clients/Job Cards/Knowledge Base (both platforms) + CSV importer "update existing customer" — all real-build-verified
 - Objective, direct user request: "make sure i can delete clients... delete clients and jobs
   that is booked in, knowledge base... import a csv customer data from pastel sage one online

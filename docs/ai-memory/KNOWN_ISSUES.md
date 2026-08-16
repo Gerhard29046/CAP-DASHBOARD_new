@@ -1,6 +1,19 @@
 # Known Issues
 
-## LIVE BUG, WEB+ANDROID — "Delete Client" fails for any client with machines; migration 0027 written, NOT yet applied (found+fixed 2026-08-16)
+## RESOLVED (2026-08-16, later same day) — migration 0027 applied, live-verified end-to-end
+
+- User applied `0027_client_delete_cascade_and_import_updates.sql` via the SQL Editor. Confirmed
+  independently, not taken on trust: `qa-check-0026-0027-applied.mjs` shows all
+  columns/permission rows live, and a new `qa-verify-0027-cascade-delete.mjs` created a
+  throwaway client + machine, deleted the client, then independently re-queried both rows —
+  confirmed genuinely gone (real cascade, not just "the delete call didn't throw"), no residual
+  data left. **Client deletion (including clients with machines) now actually works.**
+- Job Card and Knowledge Base deletion were never blocked on this migration (their cascade FKs
+  were already correct) — both were already live as soon as their code shipped.
+
+**Original finding, preserved below for history:**
+
+## ORIGINAL — "Delete Client" fails for any client with machines; migration 0027 written, NOT yet applied (found+fixed 2026-08-16)
 
 - **Root cause, confirmed against the live schema**: `ClientDetail.jsx`'s delete confirmation
   dialog has always said "This will permanently delete `<client>` and all its machines," but
