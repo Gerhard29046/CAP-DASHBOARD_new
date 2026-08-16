@@ -11,6 +11,16 @@
 // targets (not silently dropped), just stored as clearly labelled lines inside the
 // existing `notes` column instead of their own column. See NOTES_APPENDIX_FIELDS below.
 
+// Defense-in-depth for the exact bug class this file's 2026-08-16 rewrite fixed (see
+// findFilePoolDuplicate's doc comment): any code path about to send an id to Supabase as a
+// clients.id UUID should assert it with this first. Deliberately a plain regex, not a
+// library -- Postgres's `uuid` type accepts the standard 8-4-4-4-12 hex form gen_random_uuid()
+// always produces, so that's the only shape that should ever reach here.
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export function isValidUuid(value) {
+  return typeof value === "string" && UUID_PATTERN.test(value);
+}
+
 // Every field the importer can write to public.clients. `key: null` fields (unmapped) are
 // simply not written. Fields with `appendToNotes: true` don't have their own column yet --
 // see NOTES_APPENDIX_FIELDS.
@@ -134,20 +144,56 @@ export function normalizeRow(rawRow, mapping, extraColumnsToKeep = []) {
   return out;
 }
 
+// Generous sanity ceilings, not business rules -- these exist only to catch a mis-mapped
+// column dumping an entire cell's worth of unrelated data into the wrong field (a common
+// real Excel-export failure mode), not to constrain legitimate business data. None of these
+// are enforced by the database (public.clients' text columns are unbounded), so they are
+// deliberately loose. Never applied to fields the user hasn't chosen to import.
+const FIELD_MAX_LENGTHS = {
+  company_name: 300,
+  contact_person: 300,
+  email: 320, // RFC 5321 max mailbox length
+  phone: 40,
+  address: 2000,
+  legacy_pastel_customer_code: 100,
+  notes: 10000,
+};
+
+// Deliberately permissive (matches real-world messy export data) -- only rejects strings
+// with no "@" or no "." after the "@" at all, not full RFC validation. An email this loose
+// check would reject is almost certainly a data-entry/mapping error, not a real address.
+const LOOSE_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/**
+ * Per-row validation before ANY database write is attempted (2026-08-16, hardening pass).
+ * Deliberately does NOT invent new required fields -- company_name remains the only
+ * required field, matching the pre-existing rule and the real public.clients schema
+ * (every other column is nullable). Optional fields stay optional: a blank/unmapped email
+ * or phone is never an error, only a malformed *non-blank* one is.
+ */
 export function validateRow(row) {
   const errors = [];
   if (!row.company_name || !row.company_name.trim()) errors.push("Missing customer/company name");
+  if (row.email && !LOOSE_EMAIL_PATTERN.test(row.email)) errors.push(`Email does not look valid: "${row.email}"`);
+  for (const [field, max] of Object.entries(FIELD_MAX_LENGTHS)) {
+    if (row[field] && String(row[field]).length > max) {
+      errors.push(`${field.replace(/_/g, " ")} is unusually long (${row[field].length} characters) -- check the column mapping`);
+    }
+  }
   return errors;
 }
 
 /**
- * Classify a normalized import row against already-known existing clients.
- * Returns { status: "new" | "possible_duplicate" | "exact_match", reasons: string[] }.
+ * Classify a normalized import row against the REAL, already-known database clients only.
+ * Returns { status: "new" | "possible_duplicate" | "exact_match", existingClientId,
+ * reasons }. `existingClientId` is ALWAYS either a genuine `clients.id` UUID (sourced
+ * directly from an `existingClients` row) or `null` -- never anything synthesized here.
+ * See `findFilePoolDuplicate` below for the SEPARATE, intra-file duplicate signal this
+ * function intentionally does not produce.
  *
  * Conservative by design (per explicit instruction): name-only similarity is only ever a
  * "possible_duplicate", never an "exact_match". An exact_match requires a strong signal
- * (matching legacy_pastel_customer_code, or matching email, or matching normalized phone)
- * or an exact normalized-name match combined with at least one other matching signal.
+ * (matching legacy_pastel_customer_code, or matching email, or matching normalized phone).
  */
 export function classifyRow(row, existingClients) {
   const reasons = [];
@@ -180,12 +226,58 @@ export function classifyRow(row, existingClients) {
   }
 
   if (strongMatch) {
-    return { status: "exact_match", matchId: strongMatch.id, reasons };
+    return { status: "exact_match", existingClientId: strongMatch.id, reasons };
   }
   if (nameMatch) {
-    return { status: "possible_duplicate", matchId: nameMatch.id, reasons: [`Similar name to existing client "${nameMatch.company_name}"`] };
+    return { status: "possible_duplicate", existingClientId: nameMatch.id, reasons: [`Similar name to existing client "${nameMatch.company_name}"`] };
   }
-  return { status: "new", matchId: null, reasons: [] };
+  return { status: "new", existingClientId: null, reasons: [] };
+}
+
+/**
+ * ROOT-CAUSE FIX (2026-08-16): a real Pastel/Sage export can itself contain the same
+ * customer twice (or more), not just duplicates of already-known database customers. The
+ * previous implementation caught this by adding "new" rows to the SAME pool `classifyRow`
+ * matched against real `existingClients`, tagged with a synthetic `id: "row-17"` -- which
+ * meant a later row matching an EARLIER ROW IN THE SAME FILE (not the database) came back
+ * from classifyRow with `matchId: "row-17"`, a string that is not a UUID and does not exist
+ * in `public.clients`. "Update Existing" then sent it straight to
+ * `PATCH /clients?id=eq.row-17`, which Postgres correctly rejected with `22P02 invalid input
+ * syntax for type uuid`. That failure was silent about *why* -- the row was never actually
+ * matched to a database record at all, it only resembled a row that hadn't been saved yet.
+ *
+ * The fix is a genuinely separate identity: this function is called only against
+ * `filePool` (in-file rows seen so far that were NOT themselves matched to a real database
+ * client), completely independent of `classifyRow`'s `existingClients` matching above.
+ * It returns a row INDEX (a real, harmless number -- never sent to Supabase, never
+ * confused with a UUID) or null, never a synthetic id string standing in for a database key.
+ */
+export function findFilePoolDuplicate(row, filePool) {
+  const rowEmail = normalizeEmail(row.email);
+  const rowPhone = normalizePhone(row.phone);
+  const rowNameLoose = normalizeNameLoose(row.company_name);
+  const rowCode = row.legacy_pastel_customer_code ? String(row.legacy_pastel_customer_code).trim() : "";
+
+  for (const entry of filePool) {
+    const exCode = entry.normalized.legacy_pastel_customer_code ? String(entry.normalized.legacy_pastel_customer_code).trim() : "";
+    const exEmail = normalizeEmail(entry.normalized.email);
+    const exPhone = normalizePhone(entry.normalized.phone);
+    const exNameLoose = normalizeNameLoose(entry.normalized.company_name);
+
+    if (rowCode && exCode && rowCode === exCode) {
+      return { rowIndex: entry.index, reason: `Same customer code (${rowCode}) as row ${entry.index + 1} in this file` };
+    }
+    if (rowEmail && exEmail && rowEmail === exEmail) {
+      return { rowIndex: entry.index, reason: `Same email as row ${entry.index + 1} in this file` };
+    }
+    if (rowPhone && exPhone.length >= 7 && rowPhone === exPhone) {
+      return { rowIndex: entry.index, reason: `Same phone number as row ${entry.index + 1} in this file` };
+    }
+    if (rowNameLoose && exNameLoose && rowNameLoose === exNameLoose) {
+      return { rowIndex: entry.index, reason: `Similar name to row ${entry.index + 1} in this file` };
+    }
+  }
+  return null;
 }
 
 /**
@@ -218,27 +310,48 @@ export function buildUpdatePayload(row, existingClient) {
  * Build the full preview for a parsed spreadsheet: per-row validation + duplicate
  * classification, plus totals for the summary the administrator reviews before confirming.
  *
- * Checks each row against BOTH the existing database (`existingClients`) AND every
- * already-processed row earlier in the same spreadsheet -- a real Pastel export can itself
- * contain duplicate/repeated rows, not just duplicates of already-known customers. A row
- * that would import is added to the running "known" pool (tagged with a synthetic id) so
- * later rows in the same file can be flagged against it too.
+ * Checks each row against BOTH the existing database (`existingClients`, via `classifyRow`)
+ * AND every already-processed row earlier in the same spreadsheet that ISN'T itself a
+ * database match (via `findFilePoolDuplicate`) -- a real Pastel export can itself contain
+ * duplicate/repeated rows, not just duplicates of already-known customers. These are two
+ * genuinely separate signals with two separate identity types (`existingClientId`, a real
+ * `clients.id` UUID or null; `duplicateOfRowIndex`, a row number or null) -- deliberately
+ * never merged into one field, which is exactly the bug this shape fixes (see
+ * `findFilePoolDuplicate`'s own doc comment for the full history).
+ *
+ * A row only enters the in-file pool if it wasn't matched to either a real database client
+ * OR an earlier file row -- otherwise every subsequent occurrence would start colliding with
+ * a duplicate's own (potentially inconsistent) data instead of the original. A 3rd occurrence
+ * of the same row later in the file still correctly matches the 1st (the one actually in the
+ * pool), so nothing is lost by not also pooling duplicates.
  */
 export function buildPreview(rawRows, mapping, existingClients, extraColumnsToKeep = []) {
-  const knownPool = [...existingClients];
+  const filePool = [];
   const rows = rawRows.map((rawRow, index) => {
     const normalized = normalizeRow(rawRow, mapping, extraColumnsToKeep);
     const errors = validateRow(normalized);
-    const classification = errors.length === 0 ? classifyRow(normalized, knownPool) : { status: "invalid", matchId: null, reasons: [] };
-    // Only add to the pool if it's not itself flagged as a duplicate of something already
-    // in the pool -- otherwise every subsequent "new" row would also start colliding with
-    // a duplicate's own (potentially inconsistent) data instead of the original. A 3rd
-    // occurrence of the same row later in the file still correctly matches the 1st (the
-    // one actually in the pool), so nothing is lost by not also pooling duplicates.
-    if (classification.status === "new") {
-      knownPool.push({ id: `row-${index}`, ...normalized });
+    if (errors.length > 0) {
+      return { index, raw: rawRow, normalized, errors, status: "invalid", existingClientId: null, duplicateOfRowIndex: null, reasons: [] };
     }
-    return { index, raw: rawRow, normalized, errors, ...classification };
+
+    const dbMatch = classifyRow(normalized, existingClients);
+    if (dbMatch.status !== "new") {
+      return { index, raw: rawRow, normalized, errors, ...dbMatch, duplicateOfRowIndex: null };
+    }
+
+    const fileMatch = findFilePoolDuplicate(normalized, filePool);
+    if (fileMatch) {
+      return {
+        index, raw: rawRow, normalized, errors,
+        status: "duplicate_in_file",
+        existingClientId: null,
+        duplicateOfRowIndex: fileMatch.rowIndex,
+        reasons: [fileMatch.reason],
+      };
+    }
+
+    filePool.push({ index, normalized });
+    return { index, raw: rawRow, normalized, errors, status: "new", existingClientId: null, duplicateOfRowIndex: null, reasons: [] };
   });
 
   const summary = {
@@ -246,8 +359,102 @@ export function buildPreview(rawRows, mapping, existingClients, extraColumnsToKe
     new: rows.filter((r) => r.status === "new").length,
     possible_duplicate: rows.filter((r) => r.status === "possible_duplicate").length,
     exact_match: rows.filter((r) => r.status === "exact_match").length,
+    duplicate_in_file: rows.filter((r) => r.status === "duplicate_in_file").length,
     invalid: rows.filter((r) => r.status === "invalid").length,
   };
 
   return { rows, summary };
+}
+
+/**
+ * Executes the import for a set of preview rows (from `buildPreview`), one row at a time,
+ * with EACH ROW'S SUCCESS OR FAILURE FULLY ISOLATED from every other row.
+ *
+ * 2026-08-16 reliability rewrite: previously the whole batch ran inside one try/catch, so a
+ * single row's error (originally the "row-17" id-type-confusion bug, but any other row-level
+ * error would have the same effect) aborted every remaining row -- against a real ~877-row
+ * file, the database was left in a partial, uncertain state with no way to safely continue.
+ * Now every row's outcome is recorded independently and the loop always runs to completion,
+ * so a full run always produces an accurate final count, never a partial abort.
+ *
+ * Framework/network-free by design (like the rest of this file) -- `deps.createClient`/
+ * `deps.updateClient` are injected so the exact same failure-isolation/retry logic the real
+ * UI runs can be unit tested with fake implementations that fail on cue, with no live
+ * Supabase connection needed (see customerImport.test.js).
+ *
+ * @param rows - preview rows to execute (a full run, or just a retry subset).
+ * @param getDecision - (row) => "import" | "update" | "skip".
+ * @param existingClients - current known existing clients; used both to build the
+ *   non-destructive update payload (existingClient.notes) and, when `reclassifyOnRetry` is
+ *   set, to re-resolve a row's real target before retrying it.
+ * @param deps.createClient - async (fields) => createdRow (must include the real `.id`
+ *   Postgres generated).
+ * @param deps.updateClient - async (id, fields) => void.
+ * @param reclassifyOnRetry - true for a retry run: re-classifies each "update" row against
+ *   the (caller-refreshed) `existingClients` list before executing, so a retry correctly
+ *   targets anything a previous attempt already created/changed instead of using a
+ *   preview-time-stale id (idempotency safety -- prevents a retry from creating duplicates).
+ * @returns { [rowIndex]: { status: "success"|"updated"|"skipped"|"failed", clientId?, error? } }
+ */
+export async function executeImportRows(rows, getDecision, existingClients, deps, reclassifyOnRetry = false) {
+  const results = {};
+  for (const row of rows) {
+    const decision = getDecision(row);
+    if (row.status === "invalid" || decision === "skip") {
+      results[row.index] = { status: "skipped" };
+      continue;
+    }
+    try {
+      if (decision === "update") {
+        let targetId = row.existingClientId;
+        if (reclassifyOnRetry) {
+          const reclassified = classifyRow(row.normalized, existingClients);
+          if (reclassified.existingClientId) targetId = reclassified.existingClientId;
+        }
+        if (!targetId) {
+          results[row.index] = {
+            status: "failed",
+            error: "This row could not be matched to an existing customer to update.",
+          };
+          continue;
+        }
+        // Defense-in-depth: structurally, targetId can now only ever come from a real
+        // existingClients row (see the identity-model rewrite above), but this assertion
+        // makes it immediately obvious -- instead of a raw Postgres 22P02 error -- if that
+        // ever regresses. See isValidUuid's doc comment.
+        if (!isValidUuid(targetId)) {
+          results[row.index] = {
+            status: "failed",
+            error: `Internal error: expected a database ID, got "${targetId}". This row was not sent to the database.`,
+          };
+          continue;
+        }
+        const existingClient = existingClients.find((c) => c.id === targetId);
+        const payload = buildUpdatePayload(row.normalized, existingClient);
+        if (Object.keys(payload).length > 0) {
+          await deps.updateClient(targetId, payload);
+        }
+        results[row.index] = { status: "updated", clientId: targetId };
+      } else {
+        const created = await deps.createClient({
+          company_name: row.normalized.company_name,
+          contact_person: row.normalized.contact_person || null,
+          email: row.normalized.email || null,
+          phone: row.normalized.phone || null,
+          address: row.normalized.address || null,
+          notes: row.normalized.notes || null,
+          legacy_pastel_customer_code: row.normalized.legacy_pastel_customer_code || null,
+          is_active: true,
+        });
+        results[row.index] = { status: "success", clientId: created?.id };
+      }
+    } catch (e) {
+      results[row.index] = {
+        status: "failed",
+        error: e.message || "Unknown error",
+        errorCode: e.code || null,
+      };
+    }
+  }
+  return results;
 }

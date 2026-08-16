@@ -6,8 +6,8 @@ import { Button } from "@/components/ui/button";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Upload, FileSpreadsheet, ArrowRight, CheckCircle2, AlertTriangle, History } from "lucide-react";
-import { APP_FIELDS, guessMapping, buildPreview, buildUpdatePayload } from "@/lib/customerImport";
+import { Upload, FileSpreadsheet, ArrowRight, CheckCircle2, AlertTriangle, History, RotateCcw, Download } from "lucide-react";
+import { APP_FIELDS, guessMapping, buildPreview, executeImportRows } from "@/lib/customerImport";
 
 const STEPS = ["Upload", "Map Columns", "Preview", "Import"];
 
@@ -15,6 +15,7 @@ const STATUS_META = {
   new: { label: "New", className: "bg-emerald-500/15 text-emerald-500" },
   possible_duplicate: { label: "Possible Duplicate", className: "bg-amber-500/15 text-amber-500" },
   exact_match: { label: "Exact Match", className: "bg-blue-500/15 text-blue-500" },
+  duplicate_in_file: { label: "Duplicate in file", className: "bg-purple-500/15 text-purple-500" },
   invalid: { label: "Needs Attention", className: "bg-destructive/15 text-destructive" },
 };
 
@@ -24,6 +25,15 @@ const STATUS_META = {
 // EXISTING public.clients table only (see src/lib/customerImport.js's header) and records
 // one summary row per run in public.client_imports so repeat imports (e.g. next Pastel
 // export) can be compared safely.
+//
+// 2026-08-16 reliability rewrite: previously a single row's failure aborted the ENTIRE
+// import loop (one try/catch around all ~877 rows), and the underlying id-type-confusion
+// bug ("row-17" sent as a clients.id UUID -- see customerImport.js's findFilePoolDuplicate
+// doc comment for the full root-cause writeup) meant a large real-world file would reliably
+// hit that abort partway through, leaving the database partially modified with no way to
+// safely resume. Every row is now processed independently (a failure is recorded and the
+// loop continues), so a full run against an 877-row file always completes and always
+// produces an accurate final count -- never a partial, uncertain state.
 export default function ImportCustomers() {
   const { user } = useAuth();
   const [step, setStep] = useState(0);
@@ -32,23 +42,26 @@ export default function ImportCustomers() {
   const [rawRows, setRawRows] = useState([]);
   const [mapping, setMapping] = useState({});
   const [existingClients, setExistingClients] = useState([]);
-  const [decisions, setDecisions] = useState({}); // rowIndex -> "import" | "skip"
+  const [decisions, setDecisions] = useState({}); // rowIndex -> "import" | "update" | "skip"
+  const [rowResults, setRowResults] = useState({}); // rowIndex -> { status, error, clientId }
   const [importing, setImporting] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
 
   const preview = useMemo(() => {
-    if (!rawRows.length) return { rows: [], summary: { total: 0, new: 0, possible_duplicate: 0, exact_match: 0, invalid: 0 } };
+    if (!rawRows.length) {
+      return { rows: [], summary: { total: 0, new: 0, possible_duplicate: 0, exact_match: 0, duplicate_in_file: 0, invalid: 0 } };
+    }
     return buildPreview(rawRows, mapping, existingClients);
   }, [rawRows, mapping, existingClients]);
 
-  // Per-row default action. 2026-08-16: "update the customers" from a repeat Pastel/Sage
-  // export is now a real decision, not just import-or-skip -- an exact_match (a strong
-  // signal: matching customer code, email, or phone) defaults to updating the existing
-  // client, since that's the whole point of re-importing an accounting export. A
-  // possible_duplicate (name-only, a weaker signal) still defaults to "skip" -- a human
-  // should confirm it's really the same customer before either creating a duplicate or
-  // overwriting the wrong record.
+  // Per-row default action. An exact_match (a strong signal: matching customer code,
+  // email, or phone against a REAL existing database client) defaults to updating that
+  // client -- that's the whole point of re-importing an accounting export. A
+  // possible_duplicate (name-only, a weaker signal) and a duplicate_in_file (matches
+  // another row in THIS spreadsheet, not the database -- there is no existingClientId to
+  // update against) both default to "skip": a human must confirm before either creating a
+  // duplicate or acting on a weak signal.
   const decisionFor = (row) => decisions[row.index] ?? (
     row.status === "new" ? "import" : row.status === "exact_match" ? "update" : "skip"
   );
@@ -73,10 +86,12 @@ export default function ImportCustomers() {
       setRawRows(json);
       setMapping(guessMapping(detectedHeaders));
       setExistingClients(clients || []);
+      setDecisions({});
+      setRowResults({});
       setStep(1);
     } catch (e) {
       console.error("Failed to read spreadsheet:", e);
-      setError("Could not read this file. Confirm it's a valid .xlsx/.xls export.");
+      setError("Could not read this file. Confirm it's a valid .csv/.xlsx/.xls export.");
     }
   };
 
@@ -86,68 +101,125 @@ export default function ImportCustomers() {
 
   const requiredMapped = Object.values(mapping).includes("company_name");
 
-  const runImport = async () => {
+  /**
+   * Runs (or re-runs) the import. `indicesToRun`, when given, scopes execution to just
+   * those row indices -- this is what "Retry Failed Rows" uses, so a retry never re-touches
+   * rows that already succeeded/updated/were skipped in a previous run.
+   *
+   * Every row is wrapped in its OWN try/catch: one row's failure is recorded and execution
+   * continues, it never aborts the rest of the batch. This is the resumable/idempotent
+   * strategy, not a database transaction -- PostgREST (the REST layer Supabase exposes,
+   * see frontend/src/services/supabase/database.js) has no multi-statement transaction API
+   * for an arbitrary batch of individual create/update calls, so a real all-or-nothing
+   * transaction across ~877 independent HTTP requests isn't available with this
+   * architecture. Idempotency instead comes from re-classifying against a FRESH
+   * `existingClients` fetch on every retry (see below) -- a row that already got created in
+   * an earlier attempt will now match on its own code/email/phone/name and correctly offer
+   * "Update Existing" instead of creating a second copy.
+   */
+  const runImport = async (indicesToRun = null) => {
     setImporting(true);
     setError("");
-    let imported = 0, updated = 0, skipped = 0, duplicates = 0;
-    try {
-      for (const row of preview.rows) {
-        const decision = decisionFor(row);
-        if (row.status === "invalid" || decision === "skip") {
-          skipped += 1;
-          if (row.status === "exact_match" || row.status === "possible_duplicate") duplicates += 1;
-          continue;
-        }
-        if (decision === "update") {
-          // matchId is only ever set on exact_match/possible_duplicate rows (see
-          // classifyRow) -- "update" is never offered as an option otherwise, but guard
-          // anyway rather than sending an update with no id.
-          if (!row.matchId) { skipped += 1; continue; }
-          const existingClient = existingClients.find((c) => c.id === row.matchId);
-          const payload = buildUpdatePayload(row.normalized, existingClient);
-          if (Object.keys(payload).length > 0) {
-            await apiClient.entities.Client.update(row.matchId, payload);
-          }
-          updated += 1;
-          continue;
-        }
-        await apiClient.entities.Client.create({
-          company_name: row.normalized.company_name,
-          contact_person: row.normalized.contact_person || null,
-          email: row.normalized.email || null,
-          phone: row.normalized.phone || null,
-          address: row.normalized.address || null,
-          notes: row.normalized.notes || null,
-          legacy_pastel_customer_code: row.normalized.legacy_pastel_customer_code || null,
-          is_active: true,
-        });
-        imported += 1;
-        if (row.status === "possible_duplicate") duplicates += 1;
+
+    let freshExistingClients = existingClients;
+    if (indicesToRun) {
+      // Retry safety: re-fetch so idempotent matching sees anything created/updated by the
+      // previous attempt (including by THIS row, if it actually succeeded server-side but
+      // the response was lost to a network error) before we touch it again.
+      try {
+        freshExistingClients = (await apiClient.entities.Client.list()) || [];
+        setExistingClients(freshExistingClients);
+      } catch (e) {
+        setError(`Could not refresh existing customers before retrying: ${e.message || "unknown error"}`);
+        setImporting(false);
+        return;
       }
-      const summary = await apiClient.entities.ClientImport.create({
+    }
+
+    const rowsToProcess = indicesToRun
+      ? preview.rows.filter((r) => indicesToRun.includes(r.index))
+      : preview.rows;
+
+    // The actual per-row execution/failure-isolation/retry logic lives in
+    // customerImport.js's executeImportRows() -- framework-free and unit tested there with
+    // fake create/update implementations (see customerImport.test.js), not re-derived here.
+    const freshResults = await executeImportRows(
+      rowsToProcess,
+      decisionFor,
+      freshExistingClients,
+      { createClient: apiClient.entities.Client.create, updateClient: apiClient.entities.Client.update },
+      Boolean(indicesToRun)
+    );
+    const newResults = { ...rowResults, ...freshResults };
+    setRowResults(newResults);
+
+    const counts = Object.values(newResults).reduce(
+      (acc, r) => { acc[r.status] = (acc[r.status] || 0) + 1; return acc; },
+      { success: 0, updated: 0, skipped: 0, failed: 0 }
+    );
+    const duplicateSignals = preview.rows.filter(
+      (r) => r.status === "exact_match" || r.status === "possible_duplicate" || r.status === "duplicate_in_file"
+    ).length;
+
+    let summary = null;
+    try {
+      summary = await apiClient.entities.ClientImport.create({
         source_filename: fileName,
         imported_by: user?.id || null,
         row_count: preview.rows.length,
-        imported_count: imported,
-        updated_count: updated,
-        duplicate_count: duplicates,
-        skipped_count: skipped,
+        imported_count: counts.success,
+        updated_count: counts.updated,
+        duplicate_count: duplicateSignals,
+        skipped_count: counts.skipped,
         column_mapping: mapping,
       });
-      setResult({ imported, updated, skipped, duplicates, summary });
-      setStep(3);
     } catch (e) {
-      console.error("Import failed partway through:", e);
-      setError(`Import stopped after an error: ${e.message || "unknown error"}. ${imported} customer(s) were already saved and ${updated} already updated before the failure -- review Clients before re-running to avoid duplicates.`);
-    } finally {
-      setImporting(false);
+      // The import itself already ran against public.clients -- a failure recording the
+      // history summary row must not make the actual, already-completed result disappear.
+      console.error("Failed to record import history row:", e);
     }
+
+    setResult({
+      imported: counts.success,
+      updated: counts.updated,
+      skipped: counts.skipped,
+      failed: counts.failed,
+      duplicates: duplicateSignals,
+      summary,
+    });
+    setStep(3);
+    setImporting(false);
+  };
+
+  const retryFailedRows = () => {
+    const failedIndices = Object.entries(rowResults)
+      .filter(([, r]) => r.status === "failed")
+      .map(([index]) => Number(index));
+    if (failedIndices.length === 0) return;
+    runImport(failedIndices);
+  };
+
+  const downloadErrorReport = () => {
+    const failedRows = preview.rows.filter((row) => rowResults[row.index]?.status === "failed");
+    if (failedRows.length === 0) return;
+    const sheet = XLSX.utils.json_to_sheet(failedRows.map((row) => ({
+      "CSV Row": row.index + 1,
+      "Customer": row.normalized.company_name || "(no name)",
+      "Action Attempted": decisionFor(row),
+      "Match Type": row.status,
+      "Error": rowResults[row.index]?.error || "Unknown error",
+    })));
+    const book = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(book, sheet, "Import Errors");
+    XLSX.writeFile(book, `import-errors-${new Date().toISOString().slice(0, 10)}.csv`, { bookType: "csv" });
   };
 
   const reset = () => {
     setStep(0); setFileName(""); setHeaders([]); setRawRows([]); setMapping({});
-    setExistingClients([]); setDecisions({}); setResult(null); setError("");
+    setExistingClients([]); setDecisions({}); setRowResults({}); setResult(null); setError("");
   };
+
+  const failedCount = result?.failed || 0;
 
   return (
     <div className="max-w-3xl">
@@ -226,19 +298,22 @@ export default function ImportCustomers() {
 
       {step === 2 && (
         <div>
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 mb-4">
             <SummaryStat label="Rows" value={preview.summary.total} />
             <SummaryStat label="New" value={preview.summary.new} accent="text-emerald-500" />
-            <SummaryStat label="Possible Duplicates" value={preview.summary.possible_duplicate} accent="text-amber-500" />
             <SummaryStat label="Exact Matches" value={preview.summary.exact_match} accent="text-blue-500" />
+            <SummaryStat label="Possible Duplicates" value={preview.summary.possible_duplicate} accent="text-amber-500" />
+            <SummaryStat label="Dupes in File" value={preview.summary.duplicate_in_file} accent="text-purple-500" />
             <SummaryStat label="Needs Attention" value={preview.summary.invalid} accent="text-destructive" />
           </div>
           <p className="text-xs text-muted-foreground mb-3">
             Review each row and choose an action. "New" rows import by default. "Exact Matches" (same customer
-            code, email, or phone) default to updating the existing client — only the fields present in this
-            file are changed; notes are appended, never overwritten, and nothing else on the existing record is
-            touched. "Possible Duplicates" (name only) default to skipped — confirm they're really the same
-            customer before updating or importing as a new record.
+            code, email, or phone as an EXISTING customer) default to updating that customer — only the fields
+            present in this file are changed; notes are appended, never overwritten, and nothing else on the
+            existing record is touched. "Possible Duplicates" (name only) default to skipped — confirm they're
+            really the same customer first. "Duplicate in File" rows match ANOTHER ROW in this spreadsheet, not
+            an existing customer — there is nothing yet to update, so review whether they're genuinely the same
+            customer repeated in the export before importing either one.
           </p>
           {/* REAL FIX (2026-08-13 responsive pass): overflow-hidden + overflow-y-auto on
               the same element only frees the y-axis -- the x-axis stayed clipped, so this
@@ -271,7 +346,7 @@ export default function ImportCustomers() {
                           onChange={(e) => setDecisions((prev) => ({ ...prev, [row.index]: e.target.value }))}
                         >
                           <option value="skip">Skip</option>
-                          {row.matchId && <option value="update">Update Existing</option>}
+                          {row.existingClientId && <option value="update">Update Existing</option>}
                           <option value="import">Import as New</option>
                         </select>
                       </td>
@@ -293,7 +368,7 @@ export default function ImportCustomers() {
           </div>
           <div className="flex justify-end gap-2">
             <Button variant="ghost" onClick={() => setStep(1)}>Back to Mapping</Button>
-            <Button disabled={importing} onClick={runImport}>
+            <Button disabled={importing} onClick={() => runImport()}>
               {importing
                 ? "Importing…"
                 : `Apply to ${preview.rows.filter((r) => decisionFor(r) !== "skip" && r.status !== "invalid").length} Customers`}
@@ -304,14 +379,40 @@ export default function ImportCustomers() {
 
       {step === 3 && result && (
         <div className="text-center py-10 bg-card border border-border rounded-xl">
-          <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto mb-3" />
-          <p className="text-foreground font-medium">Import complete</p>
+          <CheckCircle2 className={`w-10 h-10 mx-auto mb-3 ${failedCount > 0 ? "text-amber-500" : "text-emerald-500"}`} />
+          <p className="text-foreground font-medium">{failedCount > 0 ? "Import finished with some failures" : "Import complete"}</p>
           <p className="text-sm text-muted-foreground mt-1">
             {result.imported} customer{result.imported !== 1 ? "s" : ""} imported ·{" "}
             {result.updated} updated ·{" "}
             {result.duplicates} flagged as duplicate · {result.skipped} skipped
+            {failedCount > 0 && <> · <span className="text-destructive font-medium">{failedCount} failed</span></>}
           </p>
-          <div className="flex justify-center gap-2 mt-5">
+
+          {failedCount > 0 && (
+            <div className="mt-5 mx-auto max-w-lg text-left bg-destructive/5 border border-destructive/20 rounded-xl p-3">
+              <p className="text-xs font-medium text-foreground mb-2">Failed rows</p>
+              <div className="max-h-40 overflow-y-auto space-y-1.5">
+                {preview.rows.filter((row) => rowResults[row.index]?.status === "failed").map((row) => (
+                  <div key={row.index} className="text-xs text-muted-foreground">
+                    <span className="text-foreground font-medium">Row {row.index + 1} — {row.normalized.company_name || "(no name)"}</span>
+                    <br />{rowResults[row.index]?.error}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="flex flex-wrap justify-center gap-2 mt-5">
+            {failedCount > 0 && (
+              <>
+                <Button variant="outline" className="gap-1.5" disabled={importing} onClick={retryFailedRows}>
+                  <RotateCcw className="w-3.5 h-3.5" /> {importing ? "Retrying…" : "Retry Failed Rows"}
+                </Button>
+                <Button variant="outline" className="gap-1.5" onClick={downloadErrorReport}>
+                  <Download className="w-3.5 h-3.5" /> Download Error Report
+                </Button>
+              </>
+            )}
             <Button variant="outline" onClick={reset}>Import Another File</Button>
           </div>
         </div>

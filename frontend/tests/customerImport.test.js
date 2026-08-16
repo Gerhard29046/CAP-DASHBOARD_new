@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   guessMapping, normalizeRow, normalizeEmail, normalizePhone, validateRow, classifyRow, buildPreview,
-  buildUpdatePayload,
+  buildUpdatePayload, findFilePoolDuplicate, isValidUuid, executeImportRows,
 } from "../src/lib/customerImport.js";
 
 test("guessMapping pre-selects obvious header matches", () => {
@@ -54,57 +54,170 @@ test("normalizePhone strips formatting so equivalent numbers compare equal", () 
   assert.equal(normalizePhone("+27 21 123 4567"), normalizePhone("0211234567"));
 });
 
-test("validateRow flags missing company name as required", () => {
+test("validateRow flags missing company name as required (still the ONLY required field)", () => {
   assert.deepEqual(validateRow({ company_name: "" }), ["Missing customer/company name"]);
   assert.deepEqual(validateRow({ company_name: "ABC" }), []);
+});
+
+test("validateRow: malformed non-blank email is flagged, blank/missing email is not (stays optional)", () => {
+  assert.deepEqual(validateRow({ company_name: "ABC", email: "not-an-email" }), [
+    'Email does not look valid: "not-an-email"',
+  ]);
+  assert.deepEqual(validateRow({ company_name: "ABC", email: "" }), []);
+  assert.deepEqual(validateRow({ company_name: "ABC" }), []);
+  assert.deepEqual(validateRow({ company_name: "ABC", email: "real@example.com" }), []);
+});
+
+test("validateRow: excessively long field flags for review without inventing a new required field", () => {
+  const errors = validateRow({ company_name: "ABC", address: "x".repeat(3000) });
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /address is unusually long/);
 });
 
 test("classifyRow: no existing clients -> always new", () => {
   const result = classifyRow({ company_name: "ABC Refrigeration" }, []);
   assert.equal(result.status, "new");
+  assert.equal(result.existingClientId, null);
 });
 
-test("classifyRow: matching legacy_pastel_customer_code -> exact_match", () => {
-  const existing = [{ id: "1", company_name: "ABC Refrigeration", legacy_pastel_customer_code: "C001" }];
+test("classifyRow: matching legacy_pastel_customer_code -> exact_match, existingClientId is the REAL database id", () => {
+  const existing = [{ id: "11111111-1111-1111-1111-111111111111", company_name: "ABC Refrigeration", legacy_pastel_customer_code: "C001" }];
   const result = classifyRow({ company_name: "ABC Refrigeration (Pty) Ltd", legacy_pastel_customer_code: "C001" }, existing);
   assert.equal(result.status, "exact_match");
-  assert.equal(result.matchId, "1");
+  assert.equal(result.existingClientId, "11111111-1111-1111-1111-111111111111");
 });
 
 test("classifyRow: matching email -> exact_match even with different name casing", () => {
-  const existing = [{ id: "2", company_name: "XYZ Air Con", email: "info@xyz.co.za" }];
+  const existing = [{ id: "22222222-2222-2222-2222-222222222222", company_name: "XYZ Air Con", email: "info@xyz.co.za" }];
   const result = classifyRow({ company_name: "XYZ Aircon", email: "INFO@XYZ.CO.ZA" }, existing);
   assert.equal(result.status, "exact_match");
+  assert.equal(result.existingClientId, "22222222-2222-2222-2222-222222222222");
 });
 
-test("classifyRow: same normalized name only -> possible_duplicate, not exact_match", () => {
-  const existing = [{ id: "3", company_name: "ABC Refrigeration" }];
+test("classifyRow: same normalized name only -> possible_duplicate (not exact_match), still carries the real database id", () => {
+  const existing = [{ id: "33333333-3333-3333-3333-333333333333", company_name: "ABC Refrigeration" }];
   const result = classifyRow({ company_name: "abc refrigeration" }, existing);
   assert.equal(result.status, "possible_duplicate");
-  assert.equal(result.matchId, "3");
+  assert.equal(result.existingClientId, "33333333-3333-3333-3333-333333333333");
 });
 
 test("classifyRow: different name and no other signal -> new", () => {
-  const existing = [{ id: "4", company_name: "ABC Refrigeration" }];
+  const existing = [{ id: "44444444-4444-4444-4444-444444444444", company_name: "ABC Refrigeration" }];
   const result = classifyRow({ company_name: "Totally Different Co" }, existing);
   assert.equal(result.status, "new");
+  assert.equal(result.existingClientId, null);
 });
 
-test("buildPreview: end-to-end summary counts match a small mixed test file", () => {
+// ---------------------------------------------------------------------------------------
+// ROOT-CAUSE REGRESSION COVERAGE (2026-08-16): "invalid input syntax for type uuid: row-17"
+// ---------------------------------------------------------------------------------------
+
+test("isValidUuid rejects the exact string that broke production, accepts a real UUID", () => {
+  assert.equal(isValidUuid("row-17"), false);
+  assert.equal(isValidUuid("row-0"), false);
+  assert.equal(isValidUuid(""), false);
+  assert.equal(isValidUuid(null), false);
+  assert.equal(isValidUuid(undefined), false);
+  assert.equal(isValidUuid(17), false);
+  assert.equal(isValidUuid("11111111-1111-1111-1111-111111111111"), true);
+});
+
+test("findFilePoolDuplicate matches an earlier in-file row and returns a ROW INDEX, never a synthetic id string", () => {
+  const filePool = [{ index: 3, normalized: { company_name: "ABC Refrigeration", email: "abc@example.com" } }];
+  const match = findFilePoolDuplicate({ company_name: "ABC Refrigeration", email: "abc@example.com" }, filePool);
+  assert.equal(match.rowIndex, 3);
+  assert.equal(typeof match.rowIndex, "number");
+});
+
+test("findFilePoolDuplicate returns null when nothing in the pool resembles the row", () => {
+  const filePool = [{ index: 0, normalized: { company_name: "Totally Different Co" } }];
+  assert.equal(findFilePoolDuplicate({ company_name: "ABC Refrigeration" }, filePool), null);
+});
+
+test("TEST 7 (user spec): buildPreview NEVER produces an existingClientId that isn't a real UUID, even when a row duplicates an earlier in-file row", () => {
+  // The exact shape that broke production: row 0 is "new" (no database match), row 1 is an
+  // exact repeat of row 0 WITHIN THE SAME FILE, and there is no existing database client at
+  // all. Before the fix, row 1 would classify as exact_match with matchId "row-0" (or
+  // possible_duplicate, depending on which signal matched) and could be sent straight to
+  // Supabase as a clients.id. Now it must be a completely separate status.
   const mapping = { "Customer Name": "company_name", "Email": "email" };
-  const existingClients = [{ id: "1", company_name: "Existing Client", email: "existing@example.com" }];
+  const rawRows = [
+    { "Customer Name": "ABC Refrigeration", "Email": "abc@example.com" },
+    { "Customer Name": "ABC Refrigeration", "Email": "abc@example.com" }, // repeats row 0, no DB match exists
+  ];
+  const { rows } = buildPreview(rawRows, mapping, /* existingClients */ []);
+  assert.equal(rows[0].status, "new");
+  assert.equal(rows[0].existingClientId, null);
+  assert.equal(rows[1].status, "duplicate_in_file");
+  assert.equal(rows[1].existingClientId, null); // <-- the critical assertion
+  assert.equal(rows[1].duplicateOfRowIndex, 0);
+  // Every row in the whole preview: existingClientId is either null or a real UUID, full stop.
+  for (const row of rows) {
+    assert.ok(row.existingClientId === null || isValidUuid(row.existingClientId),
+      `row ${row.index} has a non-UUID existingClientId: ${row.existingClientId}`);
+  }
+});
+
+test("a row matching BOTH a real existing client and an earlier in-file row prioritises the real database match", () => {
+  const mapping = { "Customer Name": "company_name", "Email": "email" };
+  const existingClients = [{ id: "55555555-5555-5555-5555-555555555555", company_name: "Existing Co", email: "existing@example.com" }];
+  const rawRows = [
+    { "Customer Name": "Existing Co", "Email": "existing@example.com" }, // exact_match against DB
+    { "Customer Name": "Existing Co", "Email": "existing@example.com" }, // also exact_match against DB (not duplicate_in_file)
+  ];
+  const { rows } = buildPreview(rawRows, mapping, existingClients);
+  assert.equal(rows[0].status, "exact_match");
+  assert.equal(rows[1].status, "exact_match");
+  assert.equal(rows[1].existingClientId, "55555555-5555-5555-5555-555555555555");
+});
+
+test("TEST 3 (user spec): mixed import (New, New, Exact Match, New, Exact Match, Possible Duplicate) classifies every row correctly", () => {
+  const mapping = { "Customer Name": "company_name", "Email": "email", "Code": "legacy_pastel_customer_code" };
+  const existingClients = [
+    { id: "66666666-6666-6666-6666-666666666666", company_name: "Blue Aircon", email: "blue@example.com" },
+    { id: "77777777-7777-7777-7777-777777777777", company_name: "Red Refrigeration", legacy_pastel_customer_code: "C099" },
+  ];
+  const rawRows = [
+    { "Customer Name": "Brand New Co A", "Email": "", "Code": "" },
+    { "Customer Name": "Brand New Co B", "Email": "", "Code": "" },
+    { "Customer Name": "Blue Aircon", "Email": "blue@example.com", "Code": "" },
+    { "Customer Name": "Brand New Co C", "Email": "", "Code": "" },
+    { "Customer Name": "Red Refrigeration (Pty) Ltd", "Email": "", "Code": "C099" },
+    { "Customer Name": "red refrigeration", "Email": "", "Code": "" }, // name-only vs. the existing "Red Refrigeration"
+  ];
+  const { rows, summary } = buildPreview(rawRows, mapping, existingClients);
+  assert.deepEqual(rows.map((r) => r.status), [
+    "new", "new", "exact_match", "new", "exact_match", "possible_duplicate",
+  ]);
+  assert.equal(summary.new, 3);
+  assert.equal(summary.exact_match, 2);
+  assert.equal(summary.possible_duplicate, 1);
+});
+
+test("buildPreview: end-to-end summary counts match a small mixed test file (regression, existingClientId shape)", () => {
+  const mapping = { "Customer Name": "company_name", "Email": "email" };
+  const existingClients = [{ id: "88888888-8888-8888-8888-888888888888", company_name: "Existing Client", email: "existing@example.com" }];
   const rawRows = [
     { "Customer Name": "New Customer", "Email": "new@example.com" },       // new
     { "Customer Name": "Existing Client", "Email": "existing@example.com" }, // exact_match (email)
     { "Customer Name": "", "Email": "missing-name@example.com" },          // invalid
     { "Customer Name": "existing client", "Email": "" },                  // possible_duplicate (name only)
   ];
-  const { summary } = buildPreview(rawRows, mapping, existingClients);
+  const { summary, rows } = buildPreview(rawRows, mapping, existingClients);
   assert.equal(summary.total, 4);
   assert.equal(summary.new, 1);
   assert.equal(summary.exact_match, 1);
   assert.equal(summary.invalid, 1);
   assert.equal(summary.possible_duplicate, 1);
+  assert.equal(rows[1].existingClientId, "88888888-8888-8888-8888-888888888888");
+});
+
+test("TEST 10 (user spec): possible_duplicate rows carry a real existingClientId (so a human CAN choose update) but are never auto-classified exact_match", () => {
+  const existing = [{ id: "99999999-9999-9999-9999-999999999999", company_name: "ABC Refrigeration" }];
+  const result = classifyRow({ company_name: "abc refrigeration" }, existing);
+  assert.equal(result.status, "possible_duplicate");
+  assert.ok(isValidUuid(result.existingClientId)); // update IS possible if the user explicitly picks it
+  assert.notEqual(result.status, "exact_match"); // but never auto-promoted
 });
 
 test("buildUpdatePayload only includes fields the row actually has a new value for", () => {
@@ -115,12 +228,21 @@ test("buildUpdatePayload only includes fields the row actually has a new value f
   assert.equal(payload.is_active, undefined);
 });
 
-test("buildUpdatePayload appends new notes to the existing client's notes rather than overwriting", () => {
+test("TEST 8 (user spec): blank optional CSV fields do not overwrite existing values", () => {
+  // The row only has company_name mapped/filled -- phone/email/address are blank on this
+  // particular CSV row (not necessarily unmapped, just empty for this customer).
+  const row = { company_name: "ABC Refrigeration" };
+  const payload = buildUpdatePayload(row, { phone: "0211234567", email: "existing@example.com", address: "123 Main Rd" });
+  assert.deepEqual(payload, { company_name: "ABC Refrigeration" });
+  // The existing client's own phone/email/address are simply never mentioned in the
+  // payload sent to Supabase -- an update() call with these keys omitted cannot blank them.
+});
+
+test("TEST 9 (user spec): notes are appended to the existing client's notes, never overwritten", () => {
   const row = { company_name: "ABC", notes: "VAT Number: 4123456789" };
   const payload = buildUpdatePayload(row, { notes: "Technician says compressor due for service." });
   assert.match(payload.notes, /Technician says compressor due for service\./);
   assert.match(payload.notes, /VAT Number: 4123456789/);
-  // Original notes must appear BEFORE the appended block, never replaced.
   assert.ok(payload.notes.indexOf("Technician says") < payload.notes.indexOf("VAT Number"));
 });
 
@@ -134,4 +256,149 @@ test("buildUpdatePayload never includes notes when the row has none", () => {
   const row = { company_name: "ABC" };
   const payload = buildUpdatePayload(row, { notes: "Existing notes stay untouched" });
   assert.equal(payload.notes, undefined);
+});
+
+// ---------------------------------------------------------------------------------------
+// executeImportRows: failure isolation / retry / idempotency (framework-free, fake deps)
+// ---------------------------------------------------------------------------------------
+
+function fakeRow(index, overrides = {}) {
+  return {
+    index,
+    normalized: { company_name: `Customer ${index}` },
+    status: "new",
+    existingClientId: null,
+    duplicateOfRowIndex: null,
+    errors: [],
+    ...overrides,
+  };
+}
+
+test("TEST 1 (user spec): 10 entirely new customers -> 10 created, each result carries the real created id", async () => {
+  const rows = Array.from({ length: 10 }, (_, i) => fakeRow(i));
+  let created = 0;
+  const deps = {
+    createClient: async () => { created += 1; return { id: `uuid-${created}` }; },
+    updateClient: async () => { throw new Error("should not be called for new rows"); },
+  };
+  const results = await executeImportRows(rows, () => "import", [], deps);
+  assert.equal(created, 10);
+  assert.equal(Object.values(results).filter((r) => r.status === "success").length, 10);
+  assert.equal(results[0].clientId, "uuid-1");
+});
+
+test("TEST 2 (user spec): existing customers update using the REAL database UUID, never row.index/synthetic id", async () => {
+  const existingClients = [{ id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", notes: "" }];
+  const rows = [fakeRow(0, { status: "exact_match", existingClientId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" })];
+  const updateCalls = [];
+  const deps = {
+    createClient: async () => { throw new Error("should not be called for update rows"); },
+    updateClient: async (id, payload) => { updateCalls.push({ id, payload }); },
+  };
+  const results = await executeImportRows(rows, () => "update", existingClients, deps);
+  assert.equal(results[0].status, "updated");
+  assert.equal(updateCalls.length, 1);
+  assert.equal(updateCalls[0].id, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+  assert.ok(isValidUuid(updateCalls[0].id));
+});
+
+test("TEST 4 (user spec): a failure partway through does not abort the batch -- every row still gets a result", async () => {
+  const rows = Array.from({ length: 5 }, (_, i) => fakeRow(i));
+  const deps = {
+    createClient: async (fields) => {
+      if (fields.company_name === "Customer 2") throw Object.assign(new Error("simulated failure"), { code: "22P02" });
+      return { id: `uuid-${fields.company_name}` };
+    },
+    updateClient: async () => {},
+  };
+  const results = await executeImportRows(rows, () => "import", [], deps);
+  assert.equal(Object.keys(results).length, 5); // every row got a result, none silently dropped
+  assert.equal(results[2].status, "failed");
+  assert.equal(results[2].error, "simulated failure");
+  assert.equal(results[2].errorCode, "22P02");
+  // TEST 11 (user spec): failed row is correctly represented.
+  // TEST 12 (user spec): the OTHER 4 rows are not incorrectly marked as failed.
+  assert.equal(results[0].status, "success");
+  assert.equal(results[1].status, "success");
+  assert.equal(results[3].status, "success");
+  assert.equal(results[4].status, "success");
+});
+
+test("TEST 5 (user spec): retrying only the failed rows does not touch rows that already succeeded", async () => {
+  const rows = Array.from({ length: 3 }, (_, i) => fakeRow(i));
+  let createCalls = 0;
+  const deps = {
+    createClient: async () => { createCalls += 1; return { id: `uuid-${createCalls}` }; },
+    updateClient: async () => {},
+  };
+  // First pass: row 1 fails.
+  const firstDeps = {
+    createClient: async (fields) => {
+      createCalls += 1;
+      if (fields.company_name === "Customer 1") throw new Error("simulated failure");
+      return { id: `uuid-${createCalls}` };
+    },
+    updateClient: async () => {},
+  };
+  const firstResults = await executeImportRows(rows, () => "import", [], firstDeps);
+  assert.equal(firstResults[1].status, "failed");
+  const callsAfterFirstPass = createCalls;
+
+  // Retry: only row 1 is re-run.
+  const failedOnly = rows.filter((r) => firstResults[r.index].status === "failed");
+  const retryResults = await executeImportRows(failedOnly, () => "import", [], deps);
+  assert.equal(Object.keys(retryResults).length, 1);
+  assert.equal(retryResults[1].status, "success");
+  assert.equal(createCalls, callsAfterFirstPass + 1); // exactly one more create call, not 3
+});
+
+test("TEST 6 (user spec): re-importing the same CSV after a client now exists correctly updates instead of duplicating", async () => {
+  // Simulates: row was "new" and got created in a first run; a second run of the SAME file
+  // re-classifies it (via a fresh existingClients fetch) as exact_match instead.
+  const createdClient = { id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", company_name: "ABC Refrigeration", legacy_pastel_customer_code: "C123" };
+  const reclassified = classifyRow({ company_name: "ABC Refrigeration", legacy_pastel_customer_code: "C123" }, [createdClient]);
+  assert.equal(reclassified.status, "exact_match");
+  assert.equal(reclassified.existingClientId, createdClient.id);
+
+  const row = fakeRow(0, { status: "exact_match", existingClientId: createdClient.id, normalized: { company_name: "ABC Refrigeration", legacy_pastel_customer_code: "C123" } });
+  let createCalls = 0;
+  const deps = {
+    createClient: async () => { createCalls += 1; return { id: "should-not-happen" }; },
+    updateClient: async () => {},
+  };
+  const results = await executeImportRows([row], () => "update", [createdClient], deps);
+  assert.equal(results[0].status, "updated");
+  assert.equal(createCalls, 0); // no duplicate created
+});
+
+test("executeImportRows: skip decisions never call create or update", async () => {
+  const rows = [fakeRow(0), fakeRow(1, { status: "exact_match", existingClientId: "cccccccc-cccc-cccc-cccc-cccccccccccc" })];
+  const deps = {
+    createClient: async () => { throw new Error("should not be called"); },
+    updateClient: async () => { throw new Error("should not be called"); },
+  };
+  const results = await executeImportRows(rows, () => "skip", [], deps);
+  assert.equal(results[0].status, "skipped");
+  assert.equal(results[1].status, "skipped");
+});
+
+test("executeImportRows: invalid rows are always skipped regardless of decision", async () => {
+  const rows = [fakeRow(0, { status: "invalid", errors: ["Missing customer/company name"] })];
+  const deps = {
+    createClient: async () => { throw new Error("should not be called"); },
+    updateClient: async () => { throw new Error("should not be called"); },
+  };
+  const results = await executeImportRows(rows, () => "import", [], deps);
+  assert.equal(results[0].status, "skipped");
+});
+
+test("executeImportRows: a duplicate_in_file row with no existingClientId fails cleanly if somehow told to update, rather than reaching the database with a bad id", async () => {
+  const row = fakeRow(0, { status: "duplicate_in_file", existingClientId: null, duplicateOfRowIndex: 0 });
+  const deps = {
+    createClient: async () => { throw new Error("should not be called"); },
+    updateClient: async () => { throw new Error("updateClient should NEVER be called with no id"); },
+  };
+  const results = await executeImportRows([row], () => "update", [], deps);
+  assert.equal(results[0].status, "failed");
+  assert.match(results[0].error, /could not be matched/);
 });

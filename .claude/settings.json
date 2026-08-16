@@ -1,16 +1,17 @@
 {
-  "statusLine": {
-    "type": "command",
-    "command": "cmd /c \"IF EXIST \"%CLAUDE_PROJECT_DIR%\\.claude\\helpers\\statusline.cjs\" (node \"%CLAUDE_PROJECT_DIR%\\.claude\\helpers\\statusline.cjs\") ELSE (node \"%USERPROFILE%\\.claude\\helpers\\statusline.cjs\")\"",
-    "padding": 0
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
+    "CLAUDE_FLOW_V3_ENABLED": "true",
+    "CLAUDE_FLOW_HOOKS_ENABLED": "true"
   },
-  "enabledPlugins": {
-    "ruflo-core@ruflo": true,
-    "ruflo-swarm@ruflo": true,
-    "ruflo-rag-memory@ruflo": true,
-    "ruflo-neural-trader@ruflo": true
+  "permissions": {
+    "allow": [
+      "Bash(npx @claude-flow*)",
+      "Bash(npx claude-flow*)",
+      "Bash(node .claude/*)",
+      "mcp__claude-flow__*"
+    ]
   },
-  "agent": "queen-bee",
   "hooks": {
     "PreToolUse": [
       {
@@ -169,17 +170,18 @@
       }
     ]
   },
-  "env": {
-    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
-    "CLAUDE_FLOW_V3_ENABLED": "true",
-    "CLAUDE_FLOW_HOOKS_ENABLED": "true"
+  "statusLine": {
+    "type": "command",
+    "command": "cmd /c \"IF EXIST \"%CLAUDE_PROJECT_DIR%\\.claude\\helpers\\statusline.cjs\" (node \"%CLAUDE_PROJECT_DIR%\\.claude\\helpers\\statusline.cjs\") ELSE (node \"%USERPROFILE%\\.claude\\helpers\\statusline.cjs\")\"",
+    "padding": 0
   },
-  "permissions": {
-    "allow": [
-      "Bash(npx @claude-flow*)",
-      "Bash(npx claude-flow*)",
-      "Bash(node .claude/*)",
-      "mcp__claude-flow__*"
-    ]
-  }
+  "enabledPlugins": {
+    "ruflo-core@ruflo": true,
+    "ruflo-swarm@ruflo": true,
+    "ruflo-rag-memory@ruflo": true,
+    "ruflo-neural-trader@ruflo": true,
+    "ruflo-security-audit@ruflo": true,
+    "ruflo-browser@ruflo": true
+  },
+  "agent": "queen-bee"
 }
