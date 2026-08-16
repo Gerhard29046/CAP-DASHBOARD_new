@@ -1,6 +1,6 @@
 import java.util.Properties
 
-plugins { alias(libs.plugins.android.application); alias(libs.plugins.kotlin.android); alias(libs.plugins.kotlin.compose); alias(libs.plugins.ksp); alias(libs.plugins.hilt); alias(libs.plugins.google.services) }
+plugins { alias(libs.plugins.android.application); alias(libs.plugins.kotlin.android); alias(libs.plugins.kotlin.compose); alias(libs.plugins.ksp); alias(libs.plugins.hilt) }
 val localProperties = Properties().apply {
     val file = rootProject.file("local.properties")
     if (file.exists()) file.inputStream().use(::load)
@@ -44,4 +44,4 @@ android { namespace="com.CAPDATABASE.capdatabase"; compileSdk=36
 kotlin {
     jvmToolchain(17)
 }
-dependencies { implementation(platform(libs.compose.bom)); androidTestImplementation(platform(libs.compose.bom)); implementation(platform(libs.firebase.bom)); implementation(libs.firebase.auth); implementation(libs.firebase.firestore); implementation(libs.firebase.storage); implementation(libs.kotlinx.coroutines.play.services); implementation(libs.compose.ui); implementation(libs.compose.preview); implementation(libs.material3); implementation(libs.material.icons); implementation(libs.activity.compose); implementation(libs.lifecycle.runtime); implementation(libs.lifecycle.viewmodel); implementation(libs.navigation); implementation(libs.hilt.android); ksp(libs.hilt.compiler); implementation(libs.hilt.navigation); implementation(libs.room.runtime); implementation(libs.room.ktx); ksp(libs.room.compiler); implementation(libs.work); implementation(libs.datastore); implementation(libs.security); implementation(libs.coil); implementation(libs.coil.network.okhttp); testImplementation(libs.junit); androidTestImplementation(libs.compose.test); debugImplementation(libs.compose.tooling); debugImplementation(libs.compose.manifest) }
+dependencies { implementation(platform(libs.compose.bom)); androidTestImplementation(platform(libs.compose.bom)); implementation(libs.compose.ui); implementation(libs.compose.preview); implementation(libs.material3); implementation(libs.material.icons); implementation(libs.activity.compose); implementation(libs.lifecycle.runtime); implementation(libs.lifecycle.viewmodel); implementation(libs.navigation); implementation(libs.hilt.android); ksp(libs.hilt.compiler); implementation(libs.hilt.navigation); implementation(libs.room.runtime); implementation(libs.room.ktx); ksp(libs.room.compiler); implementation(libs.work); implementation(libs.datastore); implementation(libs.security); implementation(libs.coil); implementation(libs.coil.network.okhttp); testImplementation(libs.junit); androidTestImplementation(libs.compose.test); debugImplementation(libs.compose.tooling); debugImplementation(libs.compose.manifest) }

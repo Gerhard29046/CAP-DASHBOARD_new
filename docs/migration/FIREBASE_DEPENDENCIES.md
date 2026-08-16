@@ -117,8 +117,15 @@ long after cutover + soak period).
 
 ## 4. Android (`mobile-android/`) — native client
 
-**Explicitly out of scope for this phase** per current instructions — listed for inventory
-completeness only, not touched.
+**SUPERSEDED (2026-08-16): Android's Firebase→Supabase migration happened, and Firebase has now
+been removed from `mobile-android/` entirely.** This section is kept below as a historical
+snapshot of the 2026-08-05 state ("explicitly out of scope") — do not treat it as current. See
+`docs/ai-memory/ROADMAP.md`'s Phase 12 entry for the real removal (which Firebase
+classes/dependencies were deleted, from which files) and `docs/ai-memory/DECISIONS.md` for when
+the Android migration was authorized. `GoogleCalendarRepository.kt` (row below) was deleted
+earlier still, alongside Google Calendar's full removal from the web app (2026-08-12).
+
+Original 2026-08-05 snapshot, preserved for history:
 
 | File | Firebase APIs used |
 |---|---|
