@@ -221,6 +221,23 @@ class MainViewModel @Inject constructor(
     }
 
     /**
+     * Same contract as [delete], plus an [onSuccess] callback run only when the delete actually
+     * succeeds -- for detail screens (Client/Job/Knowledge Base, cross-platform parity 2026-08-16:
+     * "make sure i can delete clients... delete clients and jobs that is booked in, knowledge
+     * base") that need to navigate back to the list afterward, matching the web app's own
+     * delete-then-navigate behavior. A separate method rather than adding a parameter to [delete]:
+     * [delete] is already used as a bare method reference (`vm::delete`) by DashboardScreen's
+     * notes, which requires an exact `(String, String, String) -> Unit` shape a defaulted 4th
+     * parameter cannot be reference-assigned to.
+     */
+    fun deleteThenRun(collection: String, id: String, label: String, onSuccess: () -> Unit) = viewModelScope.launch {
+        actionMessage = null
+        runCatching { recordsRepository.delete(collection, id) }
+            .onSuccess { actionMessage = "$label deleted."; onSuccess() }
+            .onFailure { actionMessage = it.message ?: "Unable to delete $label." }
+    }
+
+    /**
      * E2 Photo Upload (service_records.photos / job_cards.arrival_photos, record-scoped
      * permanent Storage paths per migration 0024). Creates a record immediately and returns its
      * id -- used by the Log New Service / Book In screens to establish a real service_records/
@@ -761,19 +778,19 @@ fun AdaptiveShell(vm: MainViewModel) {
                 composable(CapNavRoute.BookIn.route) { ScreenContent("BookIn", vm, user, navigate, openRoute) }
 
                 composable(CapNavRoute.ClientDetail.route) { entry ->
-                    DetailContent(CapNavRoute.ClientDetail, entry.arguments?.getString(CapNavRoute.ClientDetail.ARG), vm, user, openRoute)
+                    DetailContent(CapNavRoute.ClientDetail, entry.arguments?.getString(CapNavRoute.ClientDetail.ARG), vm, user, openRoute, onBack = { navController.popBackStack() })
                 }
                 composable(CapNavRoute.MachineDetail.route) { entry ->
                     DetailContent(CapNavRoute.MachineDetail, entry.arguments?.getString(CapNavRoute.MachineDetail.ARG), vm, user, openRoute)
                 }
                 composable(CapNavRoute.JobDetail.route) { entry ->
-                    DetailContent(CapNavRoute.JobDetail, entry.arguments?.getString(CapNavRoute.JobDetail.ARG), vm, user, openRoute)
+                    DetailContent(CapNavRoute.JobDetail, entry.arguments?.getString(CapNavRoute.JobDetail.ARG), vm, user, openRoute, onBack = { navController.popBackStack() })
                 }
                 composable(CapNavRoute.ServiceRecordDetail.route) { entry ->
                     DetailContent(CapNavRoute.ServiceRecordDetail, entry.arguments?.getString(CapNavRoute.ServiceRecordDetail.ARG), vm, user, openRoute)
                 }
                 composable(CapNavRoute.KnowledgeBaseDetail.route) { entry ->
-                    DetailContent(CapNavRoute.KnowledgeBaseDetail, entry.arguments?.getString(CapNavRoute.KnowledgeBaseDetail.ARG), vm, user, openRoute)
+                    DetailContent(CapNavRoute.KnowledgeBaseDetail, entry.arguments?.getString(CapNavRoute.KnowledgeBaseDetail.ARG), vm, user, openRoute, onBack = { navController.popBackStack() })
                 }
                 composable(CapNavRoute.UserDetail.route) { entry ->
                     DetailContent(CapNavRoute.UserDetail, entry.arguments?.getString(CapNavRoute.UserDetail.ARG), vm, user, openRoute)
@@ -832,7 +849,8 @@ private fun DetailContent(
     recordId: String?,
     vm: MainViewModel,
     user: CapUser,
-    onOpen: (String) -> Unit
+    onOpen: (String) -> Unit,
+    onBack: () -> Unit = {}
 ) {
     val data = vm.recordsState
     if (data.loading) {
@@ -870,7 +888,8 @@ private fun DetailContent(
                 jobs = relatedRecords(data.collection("job_cards"), "client_id", record.id),
                 user = user,
                 clients = data.collection("clients"),
-                save = vm::save
+                save = vm::save,
+                onDelete = { vm.deleteThenRun("clients", record.id, "Client", onBack) }
             )
         }
 
@@ -888,7 +907,8 @@ private fun DetailContent(
             machines = data.collection("machines"),
             user = user,
             save = vm::save,
-            vm = vm
+            vm = vm,
+            onDelete = { vm.deleteThenRun("job_cards", record.id, "Job card", onBack) }
         )
 
         CapNavRoute.ServiceRecordDetail -> {
@@ -920,7 +940,8 @@ private fun DetailContent(
             documents = relatedRecords(data.collection("knowledge_documents"), "knowledge_machine_id", record.id),
             serviceCodes = relatedRecords(data.collection("knowledge_service_codes"), "knowledge_machine_id", record.id),
             user = user,
-            save = vm::save
+            save = vm::save,
+            onDelete = { vm.deleteThenRun("knowledge_machines", record.id, "Knowledge base entry", onBack) }
         )
 
         CapNavRoute.UserDetail -> UserDetailScreen(
@@ -1891,10 +1912,12 @@ private fun ClientDetailScreen(
     jobs: List<CapRecord>,
     user: CapUser,
     clients: List<CapRecord>,
-    save: (String, String?, Map<String, Any?>, String) -> Unit
+    save: (String, String?, Map<String, Any?>, String) -> Unit,
+    onDelete: () -> Unit
 ) {
     var machineDialog by remember { mutableStateOf(false) }
     var editMachine by remember { mutableStateOf<CapRecord?>(null) }
+    var showDeleteConfirm by remember { mutableStateOf(false) }
     val openJobs = jobs.filter { it.text("status") !in closedJobStatuses }
     val recentServices = services.sortedByDescending { it.text("service_date") }.take(5)
     val machinesById = machines.associateBy { it.id }
@@ -1903,12 +1926,24 @@ private fun ClientDetailScreen(
         LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(Spacing.md), contentPadding = PaddingValues(bottom = 84.dp)) {
             item {
                 Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-                    Text(
-                        client.text("company_name").ifBlank { "Unnamed client" },
-                        style = MaterialTheme.typography.headlineSmall,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            client.text("company_name").ifBlank { "Unnamed client" },
+                            style = MaterialTheme.typography.headlineSmall,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        if (user.hasPermission("clients.delete")) {
+                            IconButton(onClick = { showDeleteConfirm = true }) {
+                                Icon(
+                                    Icons.Outlined.DeleteOutline,
+                                    "Delete client",
+                                    tint = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
+                    }
                     CapCard {
                         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
                             listOfNotNull(
@@ -1992,6 +2027,15 @@ private fun ClientDetailScreen(
     }
     if (machineDialog) MachineDialog(clients, null, client.id, { machineDialog = false }) { fields -> save("machines", null, fields, "Machine"); machineDialog = false }
     editMachine?.let { machine -> MachineDialog(clients, machine, machine.text("client_id"), { editMachine = null }) { fields -> save("machines", machine.id, fields, "Machine"); editMachine = null } }
+    if (showDeleteConfirm) {
+        CapConfirmDialog(
+            title = "Delete client?",
+            message = "This will permanently delete ${client.text("company_name").ifBlank { "this client" }} and all its machines.",
+            confirmLabel = "Delete",
+            onConfirm = { showDeleteConfirm = false; onDelete() },
+            onDismiss = { showDeleteConfirm = false }
+        )
+    }
 }
 
 @Composable
@@ -3070,9 +3114,11 @@ private fun JobDetailScreen(
     machines: List<CapRecord>,
     user: CapUser,
     save: (String, String?, Map<String, Any?>, String) -> Unit,
-    vm: MainViewModel
+    vm: MainViewModel,
+    onDelete: () -> Unit
 ) {
     var editDialog by remember { mutableStateOf(false) }
+    var showDeleteConfirm by remember { mutableStateOf(false) }
     val client = clients.firstOrNull { it.id == job.text("client_id") }
     val machine = machines.firstOrNull { it.id == job.text("machine_id") }
 
@@ -3114,18 +3160,36 @@ private fun JobDetailScreen(
                             }
                         }
                     }
-                    if (user.hasPermission("job_cards.edit")) {
-                        CapSecondaryButton(
-                            text = "Edit",
-                            onClick = { editDialog = true },
-                            modifier = Modifier.padding(top = Spacing.sm)
-                        )
+                    Row(Modifier.padding(top = Spacing.sm), horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                        if (user.hasPermission("job_cards.edit")) {
+                            Box(Modifier.weight(1f)) {
+                                CapSecondaryButton(text = "Edit", onClick = { editDialog = true })
+                            }
+                        }
+                        if (user.hasPermission("job_cards.delete")) {
+                            IconButton(onClick = { showDeleteConfirm = true }) {
+                                Icon(
+                                    Icons.Outlined.DeleteOutline,
+                                    "Delete job card",
+                                    tint = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
                     }
                 }
             }
         }
     }
     if (editDialog) JobDialog(clients, machines, job, { editDialog = false }) { fields -> save("job_cards", job.id, fields, "Job card"); editDialog = false }
+    if (showDeleteConfirm) {
+        CapConfirmDialog(
+            title = "Delete job card?",
+            message = "This will permanently delete job card ${job.text("job_number").ifBlank { "this job card" }} and all its line items.",
+            confirmLabel = "Delete",
+            onConfirm = { showDeleteConfirm = false; onDelete() },
+            onDismiss = { showDeleteConfirm = false }
+        )
+    }
 }
 
 /**
@@ -3468,7 +3532,8 @@ private fun KnowledgeBaseDetailScreen(
     documents: List<CapRecord>,
     serviceCodes: List<CapRecord>,
     user: CapUser,
-    save: (String, String?, Map<String, Any?>, String) -> Unit
+    save: (String, String?, Map<String, Any?>, String) -> Unit,
+    onDelete: () -> Unit
 ) {
     val uriHandler = LocalUriHandler.current
     val canManage = user.role != "accountant"
@@ -3476,6 +3541,7 @@ private fun KnowledgeBaseDetailScreen(
     var noteTitle by remember(machine.id) { mutableStateOf("") }
     var noteContent by remember(machine.id) { mutableStateOf("") }
     var revealedCodes by remember(machine.id) { mutableStateOf(setOf<String>()) }
+    var showDeleteConfirm by remember(machine.id) { mutableStateOf(false) }
 
     val refrigerants = stringList(machine.fields["supported_refrigerants"])
     val specifications = stringMap(machine.fields["technical_specifications"])
@@ -3488,15 +3554,27 @@ private fun KnowledgeBaseDetailScreen(
                     machine.text("manufacturer").ifBlank { null }?.let {
                         Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    Text(
-                        listOfNotNull(
-                            machine.text("model_name").ifBlank { null },
-                            machine.text("variant").ifBlank { null }
-                        ).joinToString(" ").ifBlank { "Unnamed machine" },
-                        style = MaterialTheme.typography.headlineSmall,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            listOfNotNull(
+                                machine.text("model_name").ifBlank { null },
+                                machine.text("variant").ifBlank { null }
+                            ).joinToString(" ").ifBlank { "Unnamed machine" },
+                            style = MaterialTheme.typography.headlineSmall,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        if (user.hasPermission("knowledge_base.delete")) {
+                            IconButton(onClick = { showDeleteConfirm = true }) {
+                                Icon(
+                                    Icons.Outlined.DeleteOutline,
+                                    "Delete knowledge base entry",
+                                    tint = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
+                    }
                     CapCard {
                         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
                             listOfNotNull(
@@ -3669,6 +3747,18 @@ private fun KnowledgeBaseDetailScreen(
         }
     }
     viewerUrl?.let { url -> CapPhotoViewerDialog(url) { viewerUrl = null } }
+    if (showDeleteConfirm) {
+        CapConfirmDialog(
+            title = "Delete knowledge base entry?",
+            message = "This will permanently delete ${
+                listOfNotNull(machine.text("model_name").ifBlank { null }, machine.text("variant").ifBlank { null })
+                    .joinToString(" ").ifBlank { "this entry" }
+            } and all its notes, service codes, photos, and documents.",
+            confirmLabel = "Delete",
+            onConfirm = { showDeleteConfirm = false; onDelete() },
+            onDismiss = { showDeleteConfirm = false }
+        )
+    }
 }
 
 /** Display name for a `public.users.role` value. The set of roles offered anywhere in this app is

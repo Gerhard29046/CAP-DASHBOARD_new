@@ -84,18 +84,16 @@ private const val FALLBACK_TTL_MS = 5 * 60_000L
  * Shared `select=` column list for [SupabaseAuthRepository.loadProfile]/[SupabaseAuthRepository.updateProfile]
  * so the two can never silently drift into parsing/returning a different row shape.
  *
- * DELIBERATELY does NOT include `photo_path` yet, even though [CapUser]/[JSONObject.toCapUser]
- * already have the field wired end-to-end (cross-platform parity Phase 7) -- this SELECT clause
- * runs on every single login and session restore, unconditionally. Adding an unknown column to
- * it would make PostgREST 400 that request outright, which would break EVERY login app-wide the
- * moment this shipped, not just the new photo feature -- a fundamentally bigger blast radius than
- * a write payload for a not-yet-applied migration (which only fails the one save it's part of).
- * Migration 0026 (`public.users.photo_path`) is written but genuinely NOT applied as of this
- * comment. Add `,photo_path` to this constant ONLY after 0026 is confirmed live -- until then,
- * `CapUser.photoPath` will simply always be null (the JSON key is absent, `optStringOrNull`
- * degrades to null gracefully), which is safe, not broken.
+ * `photo_path` was deliberately excluded until migration 0026 (`public.users.photo_path`) was
+ * confirmed applied -- this SELECT clause runs on every single login and session restore,
+ * unconditionally, so an unknown column here would 400 every login app-wide, not just break the
+ * photo feature. **2026-08-16: independently confirmed live** (a read-only service-role probe,
+ * `supabase/scripts/qa-check-0026-0027-applied.mjs`, confirms `public.users.photo_path` is
+ * selectable) -- safe to include now. [CapUser]/[JSONObject.toCapUser] already parse it, so this
+ * one-column addition is the entire remaining wiring change for avatars to actually load on
+ * login/session-restore, not just after a manual profile edit.
  */
-private const val PROFILE_COLUMNS = "id,email,full_name,role,is_active,effective_permissions"
+private const val PROFILE_COLUMNS = "id,email,full_name,role,is_active,effective_permissions,photo_path"
 
 /**
  * @param isNetworkError the request never reached Supabase (connectivity/timeout). Transient --
