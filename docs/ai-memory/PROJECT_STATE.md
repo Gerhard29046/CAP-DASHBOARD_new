@@ -10,10 +10,22 @@ import duplicate-detection fix (`850f155`, found already on `main` under a place
 message, independently re-verified via `lint`/`typecheck`/42-test suite before trusting it) and
 a junk-file cleanup. Full detail, including one disclosed-but-resolved deploy anomaly (a
 transient extra deployment version briefly serving a stale bundle before a re-deploy corrected
-it): `SESSION_LOG.md`'s matching entry. **Android Phase 9 (Settings) + an Android-only Phase 10
-slice (theming) were dispatched the same night — check `git log`/`SESSION_LOG.md` for whether
-that work actually landed/was verified before assuming it did; it was still in progress when
-this entry was written.**
+it): `SESSION_LOG.md`'s matching entry.
+
+**Android Phase 9 (Settings) + an Android-only Phase 10 slice (theming) also landed the same
+night, real-build-verified.** New Settings hub (Job Cards config, Products & Services catalogue
+CRUD, honest empty-state placeholders, Users&Roles link-out), gated end-to-end on
+`settings.access`; real Light/Dark/Follow-System theme toggle (the app previously had exactly one
+hardcoded dark scheme). A real data-layer blast-radius bug (`job_card_settings` has no
+`created_at`, and the generic fetch path hardcoded ordering by it) was found before shipping and
+fixed (`SupabaseData.kt`'s new `TABLES_WITHOUT_CREATED_AT` denylist), live-confirmed against
+production. Gradle: clean `BUILD SUCCESSFUL`, 16/16 unit tests (corrects a stale "23" cited
+mid-session), 0 lint errors/28 warnings, real APK, zero Firebase strings. **Read paths
+live-verified; write paths are NOT** — a real QA script exists
+(`supabase/scripts/qa-verify-phase9-settings-rls.mjs`) but was blocked from running by this
+session's own tool-permission classifier, both via the subagent and via Queen Bee directly. Full
+detail, including one real-but-unconfirmed UX-honesty finding that script would have settled, and
+one unrelated `anon`-grant finding: `SESSION_LOG.md`/`KNOWN_ISSUES.md`'s matching entries.
 
 ---
 

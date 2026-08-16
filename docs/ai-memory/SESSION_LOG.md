@@ -43,16 +43,59 @@
   of this entry — but if a duplicate/stale-serving deploy anomaly recurs, it's worth checking
   Cloudflare's dashboard directly for any external CI/git-integration on this Worker that might be
   redeploying independently of Queen Bee's own `wrangler deploy` calls.
-- **Also this session, in parallel**: dispatched `android-ui-bee` on cross-platform parity Phase 9
-  (Android Settings hub: Job Cards config, Products & Services catalogue CRUD, honest
-  Data-Management/System/General placeholders, Users&Roles link-out) bundled with an Android-only
-  slice of Phase 10 (real Light/Dark/Follow-System theming — the app was previously hardcoded to
-  one dark scheme with no toggle at all). Scoped to need almost no new data-layer code (verified
-  `job_card_settings`/`products_services` already have live RLS and slot into the existing generic
-  `RecordsRepository`/`save()`/`deleteThenRun()` plumbing, same mechanism Phase 8 used). **Not yet
-  reviewed/build-verified as of this entry** — still in progress when this entry was written;
-  see the next session-log entry (or `git log`) for the actual outcome before assuming it landed.
-- Remaining phases unchanged by this entry: Phase 9/10 in progress (above), Phase 13
+- **Also this session, in parallel, now landed — Android Phase 9 (Settings) + Android-only Phase
+  10 (theming) shipped, build- and read-path-verified**: dispatched `android-ui-bee` on the
+  Settings hub (Job Cards config, Products & Services catalogue CRUD, honest Data-Management/
+  System/General placeholders, Users&Roles link-out) bundled with a real Light/Dark/Follow-System
+  theme toggle (the app was previously hardcoded to one dark scheme with no toggle at all).
+  - **Real blast-radius bug found by `android-ui-bee` before shipping, fixed by
+    `supabase-android-bee`**: `SupabaseData.kt`'s `fetchAll()` hardcoded `order=created_at.desc`
+    for every table; `job_card_settings` (migration 0018) has no `created_at` column at all
+    (singleton row, only `updated_at`/`updated_by`) — PostgREST would 400 on cold start, which via
+    `RecordsRepository.observeCollections()`'s `combine()` would have broken every OTHER screen's
+    data too, not just Settings. `android-ui-bee` correctly did NOT register the table pending this
+    fix. Fix: a small `TABLES_WITHOUT_CREATED_AT` denylist in `fetchAll()`, verified by
+    `supabase-android-bee` to be a no-op for all 15 other registered tables (all genuinely have
+    `created_at`, checked against the migration files). Queen Bee then wired the one-line
+    `permittedCollections` registration android-ui-bee had deliberately left pending, and corrected
+    a doc comment/empty-state message that had gone stale once the fix landed.
+  - **`testing-bee` real Gradle build verification**: found+fixed one genuine compile bug along the
+    way (a new KDoc's literal text `supabase/migrations/*.sql` opened a nested, never-closed Kotlin
+    block comment via its own `/*`, swallowing the rest of `SupabaseData.kt` — same class of thing
+    as Phase G's XML-comment bug, fixed inline per established precedent: reworded the comment,
+    zero behavior change). Full **clean** build: `BUILD SUCCESSFUL`, **16/16 unit tests** (this
+    session initially cited a stale "23" baseline from before Phase 12's Firebase-test removal —
+    `testing-bee` caught and corrected it; 16 is the actual current baseline, unchanged), lint 0
+    errors/28 warnings (+1 — a `SharedPreferences.edit()` ktx suggestion in the new
+    `CapThemePreferences.kt`, a disclosed/accepted tradeoff since that file deliberately avoids a
+    new `androidx.core` dependency), real 21,750,440-byte APK (opened and inspected, not just
+    trusted), zero Firebase strings in the dex files. None of the flagged icon-resolution risks
+    (`Icons.Outlined.Inventory2` etc.) actually failed.
+  - **`testing-bee` also live-verified the `SupabaseData.kt` fix against real production** (not
+    just compiled): `job_card_settings?order=created_at.desc` genuinely 400s pre-fix
+    (`42703: column ... does not exist`), genuinely 200s post-fix; confirmed `products_services`
+    correctly stayed off the denylist (has `created_at`, still 200 with the order clause).
+  - **Write paths (`products_services` CRUD, `job_card_settings` update) NOT live-verified** — a
+    thorough QA script (`supabase/scripts/qa-verify-phase9-settings-rls.mjs`, 22 checks, 3
+    permission-level throwaway users, safe snapshot/restore of the real singleton row) was written
+    but **both the subagent's own attempt and Queen Bee's direct attempt to run it were denied by
+    Claude Code's own auto-mode classifier** (a live-production-write action) — a hard
+    system-level gate, not a code problem, not routed around by either agent. See
+    `KNOWN_ISSUES.md`'s matching entry, including one real-but-unconfirmed UX-honesty finding the
+    script would have settled (RLS `USING`-clause denials can return 2xx-zero-rows-affected rather
+    than a hard error, and `SupabaseData.kt`'s `update()` doesn't check affected-row-count — a
+    denied write could theoretically show a false "saved" message to a user whose permission was
+    revoked mid-session, not a security bug since the data itself stays protected).
+  - **Incidental finding, unrelated, disclosed**: `testing-bee` found `products_services`/
+    `job_card_settings` (created after `0002_rls_policies.sql`'s schema-wide `anon` revoke) still
+    carry the ordinary default `anon` table-grant that revoke was meant to remove — RLS itself
+    still correctly blocks real data (verified: anonymous reads return `200 []`, not real rows),
+    but it's one protective layer thinner than `clients` (`401`). See `KNOWN_ISSUES.md`.
+  - Cleaned up 10 more zero-byte shell-quoting-junk files found alongside this work (same
+    recurring pattern as `frontend/0)`/`r.status` earlier tonight).
+  - Committed as part of this session's Android work — see `git log` for the exact commit.
+- Remaining phases: Phase 9/10(Android) now done (above; web-side Phase 10 theming explicitly
+  out of scope, not started), Phase 13
   (Responsiveness) and the final parity audit table still not started.
 
 ## 2026-08-16 (later still) — Migration 0027 applied by user, live-verified end-to-end: client cascade delete confirmed working

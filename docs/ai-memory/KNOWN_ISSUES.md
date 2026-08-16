@@ -1,5 +1,60 @@
 # Known Issues
 
+## NOT YET LIVE-VERIFIED — Android Phase 9 write paths (`products_services`/`job_card_settings`); a real QA script exists but was blocked from running by this session's own tool classifier (2026-08-16 overnight)
+
+- `testing-bee` wrote `supabase/scripts/qa-verify-phase9-settings-rls.mjs` — 22 checks, mirrors
+  `SupabaseData.kt`'s exact request shapes, throwaway users at 3 permission levels (no access /
+  explicit grant / admin bypass), safe snapshot-and-restore of the real `job_card_settings`
+  singleton, independently re-verified cleanup. Both the subagent's own attempt to run it AND
+  Queen Bee's direct attempt were denied by Claude Code's auto-mode classifier (a live-production-
+  write action) — not a code problem, not something either agent tried to route around. **The
+  script itself was never executed.** Someone outside this session's tool restrictions (the user
+  directly, or a future session with a different permission configuration) needs to run
+  `node supabase/scripts/qa-verify-phase9-settings-rls.mjs` to actually close this gap.
+- What this means practically: Phase 9's write paths are code-reviewed against the already-live
+  RLS policies (`0018_products_services_and_job_card_settings.sql`) and structurally match a
+  `has_permission('settings.access')` pattern already proven correct elsewhere in this schema
+  (e.g. `dashboard_notes`'s 24/24 live-verified matrix), but have not themselves been
+  live-exercised. Reads were live-verified (see the Android Phase 9 `SESSION_LOG.md` entry).
+- **Real, disclosed-but-unconfirmed finding surfaced by writing (not running) the script**:
+  `products_services_update`/`_delete` and `job_card_settings_update` are all `USING`-clause RLS
+  policies (only `products_services_insert` is `WITH CHECK`). PostgREST's semantics mean a
+  `USING`-clause denial can return 2xx with zero rows affected, rather than a hard error — and
+  `SupabaseData.kt`'s `update()` (`MainActivity.kt`'s `MainViewModel.save()` call chain) only
+  checks the HTTP status code, not affected-row-count or `Prefer: return=representation`. If this
+  reading is correct, a user whose `settings.access` is revoked mid-session (while the Settings
+  screen is still reachable from cached nav state) could see "Job Card settings saved and
+  synchronized" while the server silently changed nothing. **Not a security bug** — the RLS policy
+  itself still correctly blocks the actual data change, and normal navigation already can't reach
+  this screen without the permission (`RequireSettingsAccess` gate + hidden nav entry +
+  `permittedCollections` gating, all confirmed via code read). It's a UX-honesty gap, matching the
+  class of thing this project has fixed before when found (e.g. no-fake-success elsewhere in this
+  codebase) — not fixed here, since the underlying reading was never confirmed against a live
+  response (that's exactly what the blocked script would have settled).
+
+## NEW, disclosed, no active data exposure — `anon` role has default table-level grants on every table created after `0002_rls_policies.sql`'s schema-wide revoke (found 2026-08-16 overnight, Android Phase 9 build verification)
+
+- `0002_rls_policies.sql:66-68` does `revoke all on schema public from anon` as deliberate
+  defence-in-depth, on top of RLS itself. That revoke is a point-in-time statement — Postgres/
+  Supabase's default privileges mean tables created by LATER migrations get ordinary `anon`
+  table-level grants back automatically, unless each new migration re-revokes them explicitly
+  (none has).
+- **Confirmed live, read-only, anon key only**: `clients` (from `0001`, before the revoke)
+  correctly returns `401`/`42501` for an anonymous request. `products_services`/
+  `job_card_settings` (from `0018`, after the revoke) both return `200 []` for the same kind of
+  anonymous request — the RLS policy (`has_active_profile()`) is still what's actually blocking
+  real data (confirmed zero rows returned, not real data leaking), but there's only one
+  protective layer where `clients` has two.
+- **Scope not fully confirmed** — only these 3 tables were checked; whatever else migrations
+  `0017`/`0019`-onward created plausibly share the same gap, but a full sweep was blocked by this
+  session's own tool-permission classifier. Needs a proper audit, then likely a small new
+  migration re-running `revoke all on schema public from anon` (or granting per-table only where
+  actually needed) — not attempted this session, since it's a schema change needing the same
+  review-then-SQL-Editor process as every other migration, and there is no evidence of real data
+  exposure to justify skipping that process urgently.
+- Not caused by Phase 9's own work — found incidentally while `testing-bee` was live-verifying
+  Phase 9's `SupabaseData.kt` fix (see the matching Android Phase 9 entry in `SESSION_LOG.md`).
+
 ## RESOLVED (2026-08-16) — Cloudflare account mismatch, fully fixed and independently confirmed
 
 - This machine's local Wrangler CLI was authenticated as `gerhard.ark.of.war@gmail.com`
