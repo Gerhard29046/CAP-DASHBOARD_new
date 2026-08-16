@@ -26,6 +26,11 @@ import {
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader,
+  AlertDialogTitle, AlertDialogTrigger
+} from "@/components/ui/alert-dialog";
 import EmptyState from "@/components/EmptyState";
 import RecordPhotoGallery from "@/components/RecordPhotoGallery";
 import moment from "moment";
@@ -360,6 +365,16 @@ export default function JobCardDetail() {
     window.print();
   };
 
+  // 2026-08-16, explicit user request: "delete... jobs that is booked in". job_card_lines
+  // cascade-delete with the job card (0001_initial_schema.sql), so this is a clean, complete
+  // deletion with nothing left orphaned. RLS (job_cards_delete, 0002_rls_policies.sql) is the
+  // real authorization gate -- matches ClientDetail.jsx's delete, which likewise shows the
+  // button to any signed-in user and lets the server reject an unauthorized attempt.
+  const handleDelete = async () => {
+    await apiClient.entities.JobCard.delete(id);
+    navigate("/jobs");
+  };
+
   const total = lines.reduce(
     (sum, line) => sum + (Number(line.quantity || 1) * Number(line.unit_price || 0)),
     0
@@ -414,6 +429,29 @@ export default function JobCardDetail() {
                   <Printer className="w-4 h-4" />
                   Print / PDF
                 </Button>
+
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button variant="outline" size="icon" className="rounded-xl text-destructive hover:text-destructive hover:bg-destructive/10 border-destructive/30">
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Delete Job Card?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        This will permanently delete job card{" "}
+                        <strong>{jobCard.job_number || `#${String(id).slice(-6).toUpperCase()}`}</strong>
+                        {jobCard.client ? <> for <strong>{jobCard.client.company_name}</strong></> : null}
+                        {" "}and all its line items.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Delete</AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
 
                 <Button size="sm" className="rounded-xl gap-2" onClick={startEditing}>
                   <Pencil className="w-4 h-4" />

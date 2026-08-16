@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   guessMapping, normalizeRow, normalizeEmail, normalizePhone, validateRow, classifyRow, buildPreview,
+  buildUpdatePayload,
 } from "../src/lib/customerImport.js";
 
 test("guessMapping pre-selects obvious header matches", () => {
@@ -104,4 +105,33 @@ test("buildPreview: end-to-end summary counts match a small mixed test file", ()
   assert.equal(summary.exact_match, 1);
   assert.equal(summary.invalid, 1);
   assert.equal(summary.possible_duplicate, 1);
+});
+
+test("buildUpdatePayload only includes fields the row actually has a new value for", () => {
+  const row = { company_name: "ABC Refrigeration", phone: "0211234567" };
+  const payload = buildUpdatePayload(row, { notes: "Old notes" });
+  assert.deepEqual(payload, { company_name: "ABC Refrigeration", phone: "0211234567" });
+  assert.equal(payload.email, undefined);
+  assert.equal(payload.is_active, undefined);
+});
+
+test("buildUpdatePayload appends new notes to the existing client's notes rather than overwriting", () => {
+  const row = { company_name: "ABC", notes: "VAT Number: 4123456789" };
+  const payload = buildUpdatePayload(row, { notes: "Technician says compressor due for service." });
+  assert.match(payload.notes, /Technician says compressor due for service\./);
+  assert.match(payload.notes, /VAT Number: 4123456789/);
+  // Original notes must appear BEFORE the appended block, never replaced.
+  assert.ok(payload.notes.indexOf("Technician says") < payload.notes.indexOf("VAT Number"));
+});
+
+test("buildUpdatePayload with no existing notes just uses the new notes, no leading blank stamp text", () => {
+  const row = { company_name: "ABC", notes: "Cell: 0825551234" };
+  const payload = buildUpdatePayload(row, { notes: "" });
+  assert.match(payload.notes, /Cell: 0825551234/);
+});
+
+test("buildUpdatePayload never includes notes when the row has none", () => {
+  const row = { company_name: "ABC" };
+  const payload = buildUpdatePayload(row, { notes: "Existing notes stay untouched" });
+  assert.equal(payload.notes, undefined);
 });

@@ -189,6 +189,32 @@ export function classifyRow(row, existingClients) {
 }
 
 /**
+ * Build the field payload for UPDATING an already-existing client from a normalized import
+ * row (2026-08-16: "update the customers" from a repeat Pastel/Sage export, not just import
+ * new ones). Deliberately partial/non-destructive:
+ * - Only fields the row actually has a new (truthy) value for are included -- a spreadsheet
+ *   column left unmapped, or blank on this particular row, never blanks out existing data
+ *   the app already has for that client.
+ * - `notes` is APPENDED to the existing client's current notes, never overwritten, so
+ *   manually-typed service notes unrelated to the accounting export survive an update.
+ * - `is_active` is never touched here -- that flag is only ever set (to true) on create, an
+ *   update should never silently reactivate/deactivate a client as a side effect of a
+ *   Pastel refresh.
+ */
+export function buildUpdatePayload(row, existingClient) {
+  const payload = {};
+  for (const field of ["company_name", "contact_person", "email", "phone", "address", "legacy_pastel_customer_code"]) {
+    if (row[field]) payload[field] = row[field];
+  }
+  if (row.notes) {
+    const existingNotes = (existingClient?.notes || "").trim();
+    const stamp = `Updated from import ${new Date().toISOString().slice(0, 10)}:\n${row.notes}`;
+    payload.notes = existingNotes ? `${existingNotes}\n\n${stamp}` : stamp;
+  }
+  return payload;
+}
+
+/**
  * Build the full preview for a parsed spreadsheet: per-row validation + duplicate
  * classification, plus totals for the summary the administrator reviews before confirming.
  *

@@ -7,7 +7,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Upload, FileSpreadsheet, ArrowRight, CheckCircle2, AlertTriangle, History } from "lucide-react";
-import { APP_FIELDS, guessMapping, buildPreview } from "@/lib/customerImport";
+import { APP_FIELDS, guessMapping, buildPreview, buildUpdatePayload } from "@/lib/customerImport";
 
 const STEPS = ["Upload", "Map Columns", "Preview", "Import"];
 
@@ -42,7 +42,16 @@ export default function ImportCustomers() {
     return buildPreview(rawRows, mapping, existingClients);
   }, [rawRows, mapping, existingClients]);
 
-  const decisionFor = (row) => decisions[row.index] ?? (row.status === "new" || row.status === "possible_duplicate" ? "import" : "skip");
+  // Per-row default action. 2026-08-16: "update the customers" from a repeat Pastel/Sage
+  // export is now a real decision, not just import-or-skip -- an exact_match (a strong
+  // signal: matching customer code, email, or phone) defaults to updating the existing
+  // client, since that's the whole point of re-importing an accounting export. A
+  // possible_duplicate (name-only, a weaker signal) still defaults to "skip" -- a human
+  // should confirm it's really the same customer before either creating a duplicate or
+  // overwriting the wrong record.
+  const decisionFor = (row) => decisions[row.index] ?? (
+    row.status === "new" ? "import" : row.status === "exact_match" ? "update" : "skip"
+  );
 
   const handleFile = async (file) => {
     setError("");
@@ -80,13 +89,26 @@ export default function ImportCustomers() {
   const runImport = async () => {
     setImporting(true);
     setError("");
-    let imported = 0, skipped = 0, duplicates = 0;
+    let imported = 0, updated = 0, skipped = 0, duplicates = 0;
     try {
       for (const row of preview.rows) {
         const decision = decisionFor(row);
         if (row.status === "invalid" || decision === "skip") {
           skipped += 1;
           if (row.status === "exact_match" || row.status === "possible_duplicate") duplicates += 1;
+          continue;
+        }
+        if (decision === "update") {
+          // matchId is only ever set on exact_match/possible_duplicate rows (see
+          // classifyRow) -- "update" is never offered as an option otherwise, but guard
+          // anyway rather than sending an update with no id.
+          if (!row.matchId) { skipped += 1; continue; }
+          const existingClient = existingClients.find((c) => c.id === row.matchId);
+          const payload = buildUpdatePayload(row.normalized, existingClient);
+          if (Object.keys(payload).length > 0) {
+            await apiClient.entities.Client.update(row.matchId, payload);
+          }
+          updated += 1;
           continue;
         }
         await apiClient.entities.Client.create({
@@ -107,15 +129,16 @@ export default function ImportCustomers() {
         imported_by: user?.id || null,
         row_count: preview.rows.length,
         imported_count: imported,
+        updated_count: updated,
         duplicate_count: duplicates,
         skipped_count: skipped,
         column_mapping: mapping,
       });
-      setResult({ imported, skipped, duplicates, summary });
+      setResult({ imported, updated, skipped, duplicates, summary });
       setStep(3);
     } catch (e) {
       console.error("Import failed partway through:", e);
-      setError(`Import stopped after an error: ${e.message || "unknown error"}. ${imported} customer(s) were already saved before the failure -- review Clients before re-running to avoid duplicates.`);
+      setError(`Import stopped after an error: ${e.message || "unknown error"}. ${imported} customer(s) were already saved and ${updated} already updated before the failure -- review Clients before re-running to avoid duplicates.`);
     } finally {
       setImporting(false);
     }
@@ -131,7 +154,8 @@ export default function ImportCustomers() {
       <div className="mb-4">
         <h2 className="font-heading font-semibold text-foreground">Import Customers</h2>
         <p className="text-xs text-muted-foreground mt-0.5">
-          Import customers from a Pastel (or similar) Excel export into the existing Clients table.
+          Import or update customers from a Pastel / Sage One Online Accounting export (.csv, .xlsx, or .xls)
+          into the existing Clients table.
         </p>
       </div>
 
@@ -159,8 +183,8 @@ export default function ImportCustomers() {
         <label className="flex flex-col items-center justify-center gap-2 border-2 border-dashed border-border rounded-xl py-14 cursor-pointer hover:border-primary/40 transition-colors">
           <Upload className="w-8 h-8 text-muted-foreground" />
           <p className="text-sm text-foreground font-medium">Click to select a spreadsheet</p>
-          <p className="text-xs text-muted-foreground">.xlsx or .xls — nothing is imported until you confirm at the final step</p>
-          <input type="file" accept=".xlsx,.xls" className="hidden" onChange={(e) => handleFile(e.target.files?.[0])} />
+          <p className="text-xs text-muted-foreground">.csv, .xlsx, or .xls — nothing is imported or updated until you confirm at the final step</p>
+          <input type="file" accept=".csv,.xlsx,.xls" className="hidden" onChange={(e) => handleFile(e.target.files?.[0])} />
         </label>
       )}
 
@@ -210,8 +234,11 @@ export default function ImportCustomers() {
             <SummaryStat label="Needs Attention" value={preview.summary.invalid} accent="text-destructive" />
           </div>
           <p className="text-xs text-muted-foreground mb-3">
-            Review each row. "New" and "Possible Duplicates" import by default (uncheck to skip) — "Exact Matches" and
-            rows needing attention are skipped by default. Nothing existing is ever overwritten by this importer.
+            Review each row and choose an action. "New" rows import by default. "Exact Matches" (same customer
+            code, email, or phone) default to updating the existing client — only the fields present in this
+            file are changed; notes are appended, never overwritten, and nothing else on the existing record is
+            touched. "Possible Duplicates" (name only) default to skipped — confirm they're really the same
+            customer before updating or importing as a new record.
           </p>
           {/* REAL FIX (2026-08-13 responsive pass): overflow-hidden + overflow-y-auto on
               the same element only frees the y-axis -- the x-axis stayed clipped, so this
@@ -223,7 +250,7 @@ export default function ImportCustomers() {
             <table className="w-full text-xs">
               <thead className="sticky top-0 bg-secondary/90 backdrop-blur">
                 <tr>
-                  <th className="text-left px-3 py-2 font-medium text-muted-foreground">Import?</th>
+                  <th className="text-left px-3 py-2 font-medium text-muted-foreground">Action</th>
                   <th className="text-left px-3 py-2 font-medium text-muted-foreground">Customer</th>
                   <th className="text-left px-3 py-2 font-medium text-muted-foreground">Status</th>
                   <th className="text-left px-3 py-2 font-medium text-muted-foreground">Reason</th>
@@ -232,17 +259,21 @@ export default function ImportCustomers() {
               <tbody>
                 {preview.rows.map((row) => {
                   const meta = STATUS_META[row.status];
-                  const canImport = row.status !== "invalid";
-                  const checked = decisionFor(row) === "import";
+                  const disabled = row.status === "invalid";
+                  const decision = decisionFor(row);
                   return (
                     <tr key={row.index} className="border-t border-border">
                       <td className="px-3 py-2">
-                        <input
-                          type="checkbox"
-                          disabled={!canImport}
-                          checked={canImport && checked}
-                          onChange={(e) => setDecisions((prev) => ({ ...prev, [row.index]: e.target.checked ? "import" : "skip" }))}
-                        />
+                        <select
+                          className="h-7 rounded-md border border-border bg-background text-xs px-1.5 disabled:opacity-50"
+                          disabled={disabled}
+                          value={disabled ? "skip" : decision}
+                          onChange={(e) => setDecisions((prev) => ({ ...prev, [row.index]: e.target.value }))}
+                        >
+                          <option value="skip">Skip</option>
+                          {row.matchId && <option value="update">Update Existing</option>}
+                          <option value="import">Import as New</option>
+                        </select>
                       </td>
                       <td className="px-3 py-2 text-foreground">
                         {row.normalized.company_name || <span className="text-destructive">—</span>}
@@ -263,7 +294,9 @@ export default function ImportCustomers() {
           <div className="flex justify-end gap-2">
             <Button variant="ghost" onClick={() => setStep(1)}>Back to Mapping</Button>
             <Button disabled={importing} onClick={runImport}>
-              {importing ? "Importing…" : `Import ${preview.rows.filter((r) => decisionFor(r) === "import" && r.status !== "invalid").length} Customers`}
+              {importing
+                ? "Importing…"
+                : `Apply to ${preview.rows.filter((r) => decisionFor(r) !== "skip" && r.status !== "invalid").length} Customers`}
             </Button>
           </div>
         </div>
@@ -275,6 +308,7 @@ export default function ImportCustomers() {
           <p className="text-foreground font-medium">Import complete</p>
           <p className="text-sm text-muted-foreground mt-1">
             {result.imported} customer{result.imported !== 1 ? "s" : ""} imported ·{" "}
+            {result.updated} updated ·{" "}
             {result.duplicates} flagged as duplicate · {result.skipped} skipped
           </p>
           <div className="flex justify-center gap-2 mt-5">
@@ -318,7 +352,7 @@ function ImportHistory() {
           <div key={h.id} className="flex items-center justify-between px-4 py-2.5 text-xs">
             <span className="text-foreground truncate">{h.source_filename}</span>
             <span className="text-muted-foreground shrink-0 ml-3">
-              {h.imported_count} imported · {h.duplicate_count} duplicates · {h.skipped_count} skipped
+              {h.imported_count} imported · {h.updated_count || 0} updated · {h.duplicate_count} duplicates · {h.skipped_count} skipped
             </span>
           </div>
         ))}

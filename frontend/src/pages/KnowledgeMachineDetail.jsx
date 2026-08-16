@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useNavigate } from "react-router-dom";
 import { apiClient } from "@/api/apiClient";
 import { useAuth } from "@/lib/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -7,12 +7,18 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader,
+  AlertDialogTitle, AlertDialogTrigger
+} from "@/components/ui/alert-dialog";
 import NoteRecord from "@/components/NoteRecord";
-import { ArrowLeft, Pencil, FileText, Image as ImageIcon, KeyRound, StickyNote, Eye, EyeOff, Upload } from "lucide-react";
+import { ArrowLeft, Pencil, Trash2, FileText, Image as ImageIcon, KeyRound, StickyNote, Eye, EyeOff, Upload } from "lucide-react";
 import moment from "moment";
 
 export default function KnowledgeMachineDetail() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const { user } = useAuth();
   const [machine, setMachine] = useState(null);
   const [codes, setCodes] = useState([]);
@@ -49,6 +55,18 @@ export default function KnowledgeMachineDetail() {
   const reveal = async (code) => {
     const result = await apiClient.request(`/knowledge-service-codes/${code.id}/reveal`, { method: "POST" });
     setRevealed((current) => ({ ...current, [code.id]: result.service_code }));
+  };
+
+  // 2026-08-16, explicit user request: "delete... knowledge base". knowledge_notes/
+  // knowledge_service_codes/knowledge_media/knowledge_documents all cascade-delete with the
+  // parent knowledge_machines row (0001_initial_schema.sql), so the database side is a clean,
+  // complete deletion. NOT solved here, disclosed limitation: any uploaded media/document
+  // files stay in Supabase Storage (deleting a row does not delete its Storage object) --
+  // same pre-existing gap already documented in KNOWN_ISSUES.md for this feature area, not
+  // introduced by this change.
+  const handleDelete = async () => {
+    await apiClient.request(`/knowledge-machines/${id}`, { method: "DELETE" });
+    navigate("/knowledge-base");
   };
 
   const upload = async (event, type) => {
@@ -90,9 +108,31 @@ export default function KnowledgeMachineDetail() {
             {machine.summary && <p className="text-sm text-muted-foreground mt-2 max-w-2xl">{machine.summary}</p>}
           </div>
           {user?.role === "admin" && (
-            <Link to={`/knowledge-base/${id}/edit`} className="shrink-0">
-              <Button variant="outline" size="sm" className="gap-2"><Pencil className="w-3.5 h-3.5" /> Edit</Button>
-            </Link>
+            <div className="flex gap-2 shrink-0">
+              <Link to={`/knowledge-base/${id}/edit`}>
+                <Button variant="outline" size="sm" className="gap-2"><Pencil className="w-3.5 h-3.5" /> Edit</Button>
+              </Link>
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button variant="outline" size="icon" className="text-destructive hover:text-destructive hover:bg-destructive/10 border-destructive/30">
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Delete Knowledge Base Entry?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      This will permanently delete <strong>{machine.manufacturer} {machine.model_name} {machine.variant}</strong>{" "}
+                      and all its notes, service codes, photos, and documents.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Delete</AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            </div>
           )}
         </div>
       </div>
