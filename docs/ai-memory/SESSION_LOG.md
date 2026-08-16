@@ -1,5 +1,60 @@
 # Session Log
 
+## 2026-08-16 (overnight) — Real production deploy to Cloudflare, explicit user authorization; found+cleaned an unreviewed stray commit first; Android Phase 9 (Settings) kicked off
+- User, before going to sleep: "dont wait for me. dont ask me for bash commands you are allowed to
+  do everything... push to git and deploy and make sure it is live on cloudflare." Explicit,
+  direct authorization for the production-deploy gate in `CLAUDE.md` section 12.
+- **Found a real provenance gap before deploying, investigated rather than deployed blind**:
+  `main` already contained commit `850f155` ("Describe what you changed" — a placeholder message,
+  on a stray branch `refs/heads/agents/confirm-github-push-status`) with real, substantial code
+  changes to `frontend/src/lib/customerImport.js`/`ImportCustomers.jsx`/its test file (774
+  insertions), plus two zero-byte junk files (`frontend/0)`, `r.status` — matches this project's
+  known recurring shell-quoting-junk pattern). Never reviewed or logged by Queen Bee in any prior
+  session. Read the actual diff before trusting it: a genuine, well-reasoned root-cause fix for a
+  real bug class (CSV importer's in-file duplicate detection was tagging rows with a synthetic
+  `"row-17"`-style id that could leak into a real `PATCH /clients?id=eq.row-17` call, which
+  Postgres correctly rejected with `22P02 invalid uuid`) — separates "matched a real database
+  client" (`existingClientId`, always a real UUID or null) from "matched an earlier row in the
+  same file" (`duplicateOfRowIndex`, always a plain number or null), with a new `isValidUuid()`
+  guard and per-row length/email sanity checks. **Verified for real before trusting it further**:
+  `npm run lint` clean, `npm run typecheck` clean, `npm test` 42/42 pass (10 tests explicitly
+  named "TEST N (user spec)", i.e. written against a real specification, not just self-tested).
+  Removed the two junk files (`f9467a1`), left the real code change as-is (already correct).
+- **Verified production build clean before deploying**: `npm run build` succeeded, `dist/`
+  produced, zero "firebase" occurrences anywhere in the built JS (grepped directly, not assumed).
+- **Pushed** (`850f155..f9467a1 main -> main`) and **deployed** (`npx wrangler deploy`, confirmed
+  correct account first via `wrangler whoami` — `gerhardvanwijk@gmail.com` /
+  `3f30316d2958f170287083b0b7d680b5`, matches `wrangler.jsonc`'s pinned `account_id`, matches the
+  known-RESOLVED Cloudflare account-mismatch entry). **Verified live independently, not trusted
+  from the CLI's own success message**: fetched the live page, extracted the actual served
+  `assets/index-*.js` filename, and confirmed it matches the local `dist/` build's own filename
+  byte-for-byte (content-hashed, so an exact name match is a strong content-identity proof) — both
+  the JS and CSS bundle, both HTTP 200, JS bundle real size (1,596,434 bytes) confirmed downloadable.
+  **One real, disclosed oddity along the way**: the first `wrangler deploy` produced version
+  `7689893d...`, but `wrangler deployments list` then showed a SECOND deployment record
+  (`a8138bd1...`) at 100% traffic just 25 seconds later, serving a stale/different bundle hash
+  (`CIzzB6D7` — doesn't match anything in this session's `dist/`). Root cause not conclusively
+  identified (not chased further — no second `wrangler deploy` was run by Queen Bee at that point,
+  so either a Workers-with-Assets two-phase-rollout quirk or genuinely-external concurrent
+  deploy). **Not left unresolved**: ran `wrangler deploy` again (`8bc8552d...`, reported "no
+  updated asset files to upload," confirming the local `dist/` content itself was unchanged/
+  correct both times), confirmed it become the active 100% deployment, and re-verified the live
+  bundle hash matches the local build exactly this time. Production is confirmed correctly live as
+  of this entry — but if a duplicate/stale-serving deploy anomaly recurs, it's worth checking
+  Cloudflare's dashboard directly for any external CI/git-integration on this Worker that might be
+  redeploying independently of Queen Bee's own `wrangler deploy` calls.
+- **Also this session, in parallel**: dispatched `android-ui-bee` on cross-platform parity Phase 9
+  (Android Settings hub: Job Cards config, Products & Services catalogue CRUD, honest
+  Data-Management/System/General placeholders, Users&Roles link-out) bundled with an Android-only
+  slice of Phase 10 (real Light/Dark/Follow-System theming — the app was previously hardcoded to
+  one dark scheme with no toggle at all). Scoped to need almost no new data-layer code (verified
+  `job_card_settings`/`products_services` already have live RLS and slot into the existing generic
+  `RecordsRepository`/`save()`/`deleteThenRun()` plumbing, same mechanism Phase 8 used). **Not yet
+  reviewed/build-verified as of this entry** — still in progress when this entry was written;
+  see the next session-log entry (or `git log`) for the actual outcome before assuming it landed.
+- Remaining phases unchanged by this entry: Phase 9/10 in progress (above), Phase 13
+  (Responsiveness) and the final parity audit table still not started.
+
 ## 2026-08-16 (later still) — Migration 0027 applied by user, live-verified end-to-end: client cascade delete confirmed working
 - User applied `0027_client_delete_cascade_and_import_updates.sql`. Independently verified, not
   taken on trust: `qa-check-0026-0027-applied.mjs` (columns/permission rows) + a new

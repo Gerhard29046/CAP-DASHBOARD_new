@@ -1,5 +1,23 @@
 # Project State
-_Last verified: 2026-08-16 (severe web User Admin bug found+fixed; Android Phase 8/11/12 —
+_Last verified: 2026-08-16 (overnight — production deploy to Cloudflare, explicit user
+authorization). **The web app (`frontend/`) is confirmed live in production** at
+`https://capdashboard.gerhardvanwijk.workers.dev`, version `8bc8552d-38f9-4bef-8086-02aa04a5840f`,
+independently verified (not just the CLI's own claim) by fetching the live page and confirming
+its served `assets/index-*.js`/`.css` filenames match the local `dist/` build exactly
+(content-hashed names, so an exact match is a strong identity proof), both HTTP 200, zero
+"firebase" strings in the bundle. Includes everything through commit `f9467a1` — the customer-
+import duplicate-detection fix (`850f155`, found already on `main` under a placeholder commit
+message, independently re-verified via `lint`/`typecheck`/42-test suite before trusting it) and
+a junk-file cleanup. Full detail, including one disclosed-but-resolved deploy anomaly (a
+transient extra deployment version briefly serving a stale bundle before a re-deploy corrected
+it): `SESSION_LOG.md`'s matching entry. **Android Phase 9 (Settings) + an Android-only Phase 10
+slice (theming) were dispatched the same night — check `git log`/`SESSION_LOG.md` for whether
+that work actually landed/was verified before assuming it did; it was still in progress when
+this entry was written.**
+
+---
+
+_Last verified before that: 2026-08-16 (severe web User Admin bug found+fixed; Android Phase 8/11/12 —
 Users+Roles, real Status checks, and complete Firebase removal — all real-build-verified). Full
 narrative:
 
