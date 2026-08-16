@@ -1,5 +1,52 @@
 # Session Log
 
+## 2026-08-16 — Severe web User Admin bug found+fixed; Android Phases 8/11/12 (Users+Roles, real Status checks, complete Firebase removal) all shipped and real-build-verified
+- Objective: continue the cross-platform parity initiative per the user's standing instruction
+  ("do not build after each phase, continue until you done"). Started by scoping Android Phase 8
+  (Users + Roles editing).
+- **Found and fixed a severe, live production bug on web while scoping Phase 8**:
+  `UserAdmin.jsx`'s save() sent `name`/`permission_overrides` to `public.users` — neither is a
+  real column (`full_name` is; there is no override-tracking column). PostgREST rejects the
+  whole request on any unknown column, so every admin save (role/active-status/permission edits)
+  was 400ing in production. Also found "Create User" and "reset another user's password" were
+  architecturally impossible (no client-safe way to create an `auth.users` row or write a
+  password column). Fixed: `name`→`full_name` rename, removed the fake fields/flows, kept real
+  editing working. Same-bug-class fix applied on Android's Users list too (`"name"` titleKey,
+  introduced by this session's own `b8aaaee`). Files: `frontend/src/pages/UserAdmin.jsx`,
+  `frontend/src/api/supabaseApiClient.js`, `mobile-android/.../MainActivity.kt`. Verified:
+  `npm run lint`/`typecheck`/`build` clean.
+- **Android Phase 8 (Users + Roles editable)**: dispatched to `android-ui-bee` with a fully
+  pre-scoped brief (real column names, RLS/trigger behavior, exact save payload shape, explicit
+  "no Create User/password flows" scope limits). Delivered `UsersScreen`/`UserDetailScreen`
+  (`e703177`) — reviewed diff-by-diff before accepting, then independently re-verified via a
+  fresh local Gradle build (not just trusting the agent's self-report): `BUILD SUCCESSFUL`,
+  23/23 tests, 0 lint errors/30 warnings, real APK.
+- **Android Phase 11 (Connection & Sync Status)**: `StatusRepository.checkHealth()`/
+  `testConnection()` probed a Firestore `users/{uid}` doc that this session's earlier `b8aaaee`
+  had already made stale — an actively wrong health signal, not just a stale label. Implemented
+  directly (repository-layer work; `supabase-android-bee` not invocable this session) — now uses
+  `SupabaseAuthRepository.hasSession` + `SupabaseDataRepository.count("permissions")`. `2eb9f33`,
+  real-build-verified (same baseline numbers).
+- **Android Phase 12 (Firebase removed completely, with real proof)**: `408fe0e`. Deleted
+  `observeFirestoreCollection()`, `FirebaseModule`, the Firebase Auth login bridge, now-unused
+  error-mapping functions, `SUPABASE_MIGRATED_TABLES`, the matching 7-test file, `google-
+  services.json`, the `google-services` plugin, and every `firebase-*` dependency. Full clean
+  build → `BUILD SUCCESSFUL`; `:app:dependencies` shows zero Firebase artifacts; extracted the
+  real built APK and grepped all 9 dex files + manifest + resources.arsc for "firebase" →
+  zero matches anywhere; APK size dropped ~4.6MB. One real bug caught by this same verification:
+  a first-pass import cleanup also wrongly removed `@ApplicationContext`'s import, breaking
+  `StatusRepository`'s Hilt injection — caught by a real KSP compile failure, fixed, re-verified.
+- `CLAUDE.md` (sections 6.2/6.3/6.4/9, Supabase/Firebase coding conventions) corrected —
+  previously said Android "remains on Firebase," no longer true. `mobile-android/README.md`,
+  `docs/migration/FIREBASE_DEPENDENCIES.md` updated to match.
+- Tests/builds run: 4 separate full Android Gradle verification runs this session (Phase 8, two
+  for Phase 11, two for Phase 12 including the ApplicationContext fix), plus web
+  lint/typecheck/build. All real, all passing, all disclosed with exact numbers above.
+- Remaining work: Phases 9 (Settings), 10 (Theming), 13 (Responsiveness), and the final parity
+  audit table from the original 15-phase spec are not started. `LiveFirebaseSmokeTest.kt`
+  (pre-existing, stale, unrelated to this session's removal) not renamed/fixed — disclosed.
+  Migration `0026` (Phase 7 profile photos) still not applied by the user.
+
 ## 2026-08-15 (same day, continued) — Android Phase G: branding/visual identity, all 3 rounds shipped and real-build-verified
 - Objective: continue directly from Phase F (same session) into a full branding/visual-identity
   pass per detailed user direction (27 numbered points) — audit existing visual language first,

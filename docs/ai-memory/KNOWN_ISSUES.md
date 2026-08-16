@@ -115,10 +115,12 @@
   connected device this session via `adb install -r`.
 - **Deliberately deferred, not silently dropped** (each has its own reason, see `git log`
   commit messages for full detail): `StatusScreen` still shows literal "Firebase"/
-  "Firestore"/`capdatabasefb2` labels — genuinely accurate today (that screen really does
-  still probe Firestore), a truthful fix needs a Supabase health-check capability that's
-  `supabase-android-bee`'s scope (not invocable this session, same recurring
-  agent-registration gap). No consistent top-bar back/up affordance for the 8 screens reached
+  "Firestore"/`capdatabasefb2` labels — genuinely accurate at the time this was written (that
+  screen really did still probe Firestore). **RESOLVED 2026-08-16**: fixed as Phase 11 of the
+  cross-platform parity initiative (`2eb9f33`) — `StatusRepository` now checks real Supabase
+  health, and Firebase was removed from Android entirely the same day (Phase 12, `408fe0e`,
+  real-proof-verified — see `ROADMAP.md`'s Phase 12 entry). No consistent top-bar back/up
+  affordance for the 8 screens reached
   from `MoreScreen` (they already have in-content `CapBackRow`s; adding a top-bar arrow too
   would double up — a real design decision, not a mechanical fix). `ServerStatusIndicator`
   now shows dot-only when healthy (frees app-bar width) — flagged by the implementer as the

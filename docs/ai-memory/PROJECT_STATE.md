@@ -1,5 +1,61 @@
 # Project State
-_Last verified: 2026-08-15 (Android Phase G — branding/visual identity — complete, all 3
+_Last verified: 2026-08-16 (severe web User Admin bug found+fixed; Android Phase 8/11/12 —
+Users+Roles, real Status checks, and complete Firebase removal — all real-build-verified). Full
+narrative:
+
+**Found while scoping Android Phase 8 (Users + Roles), fixed on web first**: `UserAdmin.jsx`'s
+save() sent `name`/`permission_overrides` to `public.users` — neither is a real column (it's
+`full_name`; there is no override-tracking column, only `effective_permissions text[]`).
+PostgREST rejects the whole request on any unknown column, so **every admin save — role changes,
+active/disabled toggles, permission edits — was 400ing in production**, not a cosmetic bug. Also
+found "Create User" and "reset another user's password" were both architecturally impossible
+(`public.users.id` is a FK to `auth.users(id)`, populated only by a real sign-up trigger; there is
+no password column at all — Supabase Auth owns credentials separately). Fixed: renamed
+`name`→`full_name` throughout, removed the nonexistent-column payload fields, removed the fake
+password-reset fields, replaced "Create User" with an honest message pointing to self-registration.
+Editing an existing user's `full_name`/`email`/`role`/`is_active`/`effective_permissions` now
+actually persists. Verified: `npm run lint`/`typecheck`/`build` all clean.
+
+**Android Phase 8 (Users + Roles editable)**: new `UsersScreen`/`UserDetailScreen`
+(`e703177`, built by `android-ui-bee`, independently re-verified by Queen Bee) — edit-only,
+same reasoning as web's fix above. Full permission matrix sourced from real `permissions`/
+`role_permissions` tables (newly added to `SUPABASE_MIGRATED_TABLES`/`permittedCollections`),
+save payload exactly `{full_name, email, role, is_active, effective_permissions}` on both
+platforms now. Also fixed the Android Users list's own `"name"` titleKey bug (same root cause,
+introduced earlier this session by `b8aaaee`'s Firestore→Supabase wiring commit). Gradle:
+`BUILD SUCCESSFUL`, 23/23 tests, 0 lint errors/30 warnings, real APK.
+
+**Android Phase 11 (Connection & Sync Status → real Supabase checks)**: `StatusRepository.
+checkHealth()`/`testConnection()` used to probe a Firestore `users/{uid}` doc that `b8aaaee`
+made stale/vestigial — continuing to gate the Status screen's health signal on it was actively
+wrong (could show "Connected" during a real Supabase outage). Implemented directly by Queen Bee
+(repository-layer work; `supabase-android-bee` not invocable this session). Now uses
+`SupabaseAuthRepository.hasSession` + `SupabaseDataRepository.count("permissions")`. UI text
+updated (no more "Firebase"/"Firestore"/`capdatabasefb2` labels). `2eb9f33`.
+
+**Android Phase 12 (Firebase removed completely, with real proof)**: `408fe0e`. Deleted
+`observeFirestoreCollection()`, `FirebaseModule`, `AuthRepository`'s Firebase Auth bridge, the
+now-fully-unused `connectionStatus()`/`connectionUserMessage()`, `SUPABASE_MIGRATED_TABLES`,
+`ObserveFirestoreCollectionFailurePolicyTest.kt` (7 tests — unit baseline correctly now 16/16,
+not a regression), `google-services.json`, the `google-services` Gradle plugin, every
+`firebase-*`/`kotlinx-coroutines-play-services` catalog entry. **Proof, not assertion**: full
+clean build → `BUILD SUCCESSFUL`; `:app:dependencies` shows zero resolved Firebase artifacts;
+the actual built APK's 9 dex files + manifest + resources.arsc grepped for "firebase"
+case-insensitively → zero matches anywhere; APK size dropped 26,286,963 → 21,668,520 bytes
+(~4.6MB), consistent with an entire SDK actually leaving the package. `CLAUDE.md` sections
+6.2/6.3/6.4/9 and the Supabase/Firebase coding-convention subsections corrected to match (they
+previously said Android "remains on Firebase" — no longer true).
+
+**Not done, disclosed**: `mobile-android/app/src/androidTest/.../LiveFirebaseSmokeTest.kt` — a
+pre-existing, already-stale instrumented UI test (references deleted UI text) left untouched
+(imports no real Firebase class, didn't block removal; renaming it is separate, deferred
+cleanup). Migration `0026_user_profile_photo.sql` (Phase 7, profile photos) is still not
+applied. Remaining parity-initiative phases (9 Settings, 10 Theming, 13 Responsiveness, final
+parity audit table) not started this session.
+
+---
+
+_Last verified before that: 2026-08-15 (Android Phase G — branding/visual identity — complete, all 3
 rounds real-build-verified, latest APK installed to the user's device). Full narrative:
 
 **Phase G, continuing directly from Phase F in the same session.** User asked for a full

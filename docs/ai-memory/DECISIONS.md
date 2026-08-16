@@ -1,5 +1,46 @@
 # Decisions
 
+## 2026-08-16 — Android's Firebase→Supabase migration reaches completion; Firebase removed entirely from `mobile-android/`
+- Decision: with `"users"` (the last Firestore-routed collection, see the two 2026-08-14 entries
+  below) moved onto Supabase earlier the same day (`b8aaaee`), and the Status screen's health
+  check moved off a now-stale Firestore probe (Phase 11, `2eb9f33`), every real reason for
+  Firebase to remain in the Android codebase was gone. Rather than leave the dead code/
+  dependencies in place indefinitely, removed them in one dedicated commit (`408fe0e`):
+  `observeFirestoreCollection()`, `FirebaseModule`, `AuthRepository`'s Firebase Auth login
+  bridge, `SUPABASE_MIGRATED_TABLES` (no longer meaningful with one backend), the now-unused
+  Firebase-specific error-mapping functions, the `firebase-*` Gradle dependencies, the
+  `google-services` plugin, and `app/google-services.json`.
+- Reason: per this project's own git-discipline convention (see the 2026-08-13 dashboard-notes
+  entries below for the same pattern), dead code accumulates real cost even when inert —
+  confusion for future readers, a larger attack/audit surface, and an actively misleading
+  `CLAUDE.md`/architecture picture (section 6.2 said "remains on Firebase" right up until this
+  decision). Once the underlying blocker (Firestore data dependency) was gone, there was no
+  reason to defer the cleanup further.
+- Verification, not just assertion: a full **clean** Gradle build (`BUILD SUCCESSFUL`);
+  `:app:dependencies --configuration debugRuntimeClasspath | grep -i firebase` returning zero
+  output; the actual built APK extracted and all 9 dex files + `AndroidManifest.xml` +
+  `resources.arsc` grepped for "firebase" case-insensitively, zero matches; APK size dropped
+  ~4.6MB (26,286,963 → 21,668,520 bytes), consistent with a whole SDK actually leaving the
+  package rather than just source-level removal. Unit test baseline correctly dropped 23→16 (the
+  7 deleted tests belonged to `ObserveFirestoreCollectionFailurePolicyTest.kt`, which tested the
+  now-deleted function — not a coverage regression).
+- Affected files/systems: `mobile-android/app/src/main/java/.../Core.kt`, `app/build.gradle.kts`,
+  root `build.gradle.kts`, `gradle/libs.versions.toml`, `app/google-services.json` (deleted),
+  `app/src/test/.../ObserveFirestoreCollectionFailurePolicyTest.kt` (deleted). `CLAUDE.md`
+  (sections 6.2/6.3/6.4/9 and the Supabase/Firebase coding-convention subsections) and
+  `mobile-android/README.md`/`docs/migration/FIREBASE_DEPENDENCIES.md` updated to match.
+- Consequences: any future Android work can assume a single backend (Supabase) with no Firebase
+  fallback path to reason about. The old Firebase project (`capdatabasefb2`) and its data are
+  **not** affected by this — that's a separate, still-open, user-owned decision (archive/keep/
+  delete), unrelated to removing the Android app's *code* dependency on it (see CLAUDE.md 6.3).
+- Reversal conditions: none anticipated — this closes out a migration that was already
+  substantially complete; reintroducing Firebase would need a new, separate decision with its
+  own justification, not a reversal of this one.
+- Not done as part of this decision: `mobile-android/app/src/androidTest/.../
+  LiveFirebaseSmokeTest.kt` (pre-existing, already-stale instrumented test, doesn't import any
+  real Firebase class, didn't need to change for this removal to succeed) — left as disclosed,
+  deferred cleanup.
+
 ## 2026-08-14 — Android `"users"` Firestore listener gets a stricter-than-Supabase reliability policy (never closes, not even on cold start)
 - Decision: `RecordsRepository.observeFirestoreCollection("users")` (`Core.kt`) was fixed to
   never call `close()` on a Firestore listener error — it degrades to last-known-good/empty data
