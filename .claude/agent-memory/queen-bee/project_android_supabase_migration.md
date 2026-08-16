@@ -1,9 +1,28 @@
 ---
 name: project-android-supabase-migration
-description: Separate, explicitly-authorized migration project (started 2026-08-13) moving mobile-android/ off Firebase (Auth+Firestore) onto Supabase Auth+Postgres/RLS, following the user's own A-J phase structure. A-D, E1, E2 done as of 2026-08-15; Phase F (UI/UX) now in progress. Check current phase before assuming more progress happened.
+description: Migration itself (A-J) completed 2026-08-16 -- Firebase fully removed from mobile-android/ with real proof (see [[project_e1_reliability_fix_paused]] and this file's 2026-08-16 update below). Now superseded by the cross-platform parity initiative (docs/CROSS_PLATFORM_PARITY_AUDIT.md is its closing deliverable). Check current phase/status before assuming more progress happened either way.
 metadata:
   type: project
 ---
+
+**UPDATE 2026-08-16/17 (overnight): the agent-registration gap flagged repeatedly below is
+RESOLVED, or at least not reproducing** — `android-ui-bee`, `supabase-android-bee`, and
+`testing-bee` were all invocable and used successfully this session (three-way sequential
+handoff: android-ui-bee built a feature, found a real data-layer blocker, supabase-android-bee
+fixed it, testing-bee build-verified + live-verified the fix). `migration-audit-bee` was not
+invoked this session (no need arose), so its own registration status is still technically
+unconfirmed, but the other three's prior unavailability doesn't seem to be a standing condition
+of this project — re-check at the start of each session rather than assuming either way.
+**Also corrects a stale figure repeated in several places below and in `docs/ai-memory/`**: the
+current real Android unit-test baseline is **16**, not 23 — 23 was the pre-Phase-12 (Firebase
+test removal) figure; don't cite "23/23" without checking `git log`/an actual build first.
+**The full Firebase→Supabase migration (Phases A-J) is now complete** — see
+`docs/ai-memory/ROADMAP.md`'s Phase 12 entry and `CLAUDE.md` section 6.2. This project's own
+scope has effectively ended; ongoing Android work now falls under the separate cross-platform
+parity initiative ([[feedback_cross_platform_parity_process]]), whose closing deliverable
+(`docs/CROSS_PLATFORM_PARITY_AUDIT.md`) is a better current-status source than this file's
+phase-by-phase history below, which is kept for its investigation techniques and root-cause
+narratives, not as a live status tracker.
 
 **UPDATE 2026-08-15**: E1 gate passed 2026-08-14 (see [[project_e1_reliability_fix_paused]]).
 E2 (photo upload, web+Android) landed and was real-device tested by the user. Phase F (UI/UX
