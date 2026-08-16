@@ -55,6 +55,13 @@ sealed class CapNavRoute(val route: String, val label: String) {
     data object LogNewService : CapNavRoute("log_new_service", "Log New Service")
     data object BookIn : CapNavRoute("book_in", "Book In")
 
+    // --- Settings (cross-platform parity Phase 9) --------------------------------------------
+    // The hub plus one sub-screen per section that is too large to inline on a phone. All three
+    // require the `settings.access` permission, exactly like the web app's `/settings` route.
+    data object Settings : CapNavRoute("settings", "Settings")
+    data object SettingsJobCards : CapNavRoute("settings_job_cards", "Job Card Settings")
+    data object SettingsCatalogue : CapNavRoute("settings_products_services", "Products and Services")
+
     // --- Detail destinations (record id argument) ------------------------------------------
     // Real NavHost destinations with their own back-stack entry. Each carries the record id
     // only -- the record itself is re-resolved from the live collection by the destination, so
@@ -95,7 +102,8 @@ sealed class CapNavRoute(val route: String, val label: String) {
         /** Argument-free destinations reachable directly by label from the nav bar or "More". */
         val topLevel: List<CapNavRoute> = listOf(
             Home, Clients, Machines, Services, Jobs, Calendar, KnowledgeBase,
-            Invoices, Users, Status, More, Account, LogNewService, BookIn
+            Invoices, Users, Status, More, Account, LogNewService, BookIn,
+            Settings, SettingsJobCards, SettingsCatalogue
         )
 
         /** Detail destinations, addressed by record id rather than by label. */

@@ -13,6 +13,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
@@ -84,6 +85,7 @@ import com.CAPDATABASE.capdatabase.ui.components.CapStatusBadge
 import com.CAPDATABASE.capdatabase.ui.components.CapTextField
 import com.CAPDATABASE.capdatabase.ui.components.CapUserAvatar
 import com.CAPDATABASE.capdatabase.ui.components.StatusTone
+import com.CAPDATABASE.capdatabase.ui.components.capToneColor
 import com.CAPDATABASE.capdatabase.ui.navigation.CapAppScaffold
 import com.CAPDATABASE.capdatabase.ui.navigation.CapBottomNavigation
 import com.CAPDATABASE.capdatabase.ui.navigation.CapNavDestination
@@ -93,10 +95,12 @@ import com.CAPDATABASE.capdatabase.ui.theme.CapNoteBlue
 import com.CAPDATABASE.capdatabase.ui.theme.CapNoteGreen
 import com.CAPDATABASE.capdatabase.ui.theme.CapNotePink
 import com.CAPDATABASE.capdatabase.ui.theme.CapNoteYellow
-import com.CAPDATABASE.capdatabase.ui.theme.CapSuccessGreen
 import com.CAPDATABASE.capdatabase.ui.theme.CapTheme
-import com.CAPDATABASE.capdatabase.ui.theme.CapWarningAmber
+import com.CAPDATABASE.capdatabase.ui.theme.CapThemeMode
+import com.CAPDATABASE.capdatabase.ui.theme.CapThemePreferences
+import com.CAPDATABASE.capdatabase.ui.theme.LocalCapThemeController
 import com.CAPDATABASE.capdatabase.ui.theme.Spacing
+import com.CAPDATABASE.capdatabase.ui.theme.rememberCapThemeController
 import coil3.compose.AsyncImage
 import coil3.compose.AsyncImagePainter
 import kotlinx.coroutines.Job
@@ -176,7 +180,20 @@ class MainViewModel @Inject constructor(
             // unconditionally, with no permission check of its own. "dashboard.view" is the
             // closest real equivalent to "no gate" in this permission-keyed list: every real
             // account already has it, since it's what shows the Dashboard tab at all.
-            Triple("dashboard_notes", "dashboard.view", true)
+            Triple("dashboard_notes", "dashboard.view", true),
+            // Cross-platform parity Phase 9 (Settings). The catalogue behind Settings > Products
+            // & Services (migration 0018). RLS lets any active profile SELECT it, but only
+            // `settings.access` may write, and Settings is the only screen that reads it here --
+            // so gating the subscription on `settings.access` is the narrowest correct fit.
+            Triple("products_services", "settings.access", true),
+            // The job_card_settings singleton row (migration 0018 + 0021). Was deliberately left
+            // unregistered by android-ui-bee (Phase 9) pending a data-layer fix -- fetchAll()
+            // hardcoded `order=created_at.desc` for every table, and this table has no
+            // `created_at` column, which would 400 on cold start and (via observeCollections()'s
+            // combine()) take every other screen's data down with it. Fixed by supabase-android-bee
+            // (SupabaseData.kt's TABLES_WITHOUT_CREATED_AT), independently confirmed by Queen Bee
+            // by reading the applied diff before adding this line.
+            Triple("job_card_settings", "settings.access", true)
         ).filter { (_, permission) -> user.hasPermission(permission) }.map { it.first }
         recordsJob?.cancel()
         recordsJob = viewModelScope.launch {
@@ -315,7 +332,12 @@ class MainViewModel @Inject constructor(
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { CapTheme { CapApp() } }
+        // Read the saved Appearance choice BEFORE the first composition, so the first frame is
+        // already drawn in the right colour scheme rather than flashing the previous default.
+        val savedThemeMode = CapThemePreferences.load(this)
+        setContent {
+            CapTheme(rememberCapThemeController(savedThemeMode)) { CapApp() }
+        }
     }
 }
 
@@ -554,12 +576,9 @@ private fun connectionLabel(status: ConnectionStatus): String = when (status) {
  */
 @Composable
 fun ServerStatusIndicator(status: ConnectionStatus) {
-    val color = when (connectionTone(status)) {
-        StatusTone.Success -> CapSuccessGreen
-        StatusTone.Warning -> CapWarningAmber
-        StatusTone.Error -> MaterialTheme.colorScheme.error
-        else -> MaterialTheme.colorScheme.primary
-    }
+    // Resolved through the same scheme-aware helper CapStatusBadge uses, so the dot and the
+    // Status screen's badges can never disagree — and both stay legible in the light scheme.
+    val color = capToneColor(connectionTone(status))
     val label = connectionLabel(status)
     val showLabel = status != ConnectionStatus.Connected
     Row(
@@ -629,6 +648,9 @@ private fun routeIdForLabel(label: String): String = when (label) {
     "Account" -> CapNavRoute.Account.route
     "LogNewService" -> CapNavRoute.LogNewService.route
     "BookIn" -> CapNavRoute.BookIn.route
+    "Settings" -> CapNavRoute.Settings.route
+    CapNavRoute.SettingsJobCards.label -> CapNavRoute.SettingsJobCards.route
+    CapNavRoute.SettingsCatalogue.label -> CapNavRoute.SettingsCatalogue.route
     else -> CapNavRoute.Home.route
 }
 
@@ -655,6 +677,9 @@ private fun labelForRouteId(routeId: String?): String = when (routeId) {
     CapNavRoute.Account.route -> "Account"
     CapNavRoute.LogNewService.route -> "LogNewService"
     CapNavRoute.BookIn.route -> "BookIn"
+    CapNavRoute.Settings.route -> "Settings"
+    CapNavRoute.SettingsJobCards.route -> CapNavRoute.SettingsJobCards.label
+    CapNavRoute.SettingsCatalogue.route -> CapNavRoute.SettingsCatalogue.label
     else -> "Dashboard"
 }
 
@@ -699,6 +724,9 @@ fun AdaptiveShell(vm: MainViewModel) {
         "LogNewService" -> "Log New Service"
         "BookIn" -> "Book In"
         "Calendar" -> "Upcoming Services"
+        // The route labels are spelled out for uniqueness; the top bar only needs the section.
+        CapNavRoute.SettingsJobCards.label -> "Job Cards"
+        CapNavRoute.SettingsCatalogue.label -> "Products & Services"
         CapNavRoute.ClientDetail.label -> "Client"
         CapNavRoute.MachineDetail.label -> "Machine"
         CapNavRoute.JobDetail.label -> "Job Card"
@@ -776,6 +804,13 @@ fun AdaptiveShell(vm: MainViewModel) {
                 composable(CapNavRoute.Account.route) { ScreenContent("Account", vm, user, navigate, openRoute) }
                 composable(CapNavRoute.LogNewService.route) { ScreenContent("LogNewService", vm, user, navigate, openRoute) }
                 composable(CapNavRoute.BookIn.route) { ScreenContent("BookIn", vm, user, navigate, openRoute) }
+                composable(CapNavRoute.Settings.route) { ScreenContent("Settings", vm, user, navigate, openRoute) }
+                composable(CapNavRoute.SettingsJobCards.route) {
+                    ScreenContent(CapNavRoute.SettingsJobCards.label, vm, user, navigate, openRoute)
+                }
+                composable(CapNavRoute.SettingsCatalogue.route) {
+                    ScreenContent(CapNavRoute.SettingsCatalogue.label, vm, user, navigate, openRoute)
+                }
 
                 composable(CapNavRoute.ClientDetail.route) { entry ->
                     DetailContent(CapNavRoute.ClientDetail, entry.arguments?.getString(CapNavRoute.ClientDetail.ARG), vm, user, openRoute, onBack = { navController.popBackStack() })
@@ -831,6 +866,18 @@ private fun ScreenContent(
         "Status" -> StatusScreen(vm)
         "More" -> MoreScreen(user, onNavigate, vm::logout)
         "Account" -> AccountScreen(user, vm, vm::logout)
+        // Every Settings destination is gated on `settings.access` at the ROUTE level, matching
+        // the web app exactly (App.jsx's RoleGuard around `/settings`) -- there is no read-only
+        // mode, because on the web a user without the permission never reaches the page at all.
+        // The row in "More" is hidden without it too; this check is what makes a deep link or a
+        // restored back stack behave the same way.
+        "Settings" -> RequireSettingsAccess(user) { SettingsScreen(user, onNavigate) }
+        CapNavRoute.SettingsJobCards.label -> RequireSettingsAccess(user) {
+            JobCardSettingsScreen(data.collection("job_card_settings").firstOrNull(), vm::save)
+        }
+        CapNavRoute.SettingsCatalogue.label -> RequireSettingsAccess(user) {
+            ProductsServicesScreen(data.collection("products_services"), vm::save)
+        }
         "LogNewService" -> LogNewServiceScreen(data.collection("clients"), data.collection("machines"), vm::save, vm.actionMessage, vm, { onNavigate("Dashboard") }) { onNavigate("Dashboard") }
         "BookIn" -> BookInScreen(data.collection("clients"), data.collection("machines"), data.collection("job_cards"), vm::save, vm.actionMessage, vm, onOpen, { onNavigate("Dashboard") }) { onNavigate("Dashboard") }
     }
@@ -1008,7 +1055,15 @@ private fun MoreScreen(user: CapUser, onNavigate: (String) -> Unit, onLogout: ()
             }
         }
 
+        // App-configuration group. Settings sits above the status row rather than in the
+        // "Resources" card above: it configures how the app behaves (and now how it looks),
+        // which is the same kind of thing as the connection/sync screen and unlike the
+        // record-browsing destinations. Hidden entirely without `settings.access`, matching how
+        // every other gated row here behaves and how the web app gates its `/settings` route.
         CapCard {
+            if (user.hasPermission("settings.access")) {
+                CapListItem("Settings", leading = { Icon(Icons.Outlined.Settings, null) }, showNavArrow = true, onClick = { onNavigate("Settings") })
+            }
             CapListItem("Connection and Sync Status", leading = { Icon(Icons.Outlined.CloudSync, null) }, showNavArrow = true, onClick = { onNavigate("Status") })
         }
 
@@ -4215,6 +4270,752 @@ private fun PermissionRow(
             }
             CapStatusBadge(stateLabel, stateTone)
         }
+    }
+}
+
+// =================================================================================================
+// Settings — cross-platform parity Phase 9 (the Android counterpart of frontend/src/pages/
+// Settings.jsx and its two sub-panels), plus the Android-only Appearance section.
+//
+// Structural divergence from the web reference, deliberate: the web page is a horizontal
+// TabsList of six tabs. Six tabs do not fit across a phone, and Material's own guidance is that
+// settings belong in a scrolling list. So the hub is a scrollable column of cards, the two
+// sections with real content (Job Cards, Products & Services) are their own destinations reached
+// by a list row — which also gives each its own back-stack entry and top-bar title — and the
+// three sections that are currently just honest copy stay inline on the hub.
+//
+// Ordering also diverges: the web order leads with "General", which is an empty-state paragraph.
+// Leading a phone screen with that would bury every working control below the fold, so the
+// interactive sections come first and the informational ones sit at the bottom. The copy itself
+// is unchanged from the web.
+// =================================================================================================
+
+/** Numeric CapRecord field, tolerating a value PostgREST may hand back either as a JSON number
+ *  or (for some numeric columns) as a string. Returns null rather than guessing when neither. */
+private fun CapRecord.decimal(key: String): Double? =
+    (fields[key] as? Number)?.toDouble() ?: text(key).toDoubleOrNull()
+
+/** A number formatted for a text input: 1.0 -> "1", 12.5 -> "12.5" — never "1.0". */
+private fun decimalText(value: Double?): String = when {
+    value == null -> ""
+    value % 1.0 == 0.0 -> value.toLong().toString()
+    else -> value.toString()
+}
+
+/**
+ * Whole-screen permission gate for every Settings destination.
+ *
+ * The web app gates its entire `/settings` route on `settings.access` (App.jsx's RoleGuard), so a
+ * user without it never sees the page at all — there is no read-only mode there and there is none
+ * here. The "More" row is hidden without the permission too; this exists so a restored back stack
+ * behaves identically. It is presentation only: the real authorization is the RLS policy on
+ * `job_card_settings`/`products_services` (migration 0018), which rejects the write regardless.
+ */
+@Composable
+private fun RequireSettingsAccess(user: CapUser, content: @Composable () -> Unit) {
+    if (user.hasPermission("settings.access")) {
+        content()
+    } else {
+        CapEmptyState(
+            "You do not have permission to open Settings. An administrator can grant you the \"Access Settings\" permission.",
+            icon = Icons.Outlined.Lock
+        )
+    }
+}
+
+@Composable
+private fun SettingsScreen(user: CapUser, onNavigate: (String) -> Unit) {
+    LazyColumn(
+        Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(Spacing.md),
+        contentPadding = PaddingValues(bottom = 84.dp)
+    ) {
+        item {
+            CapScreenHeader(
+                title = "Settings",
+                subtitle = "Configure how CAP Dashboard works for your team."
+            )
+        }
+
+        item { AppearanceSettingsCard() }
+
+        item {
+            CapCard {
+                CapSectionHeader("Configuration")
+                CapListItem(
+                    "Job Cards",
+                    subtitle = "Numbering, defaults, statuses, and line item types",
+                    leading = { Icon(Icons.AutoMirrored.Outlined.Assignment, null) },
+                    showNavArrow = true,
+                    onClick = { onNavigate(CapNavRoute.SettingsJobCards.label) }
+                )
+                CapListItem(
+                    "Products & Services",
+                    subtitle = "The catalogue that job card line items are added from",
+                    leading = { Icon(Icons.Outlined.Inventory2, null) },
+                    showNavArrow = true,
+                    onClick = { onNavigate(CapNavRoute.SettingsCatalogue.label) }
+                )
+                // Link-out rather than a duplicate editor, exactly like the web tab's link to
+                // /admin/users. Hidden without users.view, since the destination itself is gated.
+                if (user.hasPermission(permissionFor("Users"))) {
+                    CapListItem(
+                        "Users & Roles",
+                        subtitle = "Accounts, roles, and permissions",
+                        leading = { Icon(Icons.Outlined.AdminPanelSettings, null) },
+                        showNavArrow = true,
+                        onClick = { onNavigate("Users") }
+                    )
+                }
+            }
+        }
+
+        // Deliberately NOT a control: importing a spreadsheet needs a file picker and a CSV
+        // parser, which is new behaviour rather than a port of an existing screen, so nothing
+        // here pretends to offer it.
+        item {
+            SettingsNoteCard(
+                icon = Icons.Outlined.CloudUpload,
+                title = "Data Management",
+                body = "Import customers from a spreadsheet on the website (Settings > Data Management). " +
+                    "There is no import on mobile yet."
+            )
+        }
+
+        item {
+            SettingsNoteCard(
+                icon = Icons.Outlined.Tune,
+                title = "General",
+                body = "No general application-wide settings are wired up yet. This section will grow as " +
+                    "real, working settings are identified — nothing is added here just to fill space."
+            )
+        }
+
+        item {
+            SettingsNoteCard(
+                icon = Icons.Outlined.Info,
+                title = "System",
+                body = "No system-level settings are wired up yet."
+            )
+        }
+    }
+}
+
+/** An informational Settings section: a titled card of honest copy, with no fake control in it. */
+@Composable
+private fun SettingsNoteCard(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    body: String
+) {
+    CapCard {
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+        ) {
+            Icon(icon, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(title, style = MaterialTheme.typography.titleMedium)
+        }
+        Text(
+            body,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = Spacing.sm)
+        )
+    }
+}
+
+/**
+ * Appearance — Android only, and genuinely new behaviour rather than a port: the web app has no
+ * theme switcher. Writes straight through [LocalCapThemeController], which applies the scheme
+ * immediately and persists the choice locally (see ui/theme/CapThemePreferences.kt).
+ *
+ * Radio rows rather than a segmented control: "Follow system" does not fit alongside two other
+ * chips on a small phone without truncating, and each row here is a full-width 48dp target that
+ * cannot collide with its neighbours.
+ */
+@Composable
+private fun AppearanceSettingsCard() {
+    val controller = LocalCapThemeController.current
+    CapCard {
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+        ) {
+            Icon(Icons.Outlined.Palette, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Appearance", style = MaterialTheme.typography.titleMedium)
+        }
+        Text(
+            "Saved on this device only — it is not part of your account, and it does not change how the website looks.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = Spacing.xs, bottom = Spacing.xs)
+        )
+        CapThemeMode.entries.forEach { mode ->
+            val selected = controller.mode == mode
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(MaterialTheme.shapes.medium)
+                    .selectable(
+                        selected = selected,
+                        role = Role.RadioButton,
+                        onClick = { controller.select(mode) }
+                    )
+                    .defaultMinSize(minHeight = 48.dp)
+                    .padding(vertical = Spacing.xs),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+            ) {
+                RadioButton(selected = selected, onClick = null)
+                Column(Modifier.weight(1f)) {
+                    Text(mode.label, style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        mode.description,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Fallbacks that match the web panel's hardcoded lists exactly, used only when the stored
+ *  jsonb list is missing or empty — the same defaults migration 0021 seeds the columns with. */
+private val defaultJobStatuses = listOf(
+    "Open", "Booked In", "In Progress", "Waiting for Parts",
+    "Ready for Collection", "Completed", "Collected"
+)
+private val defaultJobLineTypes = listOf("Labour", "Part / Product", "Diagnosis", "Other")
+
+/**
+ * Settings > Job Cards — the Android counterpart of JobCardSettingsPanel.jsx, over the same
+ * `public.job_card_settings` singleton row (migrations 0018 + 0021). Every field here is read by
+ * real application code on the web (Book In uses `numbering_prefix`/`default_status`; the job
+ * card detail screen uses the rest), so nothing on this screen is decorative.
+ *
+ * [settings] is null only if the row genuinely hasn't loaded yet (offline cold start, or a
+ * permission edge case) — `job_card_settings` is registered in [MainViewModel]'s
+ * `permittedCollections` (a data-layer fix in `SupabaseData.kt`'s `TABLES_WITHOUT_CREATED_AT`
+ * was needed first, since this is the one table with no `created_at` column; see that file). This
+ * screen never fakes values for a null row — it says so plainly instead.
+ */
+@Composable
+private fun JobCardSettingsScreen(
+    settings: CapRecord?,
+    save: (String, String?, Map<String, Any?>, String) -> Unit
+) {
+    if (settings == null) {
+        CapEmptyState(
+            "Job Card settings haven't loaded yet. Check your connection and reopen this screen " +
+                "— they can also be changed on the website under Settings > Job Cards.",
+            icon = Icons.AutoMirrored.Outlined.Assignment
+        )
+        return
+    }
+
+    val savedPrefix = settings.text("numbering_prefix").ifBlank { "JOB-" }
+    val savedStatus = settings.text("default_status")
+    val savedQuantity = decimalText(settings.decimal("default_line_quantity")).ifBlank { "1" }
+    val savedAllowProducts = settings.fields["allow_products"] as? Boolean ?: true
+    val savedAllowServices = settings.fields["allow_services"] as? Boolean ?: true
+    val savedStatuses = stringList(settings.fields["available_statuses"]).ifEmpty { defaultJobStatuses }
+    val savedLineTypes = stringList(settings.fields["line_types"]).ifEmpty { defaultJobLineTypes }
+
+    // Keyed on the record itself, not its id (the id is the literal `true` of the singleton row
+    // and never changes). A poll returning identical data produces an equal CapRecord, so typing
+    // is never interrupted; a genuine change — including this screen's own save, which bumps
+    // updated_at — re-keys and shows the values the server actually stored.
+    var prefix by remember(settings) { mutableStateOf(savedPrefix) }
+    var status by remember(settings) { mutableStateOf(savedStatus) }
+    var quantity by remember(settings) { mutableStateOf(savedQuantity) }
+    var allowProducts by remember(settings) { mutableStateOf(savedAllowProducts) }
+    var allowServices by remember(settings) { mutableStateOf(savedAllowServices) }
+    var statuses by remember(settings) { mutableStateOf(savedStatuses) }
+    var lineTypes by remember(settings) { mutableStateOf(savedLineTypes) }
+
+    // The saved default is kept selectable even if it is no longer in the list, so editing the
+    // status list can never leave this dropdown showing nothing.
+    val statusOptions = (statuses + savedStatus).filter { it.isNotBlank() }.distinct()
+    val quantityValue = quantity.trim().toDoubleOrNull()
+    val quantityError = when {
+        quantity.isBlank() -> "Enter a quantity."
+        quantityValue == null -> "Enter a number."
+        quantityValue < 1 -> "Must be at least 1."
+        else -> null
+    }
+    val valid = prefix.trim().isNotBlank() && status.isNotBlank() && quantityError == null
+    val dirty = prefix != savedPrefix ||
+        status != savedStatus ||
+        quantity != savedQuantity ||
+        allowProducts != savedAllowProducts ||
+        allowServices != savedAllowServices ||
+        statuses != savedStatuses ||
+        lineTypes != savedLineTypes
+
+    LazyColumn(
+        Modifier.fillMaxSize().imePadding(),
+        verticalArrangement = Arrangement.spacedBy(Spacing.md),
+        contentPadding = PaddingValues(bottom = 84.dp)
+    ) {
+        item {
+            CapScreenHeader(
+                title = "Job Cards",
+                subtitle = "Configuration that affects how new Job Cards are created and worked."
+            )
+        }
+
+        item {
+            CapSectionCard(title = "Defaults") {
+                CapTextField(
+                    label = "Job number prefix",
+                    value = prefix,
+                    onValueChange = { prefix = it },
+                    required = true,
+                    errorMessage = if (prefix.isBlank()) "A prefix is required." else null
+                )
+                Text(
+                    "Used when a new job number is generated on Book In, e.g. \"${prefix.trim().ifBlank { "JOB-" }}123456\".",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                CapDropdownField(
+                    label = "Default status for new Job Cards",
+                    options = statusOptions.map { it to it },
+                    selectedKey = status,
+                    onSelected = { status = it },
+                    required = true
+                )
+                CapTextField(
+                    label = "Default quantity for new line items",
+                    value = quantity,
+                    onValueChange = { quantity = it },
+                    required = true,
+                    keyboardType = KeyboardType.Decimal,
+                    errorMessage = quantityError
+                )
+                ToggleRow(
+                    label = "Allow products on Job Cards",
+                    description = "Technicians can select catalogue products when adding a line.",
+                    checked = allowProducts,
+                    onCheckedChange = { allowProducts = it }
+                )
+                ToggleRow(
+                    label = "Allow services on Job Cards",
+                    description = "Technicians can select catalogue services when adding a line.",
+                    checked = allowServices,
+                    onCheckedChange = { allowServices = it }
+                )
+            }
+        }
+
+        item {
+            CapSectionCard(title = "Job statuses") {
+                TagListEditor(
+                    help = "Offered as the status options on every Job Card. At least one is required.",
+                    addLabel = "Add a status",
+                    values = statuses,
+                    onChange = { statuses = it }
+                )
+            }
+        }
+
+        item {
+            CapSectionCard(title = "Service / line item types") {
+                TagListEditor(
+                    help = "Offered as the \"Type\" options when adding a line item to a Job Card.",
+                    addLabel = "Add a type",
+                    values = lineTypes,
+                    onChange = { lineTypes = it }
+                )
+            }
+        }
+
+        item {
+            CapCard {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+                ) {
+                    Box(Modifier.weight(1f)) {
+                        CapSecondaryButton(
+                            text = "Discard",
+                            onClick = {
+                                prefix = savedPrefix
+                                status = savedStatus
+                                quantity = savedQuantity
+                                allowProducts = savedAllowProducts
+                                allowServices = savedAllowServices
+                                statuses = savedStatuses
+                                lineTypes = savedLineTypes
+                            },
+                            enabled = dirty
+                        )
+                    }
+                    Box(Modifier.weight(1f)) {
+                        CapPrimaryButton(
+                            text = "Save changes",
+                            onClick = {
+                                // settings.id is the singleton row's boolean primary key rendered
+                                // as text ("true"), so the generic update builds `?id=eq.true` —
+                                // the same row the web client targets with `.eq("id", true)`.
+                                save(
+                                    "job_card_settings",
+                                    settings.id,
+                                    mapOf(
+                                        "numbering_prefix" to prefix.trim(),
+                                        "default_status" to status,
+                                        "default_line_quantity" to (quantityValue ?: 1.0),
+                                        "allow_products" to allowProducts,
+                                        "allow_services" to allowServices,
+                                        "available_statuses" to statuses,
+                                        "line_types" to lineTypes
+                                    ),
+                                    "Job Card settings"
+                                )
+                            },
+                            enabled = valid && dirty
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Add/remove editor for the two configurable string lists. Add and remove only — no reordering
+ * or renaming — matching the web control's deliberate scope.
+ *
+ * The web renders the values as a wrapping cloud of chips with a tiny close button inside each.
+ * Here each value is its own full-width row: a status such as "Ready for Collection" would be
+ * truncated inside a phone-width chip, and 24dp close buttons packed into a wrapped row put
+ * overlapping 48dp touch targets next to each other. One row per value keeps every target
+ * separate and every label fully readable.
+ */
+@Composable
+private fun TagListEditor(
+    help: String,
+    addLabel: String,
+    values: List<String>,
+    onChange: (List<String>) -> Unit
+) {
+    var draft by remember { mutableStateOf("") }
+    val trimmed = draft.trim()
+    val canAdd = trimmed.isNotEmpty() && trimmed !in values
+
+    values.forEach { value ->
+        Row(
+            Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+        ) {
+            Text(
+                value,
+                Modifier.weight(1f),
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            // The last remaining value cannot be removed: an empty list would leave the Job Card
+            // screens with nothing to offer. Same rule as the web control.
+            IconButton(
+                onClick = { onChange(values - value) },
+                enabled = values.size > 1
+            ) {
+                Icon(Icons.Outlined.Close, "Remove $value", Modifier.size(18.dp))
+            }
+        }
+    }
+
+    Row(
+        Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+    ) {
+        Box(Modifier.weight(1f)) {
+            CapTextField(
+                label = addLabel,
+                value = draft,
+                onValueChange = { draft = it },
+                imeAction = ImeAction.Done,
+                keyboardActions = KeyboardActions(onDone = {
+                    if (canAdd) {
+                        onChange(values + trimmed)
+                        draft = ""
+                    }
+                })
+            )
+        }
+        IconButton(
+            onClick = { onChange(values + trimmed); draft = "" },
+            enabled = canAdd
+        ) {
+            Icon(Icons.Outlined.Add, "Add \"$trimmed\"")
+        }
+    }
+
+    Text(
+        help,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+}
+
+/** Unit price for display, tolerating either JSON shape PostgREST may use for `numeric`. */
+private fun cataloguePrice(item: CapRecord): Double = item.decimal("unit_price") ?: 0.0
+
+/**
+ * Which VAT option a stored `vat_rate` corresponds to. The two options the web form offers are
+ * 15% and 0%; a value that is neither is preserved as its own option rather than being silently
+ * rewritten to 15% the next time someone edits an unrelated field on the item.
+ */
+private fun vatRateKey(item: CapRecord?): String {
+    val rate = item?.decimal("vat_rate") ?: return "0.15"
+    return when (rate) {
+        0.0 -> "0"
+        0.15 -> "0.15"
+        else -> decimalText(rate)
+    }
+}
+
+private fun vatRateLabel(key: String): String = when (key) {
+    "0.15" -> "15%"
+    "0" -> "0% (zero-rated)"
+    else -> "${decimalText((key.toDoubleOrNull() ?: 0.0) * 100)}%"
+}
+
+/**
+ * Settings > Products & Services — the Android counterpart of ProductsServicesSettings.jsx, over
+ * the same `public.products_services` table (migration 0018).
+ *
+ * Items are never hard-deleted from this screen, exactly as on the web: "Archive" flips
+ * `is_active` to false through the ordinary save path, which hides the item from new Job Cards
+ * while every job_card_line that already referenced it keeps its own point-in-time copy of the
+ * description and price (see the migration's header). Restoring flips it back.
+ *
+ * The web row puts Edit and Archive as icon-only buttons on the right of each row. On a phone
+ * that leaves the item name about 140dp wide between a leading icon and two 48dp targets, so the
+ * actions move to their own row underneath as labelled text buttons — no truncated names, no
+ * adjacent touch targets, and the destructive-ish action is named rather than guessed from a
+ * glyph.
+ */
+@Composable
+private fun ProductsServicesScreen(
+    items: List<CapRecord>,
+    save: (String, String?, Map<String, Any?>, String) -> Unit
+) {
+    var query by remember { mutableStateOf("") }
+    var showInactive by remember { mutableStateOf(false) }
+    var creating by remember { mutableStateOf(false) }
+    var editing by remember { mutableStateOf<CapRecord?>(null) }
+
+    val inactiveCount = items.count { it.fields["is_active"] as? Boolean == false }
+    val visible = items
+        .filter { showInactive || (it.fields["is_active"] as? Boolean ?: true) }
+        .filter { item ->
+            query.isBlank() ||
+                item.text("name").contains(query, ignoreCase = true) ||
+                item.text("sku").contains(query, ignoreCase = true) ||
+                item.text("category").contains(query, ignoreCase = true) ||
+                item.text("description").contains(query, ignoreCase = true)
+        }
+        .sortedBy { it.text("name").lowercase(Locale.US) }
+
+    Box(Modifier.fillMaxSize()) {
+        LazyColumn(
+            Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+            contentPadding = PaddingValues(bottom = 84.dp)
+        ) {
+            item {
+                CapCard {
+                    CapSectionHeader(
+                        title = "Catalogue (${visible.size})",
+                        action = {
+                            if (inactiveCount > 0) {
+                                TextButton(onClick = { showInactive = !showInactive }) {
+                                    Text(if (showInactive) "Hide inactive" else "Show inactive ($inactiveCount)")
+                                }
+                            }
+                        }
+                    )
+                    Text(
+                        "The catalogue used when adding line items to Job Cards and invoices. " +
+                            "Archiving an item hides it from new Job Cards; job cards that already " +
+                            "used it are never changed.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            item {
+                CapSearchField(
+                    value = query,
+                    onValueChange = { query = it },
+                    placeholder = "Search name, code, or category"
+                )
+            }
+
+            if (visible.isEmpty()) {
+                item {
+                    CapEmptyState(
+                        when {
+                            items.isEmpty() ->
+                                "No catalogue items yet. Add the products or services technicians should be able to select when logging work."
+                            query.isNotBlank() -> "No catalogue items match your search."
+                            else -> "Every catalogue item is archived. Use \"Show inactive\" to see them."
+                        },
+                        modifier = Modifier.fillMaxWidth().wrapContentHeight()
+                    )
+                }
+            }
+
+            items(visible, key = { it.id }) { entry ->
+                val active = entry.fields["is_active"] as? Boolean ?: true
+                val isService = entry.text("type") == "service"
+                val name = entry.text("name").ifBlank { "Unnamed item" }
+                val details = listOfNotNull(
+                    entry.text("sku").ifBlank { null },
+                    formatRand(cataloguePrice(entry)),
+                    entry.text("category").ifBlank { null },
+                    entry.text("description").ifBlank { null }
+                ).joinToString(" · ")
+
+                CapCard {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.Top,
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+                    ) {
+                        Icon(
+                            if (isService) Icons.Outlined.Build else Icons.Outlined.Inventory2,
+                            contentDescription = if (isService) "Service" else "Product",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Column(
+                            Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(Spacing.xs)
+                        ) {
+                            Text(
+                                name,
+                                style = MaterialTheme.typography.titleSmall,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            if (!active) CapStatusBadge("Inactive", StatusTone.Neutral)
+                            if (details.isNotBlank()) {
+                                Text(
+                                    details,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 3,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+                    Row(
+                        Modifier.fillMaxWidth().padding(top = Spacing.xs),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        TextButton(onClick = { editing = entry }) { Text("Edit") }
+                        TextButton(onClick = {
+                            save(
+                                "products_services",
+                                entry.id,
+                                mapOf("is_active" to !active),
+                                if (active) "Catalogue item archived" else "Catalogue item restored"
+                            )
+                        }) {
+                            Text(if (active) "Archive" else "Restore")
+                        }
+                    }
+                }
+            }
+        }
+
+        FloatingActionButton(
+            onClick = { creating = true },
+            modifier = Modifier.align(Alignment.BottomEnd).padding(Spacing.md)
+        ) {
+            Icon(Icons.Outlined.Add, "Add catalogue item")
+        }
+    }
+
+    if (creating || editing != null) {
+        val target = editing
+        CatalogueItemDialog(
+            initial = target,
+            onDismiss = { creating = false; editing = null },
+            onSave = { fields ->
+                save("products_services", target?.id, fields, "Catalogue item")
+                creating = false
+                editing = null
+            }
+        )
+    }
+}
+
+@Composable
+private fun CatalogueItemDialog(
+    initial: CapRecord?,
+    onDismiss: () -> Unit,
+    onSave: (Map<String, Any?>) -> Unit
+) {
+    var type by remember(initial) { mutableStateOf(initial?.text("type")?.ifBlank { "product" } ?: "product") }
+    var name by remember(initial) { mutableStateOf(initial?.text("name").orEmpty()) }
+    var description by remember(initial) { mutableStateOf(initial?.text("description").orEmpty()) }
+    var sku by remember(initial) { mutableStateOf(initial?.text("sku").orEmpty()) }
+    var category by remember(initial) { mutableStateOf(initial?.text("category").orEmpty()) }
+    var price by remember(initial) { mutableStateOf(initial?.let { decimalText(it.decimal("unit_price")) }.orEmpty()) }
+    var vat by remember(initial) { mutableStateOf(vatRateKey(initial)) }
+    var active by remember(initial) { mutableStateOf(initial?.fields?.get("is_active") as? Boolean ?: true) }
+
+    val vatOptions = listOf("0.15", "0")
+        .let { base -> if (vat in base) base else base + vat }
+        .map { it to vatRateLabel(it) }
+
+    EditDialog(
+        title = if (initial == null) "New product or service" else "Edit item",
+        onDismiss = onDismiss,
+        valid = name.isNotBlank(),
+        onSave = {
+            onSave(
+                mapOf(
+                    "type" to type,
+                    "name" to name.trim(),
+                    // Blank optional fields are sent as "" rather than null: the shared data
+                    // layer drops null values from a payload, so sending null for a cleared
+                    // field would leave the old value in place instead of clearing it.
+                    "description" to description.trim(),
+                    "sku" to sku.trim(),
+                    "category" to category.trim(),
+                    "unit_price" to (price.trim().toDoubleOrNull() ?: 0.0),
+                    "vat_rate" to (vat.toDoubleOrNull() ?: 0.15),
+                    "is_active" to active
+                )
+            )
+        }
+    ) {
+        SelectInput("Type", listOf("product" to "Product", "service" to "Service"), type) { type = it }
+        TextInput("Name", name, { name = it }, true)
+        TextInput("Description", description, { description = it })
+        TextInput("SKU / code", sku, { sku = it })
+        TextInput("Category", category, { category = it })
+        TextInput("Unit price (R)", price, { price = it }, keyboardType = KeyboardType.Decimal)
+        SelectInput("VAT rate", vatOptions, vat) { vat = it }
+        ToggleRow(
+            label = "Active",
+            description = "Inactive items stay on existing Job Cards but cannot be added to new ones.",
+            checked = active,
+            onCheckedChange = { active = it }
+        )
     }
 }
 

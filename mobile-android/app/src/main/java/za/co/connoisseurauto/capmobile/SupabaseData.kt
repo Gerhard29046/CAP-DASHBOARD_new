@@ -60,6 +60,25 @@ class SupabaseDataRepository @Inject constructor(
 
     companion object {
         private const val POLL_INTERVAL_MS = 20_000L
+
+        /**
+         * Tables that genuinely have no `created_at` column, so [fetchAll] must NOT ask PostgREST
+         * to order by it (PostgREST answers 400 for an unknown order column, and on a cold-start
+         * fetch that closes the flow -- which, through [RecordsRepository.observeCollections]'
+         * `combine()`, would take every OTHER table's stream down with it).
+         *
+         * Verified against the .sql files under supabase/migrations: every other table this app
+         * subscribes to (clients, machines, service_records, job_cards, job_card_lines, the 5 knowledge_*
+         * tables, users, permissions, role_permissions -- 0001_initial_schema.sql; dashboard_notes
+         * -- 0017; products_services -- 0018) declares `created_at timestamptz not null default
+         * now()`, and no later migration drops it. `job_card_settings` (0018) is a singleton row
+         * keyed on a boolean primary key with only `updated_at`/`updated_by`, so ordering it is
+         * meaningless as well as invalid.
+         *
+         * Add a table here only after confirming in the migrations that the column really is
+         * absent -- this is a schema fact, not a workaround for a failing query.
+         */
+        private val TABLES_WITHOUT_CREATED_AT = setOf("job_card_settings")
     }
 
     /**
@@ -187,8 +206,11 @@ class SupabaseDataRepository @Inject constructor(
     }
 
     private suspend fun fetchAll(table: String): List<CapRecord> = withContext(Dispatchers.IO) {
+        // Newest-first everywhere the column exists; see [TABLES_WITHOUT_CREATED_AT] for why the
+        // order clause has to be omitted for the handful of tables that lack it.
+        val query = if (table in TABLES_WITHOUT_CREATED_AT) "select=*" else "select=*&order=created_at.desc"
         val body = withAuth { token ->
-            request("$baseUrl/rest/v1/$table?select=*&order=created_at.desc", "GET", token, null)
+            request("$baseUrl/rest/v1/$table?$query", "GET", token, null)
         }
         val array = JSONArray(body)
         (0 until array.length()).map { i -> array.getJSONObject(i).toCapRecord() }

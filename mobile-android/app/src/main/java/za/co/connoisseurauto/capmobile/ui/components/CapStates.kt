@@ -23,7 +23,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.CAPDATABASE.capdatabase.ui.theme.CapWarningAmber
 import com.CAPDATABASE.capdatabase.ui.theme.Spacing
 
 /** Centered spinner that fills the available space. */
@@ -127,19 +126,22 @@ fun CapInlineError(message: String, modifier: Modifier = Modifier) {
 /** Slim banner communicating an offline state. Dismiss logic is a later-phase concern. */
 @Composable
 fun CapOfflineBanner(modifier: Modifier = Modifier) {
+    // Resolved through the shared status-tone helper rather than the raw amber token, so this
+    // banner stays legible in the light scheme too (see CapStatus.kt).
+    val amber = capToneColor(StatusTone.Warning)
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .background(CapWarningAmber.copy(alpha = 0.16f))
+            .background(amber.copy(alpha = 0.16f))
             .padding(horizontal = Spacing.md, vertical = Spacing.sm),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
     ) {
-        Icon(Icons.Outlined.CloudOff, contentDescription = null, tint = CapWarningAmber, modifier = Modifier.size(18.dp))
+        Icon(Icons.Outlined.CloudOff, contentDescription = null, tint = amber, modifier = Modifier.size(18.dp))
         Text(
             "You're offline — showing the last synced data.",
             style = MaterialTheme.typography.labelMedium,
-            color = CapWarningAmber
+            color = amber
         )
     }
 }
