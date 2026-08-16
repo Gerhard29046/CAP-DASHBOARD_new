@@ -65,6 +65,19 @@ NOT STARTED:
   Status) -- the closing deliverable of the whole 15-phase initiative,
   depends on everything above being truthfully assessed first.
 
+UPDATE (2026-08-16, overnight, continuing past the pause point above at the
+user's explicit "don't wait for me, keep going" instruction): Phase 9
+(Settings, Android) and Phase 10's Android half (theming) both landed,
+real-build-verified -- see this file's own Phase 9/10 table rows above and
+SESSION_LOG.md's matching entry for full detail, including the one real
+data-layer bug found+fixed along the way and the write-path QA gap (blocked
+by this session's own tool classifier, not yet closed). The final parity
+audit table was also produced: `docs/CROSS_PLATFORM_PARITY_AUDIT.md`.
+Phase 13 (global responsiveness/UX final sweep) deliberately NOT started --
+per the audit's own recommended ordering, it's best done after Phase 5's real
+blocker (KB signed-URL bug) and Phase 10's web half are resolved, not rushed
+unsupervised at the end of an already-long overnight session.
+
 LATER, LARGER instruction layered on the same phases (the user's 19-step
 "make Android as good as the website" message, 2026-08-16) -- mostly asks
 for DEEPER passes on phases already DONE above, not new phases: Dashboard
