@@ -38,6 +38,48 @@ unaffected by this work.
 | 12 | Firebase removed completely from Android | **DONE**, real-build-verified with real proof — `408fe0e`. Deleted: `observeFirestoreCollection()` (Core.kt, was already unreachable dead code post-`b8aaaee`), `FirebaseModule`, `AuthRepository`'s Firebase Auth login bridge, `connectionStatus()`/`connectionUserMessage()` (unused since Phase 11), `userMessage()`'s Firebase branches, `SUPABASE_MIGRATED_TABLES`, `ObserveFirestoreCollectionFailurePolicyTest.kt` (7 tests — correctly drops the unit baseline to 16/16, not a regression), `app/google-services.json`, the `google-services` Gradle plugin, every `firebase-*`/`kotlinx-coroutines-play-services` catalog entry. Proof, not just assertion: full **clean** build → `BUILD SUCCESSFUL`; `:app:dependencies --configuration debugRuntimeClasspath \| grep -i firebase` → zero output; extracted the real built APK and grepped all 9 dex files + manifest + resources.arsc for "firebase" case-insensitively → zero matches anywhere; APK size dropped 26,286,963 → 21,668,520 bytes (~4.6MB), consistent with an entire SDK actually leaving the package. One real bug caught by this same verification: a first-pass import cleanup wrongly also removed `@ApplicationContext`'s import (still needed by `StatusRepository`), causing a real KSP compile failure — caught immediately, fixed, re-verified clean. Implemented directly by Queen Bee (`supabase-android-bee` not invocable this session). **Deliberately not touched**: `app/src/androidTest/.../LiveFirebaseSmokeTest.kt` — pre-existing, already-stale (references deleted UI text), imports no real Firebase class, so it doesn't block this removal; renaming it is separate, disclosed, deferred cleanup |
 | 13 | Global responsiveness/UX pass (+ web sanity pass where changed) | NOT DONE |
 
+## Remaining-work graph (recorded 2026-08-16, at the user's explicit request, "pause development" —
+## this is a record only, not a plan being executed right now)
+
+As of commit `ed55556` (deployed live to production, `6188b2cd-78ee-41bd-88d2-73e6aeaae03d`,
+verified byte-for-byte via the served bundle's sha256):
+
+```
+DONE, VERIFIED, LIVE — Phases 1, 2, 3, 4, 6, 7, 8, 11, 12; out-of-band delete
+(Clients/Job Cards/Knowledge Base) + CSV update-import; Cloudflare account
+fixed + current state deployed.
+
+PARTIAL — Phase 5 (Knowledge Base): list/photo-grid done; upload capability
+deliberately blocked on a real live web bug (KB photo/document signed URLs
+expire after 7 days — see this file's matching KNOWN_ISSUES.md entry).
+Building Android upload against the same broken contract would double the
+exposure, not fix anything.
+
+NOT STARTED:
+  Phase 9  Settings (Android)              ─┐ likely built together --
+  Phase 10 Theming/Personalization (both)  ─┘ Settings is where a theme
+                                               toggle would live
+  Phase 13 Global responsiveness/UX pass      (best done LAST -- sweeps
+                                               everything above)
+  Final parity audit table (Feature | Website | Android | Shared Supabase |
+  Status) -- the closing deliverable of the whole 15-phase initiative,
+  depends on everything above being truthfully assessed first.
+
+LATER, LARGER instruction layered on the same phases (the user's 19-step
+"make Android as good as the website" message, 2026-08-16) -- mostly asks
+for DEEPER passes on phases already DONE above, not new phases: Dashboard
+visual polish, full Navigation audit, Calendar re-verify, Book In
+field-by-field re-audit, Knowledge Base full UX rework, Notes/Account/
+Users/Connection-Sync audit-only (don't rebuild, already done), Settings
+(=Phase 9), Theming (=Phase 10), Branding (apply the real icon set from
+easyappicon-icons-1786801908643/android), Responsiveness (=Phase 13),
+Firebase re-verify (Phase 12 already did this with proof).
+
+This session's audit of that 19-step message was interrupted by the user's
+"stop" mid-way through the production/repository state comparison step --
+NOT resumed, deliberately paused per explicit instruction.
+```
+
 **Real findings already confirmed by direct code read (not guessed), still current**:
 - Book In (`BookInScreen`) missing `job_number`, `machine_type`, `accessories_received`
   (migration 0025's own column!), `condition_on_arrival`, `condition_notes`, and the "Previous
