@@ -1,5 +1,36 @@
 # Session Log
 
+## 2026-08-17 (late night, cont.) — Login page missing "Forgot password?" link fixed; Work Performed changed from free text to a checklist (web + Android)
+- User asked where to reset their password; when told to use "Forgot password?" on the login page,
+  correctly pushed back that it doesn't exist. Verified by reading `Login.jsx` directly -- true,
+  zero reference to `/forgot-password` anywhere on that page despite the page/route itself always
+  being real and working. Added a plain text-button link under the password field, matching the
+  existing "Create one" (`/register`) link pattern already there. Lint/typecheck/build clean,
+  pushed (`27df2b9`), deployed live, verified via a stable 4-poll `Cache-Control: no-cache` check.
+- User: logging a service is too much typing, wants tick boxes for "Work Performed" instead --
+  Replaced Filter Dryer / Replaced Vacuum Pump Oil / Calibrated Pressure Sensor / Calibrated
+  Scales / Cleaned Machine -- on both web and Android, textarea removed entirely, Findings/Notes
+  left untouched. Built `frontend/src/lib/serviceWorkItems.js` (shared list + join/parse helpers)
+  used by both `ServiceForm.jsx` and `LogServiceModal.jsx`; no migration -- `service_records.
+  work_performed` has always been plain text, checked items are just comma-joined into that same
+  column, so every existing reader displays it correctly unchanged. `android-ui-bee` mirrored it
+  exactly in `MainActivity.kt` (`LogNewServiceScreen`/`ServiceDialog`, new shared
+  `WorkPerformedChecklist` composable) -- `testing-bee` independently confirmed via a real Gradle
+  build (`BUILD SUCCESSFUL`, 16/16 tests, 0 lint errors, real APK, genuinely-executed not cached
+  compile/dex/package tasks) and confirmed the two platforms' item lists/join-separator/parse-rule
+  match byte-for-byte. testing-bee also caught a real overstated comment in the web file (claimed
+  an old record's free text "stays visible read-only" during editing -- it doesn't, only on the
+  separate read-only detail view) -- fixed, plus added `frontend/tests/serviceWorkItems.test.js`
+  (8 new tests, 66/66 total) since this project's convention already covers this kind of pure
+  logic elsewhere (`recordPhotoPath.test.js`). Pushed (`86e7329`, `7e43ca5`); JS bundle hash
+  unchanged by the second commit (comment/test-only), so no redeploy was needed for it -- the
+  checklist itself was already live from the first commit's deploy.
+- **Disclosed, deliberate limitation on both platforms, not a bug**: editing a service record
+  whose `work_performed` predates this change starts the checklist empty (can't parse arbitrary
+  prose back into checkboxes) and saving replaces the old text with whatever's ticked (possibly
+  nothing) -- the old value is never lost unless the record is actually re-saved, and remains
+  visible on the read-only detail view throughout.
+
 ## 2026-08-17 (later night) — Job Card save PGRST204 fixed, real /auth/callback page added, pushed + deployed live
 - User reported "Save Changes" on Job Cards failing with `PGRST204: Could not find the 'notes'
   column of 'job_cards'`. Traced the full save flow before touching anything: `JobCardDetail.jsx`
