@@ -118,6 +118,21 @@ function sameSettings(a, b) {
   return SETTINGS_COLUMNS.every((c) => JSON.stringify(a?.[c]) === JSON.stringify(b?.[c]));
 }
 
+/** How many rows PostgREST handed back in the representation (-1 = not a JSON array at all). */
+const rowsReturned = (res) => (Array.isArray(res.json) ? res.json.length : -1);
+
+/**
+ * Mirrors SupabaseData.kt's requireRowAffected() decision, so these checks measure exactly what
+ * the Android client concludes rather than what the raw HTTP status says.
+ *
+ * The fix does NOT make the server reject a denied write -- PostgREST still answers a
+ * USING-clause-filtered PATCH/DELETE with 2xx. What changed is that the client now asks for
+ * `Prefer: return=representation` and treats a zero-row representation as a failure. So the
+ * contract worth verifying is "the client can tell denial from success", not "the server
+ * returns >= 400" (which it never did and still does not).
+ */
+const clientSeesDenial = (res) => res.status >= 400 || rowsReturned(res) === 0;
+
 async function main() {
   console.log("=== Setup ===");
 
@@ -209,13 +224,32 @@ async function main() {
 
     // PATCH products_services -- the "Archive" button's exact payload ({is_active: false}).
     const archive = await pgrest(`products_services?id=eq.${createdRow.id}`, {
-      method: "PATCH", token: granted.token, body: { is_active: false, updated_at: nowIso() },
+      method: "PATCH", token: granted.token, preferReturn: true, body: { is_active: false, updated_at: nowIso() },
     });
     const { data: afterArchive } = await admin.from("products_services").select("is_active").eq("id", createdRow.id).single();
     record(
       "products_services UPDATE (archive toggle) allowed for settings.access, change verified server-side",
       archive.status >= 200 && archive.status < 300 && afterArchive?.is_active === false,
       `HTTP ${archive.status}, is_active now ${afterArchive?.is_active}`
+    );
+    // The converse of requireRowAffected(): an ALLOWED update must come back with a row, or the
+    // client's new zero-row check would reject a write that genuinely succeeded.
+    record(
+      "products_services allowed UPDATE returns a non-empty representation (requireRowAffected passes)",
+      rowsReturned(archive) === 1,
+      `${rowsReturned(archive)} row(s) returned`
+    );
+
+    // The doc comment on requireRowAffected() claims an authorized no-op edit still returns a row
+    // (Postgres returns every row an UPDATE touches, even when new values equal old ones). Verified
+    // here rather than assumed, since the whole fix rests on it.
+    const noopEdit = await pgrest(`products_services?id=eq.${createdRow.id}`, {
+      method: "PATCH", token: granted.token, preferReturn: true, body: { is_active: false, updated_at: nowIso() },
+    });
+    record(
+      "products_services allowed UPDATE that changes nothing still returns 1 row (no false denial)",
+      rowsReturned(noopEdit) === 1,
+      `HTTP ${noopEdit.status}, ${rowsReturned(noopEdit)} row(s) returned`
     );
 
     // PATCH products_services -- the full edit-dialog payload.
@@ -231,7 +265,7 @@ async function main() {
       updated_at: nowIso(),
     };
     const edited = await pgrest(`products_services?id=eq.${createdRow.id}`, {
-      method: "PATCH", token: granted.token, body: editPayload,
+      method: "PATCH", token: granted.token, preferReturn: true, body: editPayload,
     });
     const { data: afterEdit } = await admin.from("products_services")
       .select("type,name,sku,category,unit_price,vat_rate,is_active").eq("id", createdRow.id).single();
@@ -243,6 +277,11 @@ async function main() {
         Number(afterEdit?.unit_price) === 99.99 && Number(afterEdit?.vat_rate) === 0 &&
         afterEdit?.is_active === true,
       `HTTP ${edited.status}, ${JSON.stringify(afterEdit)}`
+    );
+    record(
+      "products_services allowed UPDATE (full edit payload) returns a non-empty representation",
+      rowsReturned(edited) === 1,
+      `${rowsReturned(edited)} row(s) returned`
     );
 
     // PATCH job_card_settings?id=eq.true -- JobCardSettingsScreen's exact save payload.
@@ -257,7 +296,7 @@ async function main() {
       updated_at: nowIso(),
     };
     const settingsPatch = await pgrest("job_card_settings?id=eq.true", {
-      method: "PATCH", token: granted.token, body: settingsPayload,
+      method: "PATCH", token: granted.token, preferReturn: true, body: settingsPayload,
     });
     // Re-read as the same user via the same GET the app uses, not via service role.
     const readBack = await pgrest("job_card_settings?select=*", { token: granted.token });
@@ -266,6 +305,11 @@ async function main() {
       "job_card_settings UPDATE (PATCH ?id=eq.true) allowed for settings.access",
       settingsPatch.status >= 200 && settingsPatch.status < 300,
       `HTTP ${settingsPatch.status}${settingsPatch.text ? ` ${settingsPatch.text}` : ""}`
+    );
+    record(
+      "job_card_settings allowed UPDATE returns a non-empty representation (requireRowAffected passes)",
+      rowsReturned(settingsPatch) === 1,
+      `${rowsReturned(settingsPatch)} row(s) returned`
     );
     record(
       "job_card_settings change confirmed by re-reading all 7 saved fields",
@@ -285,13 +329,18 @@ async function main() {
     console.log("\n=== 3. Writes as the ADMINISTRATOR (is_admin() bypass inside has_permission()) ===");
 
     const adminSettingsPatch = await pgrest("job_card_settings?id=eq.true", {
-      method: "PATCH", token: adminUser.token, body: { numbering_prefix: "QA9A-", updated_at: nowIso() },
+      method: "PATCH", token: adminUser.token, preferReturn: true, body: { numbering_prefix: "QA9A-", updated_at: nowIso() },
     });
     const { data: afterAdminPatch } = await admin.from("job_card_settings").select("numbering_prefix").eq("id", true).single();
     record(
       "job_card_settings UPDATE allowed for role=admin with NO explicit settings.access grant",
       adminSettingsPatch.status >= 200 && adminSettingsPatch.status < 300 && afterAdminPatch?.numbering_prefix === "QA9A-",
       `HTTP ${adminSettingsPatch.status}, prefix now ${afterAdminPatch?.numbering_prefix}`
+    );
+    record(
+      "job_card_settings allowed UPDATE (admin) returns a non-empty representation",
+      rowsReturned(adminSettingsPatch) === 1,
+      `${rowsReturned(adminSettingsPatch)} row(s) returned`
     );
 
     const adminCatalogue = await pgrest("products_services", {
@@ -306,13 +355,18 @@ async function main() {
     );
 
     const adminDelete = await pgrest(`products_services?id=eq.${adminCatalogue.json[0].id}`, {
-      method: "DELETE", token: adminUser.token,
+      method: "DELETE", token: adminUser.token, preferReturn: true,
     });
     const { data: adminRowGone } = await admin.from("products_services").select("id").eq("id", adminCatalogue.json[0].id).maybeSingle();
     record(
       "products_services DELETE allowed for role=admin, row genuinely gone",
       adminDelete.status >= 200 && adminDelete.status < 300 && !adminRowGone,
       `HTTP ${adminDelete.status}`
+    );
+    record(
+      "products_services allowed DELETE returns a non-empty representation (requireRowAffected passes)",
+      rowsReturned(adminDelete) === 1,
+      `${rowsReturned(adminDelete)} row(s) returned`
     );
     if (!adminRowGone) cleanup.catalogueRowIds = cleanup.catalogueRowIds.filter((id) => id !== adminCatalogue.json[0].id);
 
@@ -336,7 +390,8 @@ async function main() {
     const { data: beforeDeniedUpdate } = await admin.from("products_services")
       .select("name,is_active").eq("id", createdRow.id).single();
     const deniedUpdate = await pgrest(`products_services?id=eq.${createdRow.id}`, {
-      method: "PATCH", token: noPerm.token, body: { name: "HIJACKED BY QA", is_active: false, updated_at: nowIso() },
+      method: "PATCH", token: noPerm.token, preferReturn: true,
+      body: { name: "HIJACKED BY QA", is_active: false, updated_at: nowIso() },
     });
     const { data: afterDeniedUpdate } = await admin.from("products_services")
       .select("name,is_active").eq("id", createdRow.id).single();
@@ -346,14 +401,14 @@ async function main() {
       `HTTP ${deniedUpdate.status}, name still "${afterDeniedUpdate?.name}"`
     );
     record(
-      "products_services denied UPDATE surfaces as an HTTP error (not a silent 2xx no-op)",
-      deniedUpdate.status >= 400,
-      `HTTP ${deniedUpdate.status} -- PostgREST returns 2xx/0-rows when a RLS USING clause filters the row out; the Android client would then report success`
+      "products_services denied UPDATE is detectable by the Android client (zero-row representation or HTTP error)",
+      clientSeesDenial(deniedUpdate),
+      `HTTP ${deniedUpdate.status}, ${rowsReturned(deniedUpdate)} row(s) returned -- SupabaseData.requireRowAffected() throws on 0`
     );
 
     // DELETE -- same USING-clause semantics.
     const deniedDelete = await pgrest(`products_services?id=eq.${createdRow.id}`, {
-      method: "DELETE", token: noPerm.token,
+      method: "DELETE", token: noPerm.token, preferReturn: true,
     });
     const { data: stillExists } = await admin.from("products_services").select("id").eq("id", createdRow.id).maybeSingle();
     record(
@@ -362,16 +417,16 @@ async function main() {
       `HTTP ${deniedDelete.status}`
     );
     record(
-      "products_services denied DELETE surfaces as an HTTP error (not a silent 2xx no-op)",
-      deniedDelete.status >= 400,
-      `HTTP ${deniedDelete.status}`
+      "products_services denied DELETE is detectable by the Android client (zero-row representation or HTTP error)",
+      clientSeesDenial(deniedDelete),
+      `HTTP ${deniedDelete.status}, ${rowsReturned(deniedDelete)} row(s) returned`
     );
 
     // job_card_settings UPDATE -- the important one: a real production singleton.
     const { data: beforeDeniedSettings } = await admin.from("job_card_settings")
       .select(SETTINGS_COLUMNS.join(",")).eq("id", true).single();
     const deniedSettings = await pgrest("job_card_settings?id=eq.true", {
-      method: "PATCH", token: noPerm.token,
+      method: "PATCH", token: noPerm.token, preferReturn: true,
       body: {
         numbering_prefix: "HIJACK-", default_status: "Hijacked", default_line_quantity: 99,
         allow_products: false, allow_services: false,
@@ -386,9 +441,9 @@ async function main() {
       `HTTP ${deniedSettings.status}, prefix still "${afterDeniedSettings?.numbering_prefix}"`
     );
     record(
-      "job_card_settings denied UPDATE surfaces as an HTTP error (not a silent 2xx no-op)",
-      deniedSettings.status >= 400,
-      `HTTP ${deniedSettings.status}`
+      "job_card_settings denied UPDATE is detectable by the Android client (zero-row representation or HTTP error)",
+      clientSeesDenial(deniedSettings),
+      `HTTP ${deniedSettings.status}, ${rowsReturned(deniedSettings)} row(s) returned`
     );
 
     // job_card_settings has no INSERT/DELETE policy at all -- nobody, not even an admin, may.

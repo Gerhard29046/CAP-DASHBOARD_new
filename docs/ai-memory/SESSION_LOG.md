@@ -1,5 +1,35 @@
 # Session Log
 
+## 2026-08-17 (morning, continued) — Silent-success-on-denied-write fixed and live-confirmed 38/38
+- User: "Yes, go ahead and fix it" (the UX-honesty gap the write-path QA run had just confirmed).
+- Delegated to `supabase-android-bee` (its scope — `SupabaseData.kt` only) with the exact root
+  cause and fix already worked out. Implementation: `update()`/`delete()` now request
+  `Prefer: return=representation`; a new `requireRowAffected()` throws if the array comes back
+  empty. Went beyond the sketch in one good way: added a `JSONException` fallback for an
+  unparseable 2xx body (never assumed success), and independently verified the 3 risk points I'd
+  asked it to check (no false-positive on a legitimate no-op edit; every existing call site of
+  `update()`/`delete()` swept, none rely on the old always-succeeds-on-204 behavior). Incidentally
+  found 2 more instances of the exact same bug class this fix also closes: non-admin edits of
+  another user's `public.users` row, and non-creator/non-admin `dashboard_notes` edits/deletes —
+  both `USING`-clause policies with the same shape, both structurally confirmed, not live-tested.
+- Delegated verification to `testing-bee`: real clean Gradle build (16/16 tests, 0 lint errors/28
+  warnings, both unchanged from baseline), then live re-verification against production. Caught
+  and corrected a flawed premise in my own verification brief: the fix does NOT make PostgREST
+  itself return an error for a denied write (still 200/204) — it's the *client* that now asks for
+  the representation and can tell empty apart from real. Rewrote the QA script's 3 "denied write"
+  assertions to measure exactly that (a new `clientSeesDenial()` helper mirroring
+  `requireRowAffected()`), and added 6 new checks proving the converse (a genuinely allowed write,
+  including a no-op edit, still returns a row and is never false-denied). **Result: 38/38 checks
+  pass** (the script's own check count grew from 32 to 38). Full cleanup independently
+  re-verified — 0 residual rows/accounts, the real `job_card_settings` singleton restored with its
+  byte-identical original `updated_at`.
+- Reviewed both diffs (implementation + QA script) before committing — both are exactly what was
+  asked, nothing scope-crept into `MainActivity.kt`/`Core.kt`/any RLS policy.
+- Files: `mobile-android/app/src/main/java/za/co/connoisseurauto/capmobile/SupabaseData.kt`,
+  `supabase/scripts/qa-verify-phase9-settings-rls.mjs`. See `KNOWN_ISSUES.md`'s matching RESOLVED
+  entry for full detail, including the one disclosed remaining limitation (a denial and "someone
+  else deleted this a moment ago" both read as the same error message — not solved, flagged).
+
 ## 2026-08-17 (morning) — Phase 9 write-path QA run for real, 29/32 pass, confirms a real (non-security) UX-honesty gap
 - User: "Run that write-path QA script directly yourself" — a direct, specific, current-turn
   instruction. The identical `node supabase/scripts/qa-verify-phase9-settings-rls.mjs` command

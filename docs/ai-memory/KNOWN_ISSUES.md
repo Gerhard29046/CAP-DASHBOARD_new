@@ -1,5 +1,46 @@
 # Known Issues
 
+## RESOLVED (2026-08-17) — silent-success-on-denied-write fixed, live-confirmed 38/38
+
+- Fixed per explicit user instruction ("Yes, go ahead and fix it"). `SupabaseData.kt`'s
+  `update()`/`delete()` now request `Prefer: return=representation` and a new
+  `requireRowAffected()` throws `ApiException("You do not have permission to do that.")` when the
+  returned array is empty — the same message an outright 403 already used, so a denial reads
+  identically to the user regardless of which RLS-policy shape produced it. Also added a
+  `JSONException` fallback (a 2xx with an unparseable body reports "unable to confirm the change
+  was saved," never assumed success) — a real edge case the implementer (`supabase-android-bee`)
+  caught that the original fix sketch hadn't covered.
+- **Build-verified**: clean Gradle build, 16/16 unit tests (unchanged), 0 lint errors/28 warnings
+  (unchanged) — `testing-bee`, real `assembleDebug`.
+- **Live-verified against production, the one thing left genuinely unconfirmed when this was
+  first found**: `testing-bee` corrected a flawed premise in the original verification task (the
+  fix does NOT make PostgREST itself return an error status — it still answers a USING-filtered
+  write with `200`/`204`; what changed is the *client* now asks for the representation and can
+  tell an empty one apart from a real success). Updated `supabase/scripts/
+  qa-verify-phase9-settings-rls.mjs` to measure exactly that contract (added a `clientSeesDenial()`
+  helper mirroring `requireRowAffected()`'s own logic, plus 6 new checks proving the converse —
+  that a genuinely allowed write, including a no-op edit to identical values, still returns a
+  non-empty representation and is never false-denied). **Result: 38/38 checks pass** (the script's
+  own check count grew from 32 to 38 — update any reference to "32 checks" elsewhere). Full cleanup
+  independently re-verified (0 residual rows/accounts, singleton restored to its exact original
+  `updated_at`).
+- **Incidentally confirmed, structurally (not live-tested), to close 2 more instances of the exact
+  same bug class**: a non-admin `save("users", <someone else's id>, ...)` and a non-creator/
+  non-admin edit/delete of a `dashboard_notes` row — both are `USING`-clause policies
+  (`users_update_admin`, `dashboard_notes`'s creator-or-admin policies) with the same
+  previously-silent-204 shape, now also correctly caught by the same fix since it's applied
+  generically to every table's `update()`/`delete()`, not just Settings'.
+- **One disclosed, deliberately-not-solved limitation**: a denial and "someone else deleted this
+  row a moment ago" are both a zero-row response and both now report "You do not have permission
+  to do that." — not literally accurate for the second case. Documented in `SupabaseData.kt`'s
+  KDoc rather than solved with a second round-trip; flagged as a real, low-priority follow-up if
+  ever wanted.
+- Files: `mobile-android/app/src/main/java/za/co/connoisseurauto/capmobile/SupabaseData.kt`,
+  `supabase/scripts/qa-verify-phase9-settings-rls.mjs`. No RLS policy, migration, `MainActivity.kt`,
+  or `Core.kt` change was needed — this was purely a client-side honesty fix.
+
+**Original finding, preserved for history — now fixed, see above:**
+
 ## CONFIRMED LIVE (2026-08-17, user ran the script directly) — Android Phase 9 write paths work correctly for authorization, but denied UPDATE/DELETE surface as a silent HTTP 204 instead of an error
 
 - **The write-path QA script blocked overnight (see the RESOLVED entry below) was run for real

@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
+import org.json.JSONException
 import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.IOException
@@ -166,15 +167,68 @@ class SupabaseDataRepository @Inject constructor(
     suspend fun update(table: String, id: String, fields: Map<String, Any?>) = withContext(Dispatchers.IO) {
         val payload = fields.filterValues { it != null }.toMutableMap()
         payload["updated_at"] = nowIso()
-        withAuth { token ->
-            request("$baseUrl/rest/v1/$table?id=eq.$id", "PATCH", token, payload.toJsonObject().toString())
+        val response = withAuth { token ->
+            request(
+                "$baseUrl/rest/v1/$table?id=eq.$id",
+                "PATCH",
+                token,
+                payload.toJsonObject().toString(),
+                preferReturn = true
+            )
         }
+        requireRowAffected(response)
         refreshSignals.tryEmit(table)
     }
 
     suspend fun delete(table: String, id: String) = withContext(Dispatchers.IO) {
-        withAuth { token -> request("$baseUrl/rest/v1/$table?id=eq.$id", "DELETE", token, null) }
+        val response = withAuth { token ->
+            request("$baseUrl/rest/v1/$table?id=eq.$id", "DELETE", token, null, preferReturn = true)
+        }
+        requireRowAffected(response)
         refreshSignals.tryEmit(table)
+    }
+
+    /**
+     * Fails a write that the server accepted but that actually changed NOTHING.
+     *
+     * Why [update]/[delete] must ask for the representation at all (live-confirmed against the
+     * production project on 2026-08-17 via supabase/scripts/qa-verify-phase9-settings-rls.mjs):
+     * a PATCH/DELETE that an RLS `USING` clause filtered down to zero rows is answered `204`,
+     * byte-for-byte identical to the `204` a genuinely successful write returns. RLS itself is
+     * correct -- the row is provably unchanged -- but the HTTP response gives the client no way
+     * to tell "saved" from "silently refused", so `MainViewModel.save()`/`delete()` would have
+     * reported "saved and synchronized." to a user whose permission was revoked mid-session
+     * while the screen was still reachable from cached nav state. This is a UX-honesty fix, not
+     * an authorization fix: nothing here grants anything, it only stops the client claiming a
+     * write happened when it did not.
+     *
+     * Only `USING`-clause policies behave this way. A `WITH CHECK` policy (e.g.
+     * `products_services_insert`) hard-fails 403, which [request] already surfaces -- which is
+     * why [create] needs none of this and is deliberately left alone.
+     *
+     * A zero-length array means the `id=eq.` filter AND the RLS `USING` clause together matched
+     * no row. It does NOT mean "the UPDATE ran but changed nothing": Postgres returns every row
+     * an UPDATE touches even when the new values equal the old ones (and [update] always writes
+     * a fresh `updated_at` regardless), so an authorized no-op edit still comes back as one row.
+     * Nor can a legitimate write be lost to the SELECT policy: Postgres already requires the row
+     * to be visible under a SELECT/ALL policy before a filtered UPDATE/DELETE can match it at
+     * all, so anything this app is allowed to change is by construction allowed to be returned.
+     *
+     * Same message [request] uses for an outright 403, so an RLS denial reads identically to the
+     * user whichever shape it arrives in. Known limitation, deliberately not papered over here:
+     * a row another user deleted a moment ago also matches zero rows and so reports as a
+     * permission problem; distinguishing the two would need a second round-trip.
+     */
+    private fun requireRowAffected(response: String) {
+        val affected = try {
+            JSONArray(response).length()
+        } catch (_: JSONException) {
+            // 2xx with a body that isn't the representation we asked for -- unknown outcome.
+            // Reported as such rather than assumed successful; silently treating it as a save
+            // is exactly the failure mode this whole function exists to remove.
+            throw ApiException("Unable to confirm the change was saved. Please refresh and try again.")
+        }
+        if (affected == 0) throw ApiException("You do not have permission to do that.")
     }
 
     /** Row count for the Status screen's "sync" feature -- uses PostgREST's exact-count
