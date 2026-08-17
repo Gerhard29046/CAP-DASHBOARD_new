@@ -107,7 +107,7 @@ export function normalizeName(value) {
  * purposes. Only used for the fuzzy possible_duplicate signal, never for exact_match --
  * exact_match still requires a strong signal (code/email/phone), so this being loose can't
  * cause a false exact_match, only a possible_duplicate flag for a human to review. */
-function normalizeNameLoose(value) {
+export function normalizeNameLoose(value) {
   return value ? String(value).toLowerCase().replace(/[^a-z0-9]/g, "") : "";
 }
 
@@ -364,6 +364,55 @@ export function buildPreview(rawRows, mapping, existingClients, extraColumnsToKe
   };
 
   return { rows, summary };
+}
+
+/**
+ * Groups an ALREADY-LOADED list of real public.clients rows into possible-duplicate clusters,
+ * for the Clients page's "Find Duplicates" review panel (2026-08-17). Deliberately reuses the
+ * exact same signals classifyRow() already uses against import rows (matching
+ * legacy_pastel_customer_code, matching normalized email, matching normalized phone, or a loose
+ * name match) so "possible duplicate" means the same thing whether it's flagged during an
+ * import or found later by browsing the existing client list -- one detection concept, not two.
+ *
+ * Read-only/pure -- does not delete or modify anything. Returns an array of groups, each
+ * `{ reason, clients: [...] }`, `clients` always real rows from the input array (never
+ * synthesized). A client can appear in more than one group if it matches different clients on
+ * different signals (e.g. shares an email with one client and a phone with another) --
+ * deliberately not deduplicated across groups, so a human reviewing this doesn't have one
+ * signal silently hidden by another.
+ */
+export function findDuplicateClientGroups(clients) {
+  const groups = [];
+  const byEmail = new Map();
+  const byPhone = new Map();
+  const byCode = new Map();
+  const byNameLoose = new Map();
+
+  for (const client of clients) {
+    const email = normalizeEmail(client.email);
+    const phone = normalizePhone(client.phone);
+    const code = client.legacy_pastel_customer_code ? String(client.legacy_pastel_customer_code).trim() : "";
+    const nameLoose = normalizeNameLoose(client.company_name);
+
+    if (email) { if (!byEmail.has(email)) byEmail.set(email, []); byEmail.get(email).push(client); }
+    if (phone && phone.length >= 7) { if (!byPhone.has(phone)) byPhone.set(phone, []); byPhone.get(phone).push(client); }
+    if (code) { if (!byCode.has(code)) byCode.set(code, []); byCode.get(code).push(client); }
+    if (nameLoose) { if (!byNameLoose.has(nameLoose)) byNameLoose.set(nameLoose, []); byNameLoose.get(nameLoose).push(client); }
+  }
+
+  for (const [code, group] of byCode) {
+    if (group.length > 1) groups.push({ reason: `Same customer code (${code})`, clients: group });
+  }
+  for (const [email, group] of byEmail) {
+    if (group.length > 1) groups.push({ reason: `Same email (${email})`, clients: group });
+  }
+  for (const [phone, group] of byPhone) {
+    if (group.length > 1) groups.push({ reason: `Same phone number (${phone})`, clients: group });
+  }
+  for (const [, group] of byNameLoose) {
+    if (group.length > 1) groups.push({ reason: `Similar name`, clients: group });
+  }
+  return groups;
 }
 
 /**

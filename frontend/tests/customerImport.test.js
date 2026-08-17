@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   guessMapping, normalizeRow, normalizeEmail, normalizePhone, validateRow, classifyRow, buildPreview,
   buildUpdatePayload, findFilePoolDuplicate, isValidUuid, executeImportRows, classifyImportError,
+  findDuplicateClientGroups,
 } from "../src/lib/customerImport.js";
 
 test("guessMapping pre-selects obvious header matches", () => {
@@ -550,4 +551,45 @@ test("a failure does not roll back or affect unrelated already-succeeded rows (n
   assert.equal(results[1].status, "failed");
   assert.equal(results[2].status, "success");
   assert.ok(createdIds.includes("Customer 2"));
+});
+
+// --- Clients page "Find Duplicates" (Priority 3) ---
+
+test("findDuplicateClientGroups: matching email groups two real clients together", () => {
+  const clients = [
+    { id: "1", company_name: "ABC Refrigeration", email: "info@abc.co.za" },
+    { id: "2", company_name: "ABC Refrigeration Pty Ltd", email: "INFO@ABC.CO.ZA" },
+    { id: "3", company_name: "Totally Different Co", email: "other@example.com" },
+  ];
+  const groups = findDuplicateClientGroups(clients);
+  const emailGroup = groups.find((g) => g.reason.startsWith("Same email"));
+  assert.ok(emailGroup);
+  assert.equal(emailGroup.clients.length, 2);
+  assert.deepEqual(emailGroup.clients.map((c) => c.id).sort(), ["1", "2"]);
+});
+
+test("findDuplicateClientGroups: matching normalized phone groups clients despite different formatting", () => {
+  const clients = [
+    { id: "1", company_name: "A Co", phone: "+27 21 123 4567" },
+    { id: "2", company_name: "B Co", phone: "021 123 4567" },
+  ];
+  const groups = findDuplicateClientGroups(clients);
+  const phoneGroup = groups.find((g) => g.reason.startsWith("Same phone"));
+  assert.ok(phoneGroup);
+  assert.equal(phoneGroup.clients.length, 2);
+});
+
+test("findDuplicateClientGroups: no false positives for genuinely distinct clients", () => {
+  const clients = [
+    { id: "1", company_name: "Alpha Air Con", email: "alpha@example.com", phone: "0211111111" },
+    { id: "2", company_name: "Beta Refrigeration", email: "beta@example.com", phone: "0222222222" },
+  ];
+  assert.deepEqual(findDuplicateClientGroups(clients), []);
+});
+
+test("findDuplicateClientGroups: never returns a group of fewer than 2 clients", () => {
+  const clients = [
+    { id: "1", company_name: "Only One", email: "unique@example.com" },
+  ];
+  assert.deepEqual(findDuplicateClientGroups(clients), []);
 });

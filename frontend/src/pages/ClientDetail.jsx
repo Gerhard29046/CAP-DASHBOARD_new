@@ -84,7 +84,7 @@ function InfoRow({ icon: Icon, label, value, href }) {
 export default function ClientDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, hasPermission } = useAuth();
   const [client, setClient] = useState(null);
   const [machines, setMachines] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -235,29 +235,40 @@ export default function ClientDetail() {
               </p>
             </div>
           </div>
+          {/* NEW (2026-08-17): these buttons rendered unconditionally before, regardless of
+              clients.edit/clients.delete -- RLS (clients_update/clients_delete,
+              0002_rls_policies.sql) already blocked the actual write server-side, so this was
+              never a security hole, but a technician without either permission would see a
+              button that silently fails (or shows a raw RLS error) when clicked. Gated to match
+              the real server-side authorization, same has_permission() keys. */}
           <div className="flex gap-2 shrink-0">
-            <Button variant="outline" size="sm" className="gap-2" onClick={() => setShowEdit(true)}>
-              <Pencil className="w-3.5 h-3.5" /> Edit
-            </Button>
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button variant="outline" size="icon" className="text-destructive hover:text-destructive hover:bg-destructive/10 border-destructive/30">
-                  <Trash2 className="w-4 h-4" />
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>Delete Client?</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    This will permanently delete <strong>{client.company_name}</strong> and all its machines.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Delete</AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
+            {hasPermission("clients.edit") && (
+              <Button variant="outline" size="sm" className="gap-2" onClick={() => setShowEdit(true)}>
+                <Pencil className="w-3.5 h-3.5" /> Edit
+              </Button>
+            )}
+            {hasPermission("clients.delete") && (
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button variant="outline" size="icon" className="text-destructive hover:text-destructive hover:bg-destructive/10 border-destructive/30">
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Delete Client?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      This will permanently delete <strong>{client.company_name}</strong> and all {machines.length} of its
+                      machine{machines.length !== 1 ? "s" : ""}, along with their service history. This cannot be undone.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Delete</AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            )}
           </div>
         </div>
       </div>
