@@ -30,3 +30,13 @@ Longer-term fix, not yet done: prefer writing such scripts to a temp `.py`/`.mjs
 running `python3 tmpfile.py` instead of `-c "..."` when the content is long/complex/contains
 special characters, or pipe through `python3 -c "..." > /tmp/out.txt 2>&1` explicitly rather than
 relying on the tool's own capture.
+
+**2026-08-17 update**: happened again with files named exactly `Email` and `General` — matching
+the substring right after `>` in markdown text like "Settings > Email" and "Settings > General"
+written into `docs/ai-memory/DECISIONS.md`/`KNOWN_ISSUES.md` via the `Edit` tool in the same
+window as several `Bash` calls. `Edit` itself doesn't go through a shell, so the exact trigger
+is still unconfirmed, but the `>`-prefixed-word naming pattern is now a second, independent data
+point (alongside `Job` from an earlier session) — strong enough to treat "any markdown `X > Y`
+breadcrumb text near Bash usage in the same turn" as a real trigger candidate, not just literal
+printed shell output. Keep checking `git status --short` after any batch of Edit+Bash calls, not
+only after Bash calls that print raw text.

@@ -1,5 +1,101 @@
 # Decisions
 
+## 2026-08-17 (night) — Service Certificate feature: Resend chosen for email, split into 3 batches, Batch A built
+- Decision: user gave a large 22-phase objective (branded PDF service certificate, generated
+  from a completed service record, emailed to the client with an optional extra attachment,
+  on both web and Android). Queen Bee inspected existing implementation first (per the user's
+  own explicit instruction) before writing any code: `jspdf` was an installed-but-unused
+  dependency (no PDF feature existed anywhere), zero email infrastructure existed at all (no
+  `supabase/functions/`, no email-provider package), the `attachments` Storage bucket already
+  existed private/generic/unused (a direct fit for the later attachment phase), and
+  `services.view`/`services.edit` permissions already gated `service_records` + its photos
+  bucket (reused as-is, no new permission key).
+- Decision: **Resend** chosen as the email provider, user's explicit call after Queen Bee's
+  recommendation (simple REST API, works cleanly from a Supabase Edge Function via plain
+  `fetch`, generous free tier). Not yet implemented (Batch B) — needs the user to actually
+  create the account and hand over an API key as a Supabase Edge Function secret; Queen Bee
+  cannot do that step.
+- Decision: given the size, explicitly split into Batch A (PDF + storage + web UI, no email
+  needed — built this session), Batch B (email, blocked on the Resend key), Batch C (Android
+  parity, deferred until Batch A is proven). Avoids the failure mode of half-building 22
+  phases in one pass with nothing actually verified.
+- Decision: certificate numbering is `CAP-SVC-{year}-{6-digit}`, generated server-side via a
+  real Postgres sequence + a `SECURITY DEFINER` function (`generate_service_certificate()`,
+  migration `0030_service_certificates.sql`), never client-side, idempotent per service record
+  (regenerating reuses the same number). Deliberate simplification, disclosed: the sequence is
+  global, not reset to 1 each January — the year in the number reflects when it was first
+  issued, but the counter keeps climbing across year boundaries. Reversal condition: switch to
+  a year-keyed counter table if the user specifically wants annual reset to 000001.
+- Decision: a dedicated new `service-certificates` Storage bucket (private, PDF-only, 10MB
+  limit) rather than repurposing the existing `invoices` bucket — `invoices` is reserved for a
+  separate, not-yet-built Sage/Pastel invoicing feature per `InvoiceQueue.jsx`'s own comments;
+  reusing it for a different document type would conflate two unrelated features.
+- Decision: a new `company_settings` singleton table (mirrors `job_card_settings`'s existing
+  pattern exactly) for CAP's own address/phone/email/VAT shown on the certificate — only
+  `company_name` seeded with a real, already-used value (`Login.jsx`'s own branding text);
+  everything else stays null until an admin fills it in via a new Settings > General panel,
+  per the explicit "do not invent fields or populate unavailable information with fake data"
+  instruction. The PDF omits any blank field's line rather than printing a placeholder.
+- Consequence / real bug found+fixed in the process: `ServiceRecords.jsx` had never actually
+  joined machine/client data onto service records despite assuming it had (`getClient()` read
+  `record.machine?.client`, which was always undefined) — silently showed "Unknown Client" in
+  production. Fixed as part of this work since the certificate needed the real join anyway.
+- Affected files: `supabase/migrations/0030_service_certificates.sql` (new, NOT applied),
+  `frontend/src/lib/serviceCertificatePdf.js` (new), `frontend/src/pages/ServiceRecords.jsx`,
+  `frontend/src/pages/settings/CompanySettingsPanel.jsx` (new), `frontend/src/pages/
+  Settings.jsx`, `frontend/src/api/supabaseApiClient.js`, `frontend/src/services/supabase/
+  storage.js`, `frontend/src/assets/cap-certificate-logo.jpg` (new, copied from the user-
+  provided `docs/cap_logo/logo.JPG`).
+- Reversal conditions: none anticipated for the batching/provider/numbering decisions above
+  short of the user changing their mind; the annual-reset numbering simplification is the one
+  explicitly flagged as open to reversal if asked.
+
+## 2026-08-17 (evening) — Production transactional data wiped for a full from-scratch test pass (explicit user request)
+- Decision: user explicitly requested deleting all customer/machine/service/job data from the
+  live production Supabase database (`cjvrquipmnoihksijful`, the one both `frontend/` and
+  `mobile-android/` share — there is no separate test/staging environment) to start a full
+  end-to-end test from an empty database. Queen Bee proposed exact scope first (6 tables +
+  `client_imports` + `photos` Storage bucket, explicitly preserving `users`/permissions/
+  knowledge base/settings), user confirmed all of it explicitly ("Yes, delete all 6 tables,
+  clear client_imports too, purge photos bucket - do not delete users") before anything ran.
+- What was deleted (via a one-off script using the `service_role` key from `supabase/.env`,
+  targeted `DELETE FROM` per table in FK-safe order, not `TRUNCATE`/`migrate:fresh`; script
+  itself deleted immediately after use, not left in the repo):
+  - `job_card_lines`: 5 rows
+  - `job_cards`: 8 rows
+  - `service_records`: 5 rows
+  - `machines`: 5 rows
+  - `sites`: 0 rows
+  - `clients`: 659 rows
+  - `client_imports`: 1 row
+  - `photos` Storage bucket: 3 objects removed
+  - All counts independently re-verified 0 after (and `photos` bucket re-listed empty).
+- What was explicitly NOT touched: `users` (confirmed count unchanged: **1** user account total
+  in production as of this action — worth flagging, that's the entire user base right now),
+  `permissions`, `role_permissions`, `knowledge_base_*` tables, `products_services`,
+  `job_card_settings`, `dashboard_notes`, `notifications`, `audit_logs`.
+- Reason: user wants to validate the full app flow (client creation → machine → service →
+  job card, Customer Import, etc.) against a genuinely empty database rather than data
+  intermixed with real/test records accumulated across the migration work.
+- Consequences: this was NOT reversible from this session (no confirmed Supabase PITR/backup
+  access verified before running) — flagged to the user before execution, they approved anyway.
+  Both live clients (web + Android, whoever is signed in) will now see an empty
+  clients/machines/services/jobs state immediately, in production, not a staging copy.
+- Reversal conditions: only via a Supabase point-in-time-restore or backup, if the user's plan
+  has one — not something Queen Bee can do from this environment.
+- **Correction, same session, minutes later**: user flagged Knowledge Base data was missed from
+  the original scope (Queen Bee had proposed keeping it, reasoning it was "product reference
+  data, not customer data" — user's actual intent was a genuinely empty database for the test
+  pass, KB included). Ran a second pass: all 5 `knowledge_*` tables (`knowledge_machines` +
+  cascading `knowledge_notes`/`knowledge_service_codes`/`knowledge_media`/`knowledge_documents`)
+  were already at 0 rows (matches the 2026-08-17 afternoon session's finding that 0 real KB rows
+  existed in production even before this reset). However the `documents` Storage bucket
+  (confirmed KB-exclusive use per `0029_knowledge_base_permanent_file_paths.sql`'s own scope
+  note) had **1 orphaned file** — purged, bucket re-verified empty. Lesson: when a user says
+  "delete everything" / "empty database," don't unilaterally narrow scope based on a category
+  judgment ("that's reference data, not customer data") — ask, or default to the broader
+  interpretation and let the user opt out of pieces instead of opting them in after the fact.
+
 ## 2026-08-16 — Android's Firebase→Supabase migration reaches completion; Firebase removed entirely from `mobile-android/`
 - Decision: with `"users"` (the last Firestore-routed collection, see the two 2026-08-14 entries
   below) moved onto Supabase earlier the same day (`b8aaaee`), and the Status screen's health

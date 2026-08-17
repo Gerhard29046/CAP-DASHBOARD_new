@@ -1,5 +1,16 @@
 # Roadmap
 
+## In progress — Service Certificate / branded PDF / client email workflow (started 2026-08-17)
+
+Explicit 22-phase user objective, separate from the cross-platform parity initiative below.
+Split into 3 batches (see `SESSION_LOG.md`'s matching entry + `DECISIONS.md` for full detail):
+
+| Batch | Scope | Status |
+|---|---|---|
+| A | PDF certificate generation, numbering, storage, web UI (Generate/Preview/Download/Regenerate), Company Settings panel | **Code complete, NOT live-verified.** Migration `0030_service_certificates.sql` not yet applied. Build/lint/typecheck clean; no real PDF has been visually inspected yet. |
+| B | Email sending (Resend, user-approved provider — needs the user's actual Resend account + API key as a Supabase Edge Function secret), attachments (reusing the existing `attachments` bucket), email history, Settings > Email | **NOT started** — blocked on the user creating the Resend account/key. |
+| C | Android parity (certificate generate/preview/email/attach/history, native UX) | **NOT started** — deferred until Batch A is proven out on web. |
+
 ## In progress — CAP cross-platform product parity initiative (started 2026-08-15)
 
 Superseding framing as of the user's 2026-08-15 "Complete Android + Web Product Parity & UX

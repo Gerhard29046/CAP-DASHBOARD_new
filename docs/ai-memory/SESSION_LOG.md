@@ -1,5 +1,212 @@
 # Session Log
 
+## 2026-08-17 (night, latest) — Service Certificate feature, Batch A (web, no email yet)
+- Large multi-phase user request (22 phases): generate a branded PDF "Service Certificate"
+  from a completed service record, downloadable/previewable, emailable to the client with an
+  optional extra attachment, kept associated with the record for regeneration, on both web and
+  Android. Given the size, agreed an explicit split with the user: **Batch A** (PDF generation
+  + storage + web UI, no email needed) now; **Batch B** (Resend-based email sending, Edge
+  Function, attachments, email history) once the user creates a Resend account and supplies an
+  API key; **Batch C** (Android parity) after the web/schema side is proven out.
+- **Inspection findings** (see DECISIONS.md's matching entry for full detail): `jspdf` was
+  already an installed but entirely unused dependency (no PDF feature existed anywhere); zero
+  email infrastructure existed (no `supabase/functions/`, no email-provider package); the
+  `attachments` Storage bucket already existed, private, generically permission-gated, and
+  unused — a direct fit for the later "additional document" attachment; `services.view`/
+  `services.edit` permission keys already existed and already gate `service_records` + the
+  `photos` bucket (migration 0024), reused as-is for certificates, no new permission key.
+  `docs/cap_logo/logo.JPG` (the real CAP logo, provided by the user this session) copied into
+  `frontend/src/assets/cap-certificate-logo.jpg` for the PDF header.
+- **Real bug found and fixed along the way**: `ServiceRecords.jsx`'s `getClient(record)` read
+  `record.machine?.client`, but `apiClient.entities.ServiceRecord.list()` has never actually
+  returned a nested machine/client join (`makeEntity()`/`listRows()` do a plain `select *`).
+  In production this silently showed "Unknown Client" and blank contact info on every service
+  record. Fixed by fetching machines+clients alongside and joining client-side (same pattern
+  already used in `Dashboard.jsx`/`InvoiceQueue.jsx`) — this was necessary for the certificate
+  to show real client data anyway, not a separate detour.
+- **New migration** `0030_service_certificates.sql` (NOT yet applied): `company_settings`
+  (singleton row, mirrors `job_card_settings`'s pattern exactly; only `company_name` seeded
+  with a real value taken from `Login.jsx`'s own branding text — address/phone/email/VAT stay
+  null until an admin fills them in via the new Settings > General panel; the PDF omits any
+  blank field's line rather than inventing one); `service_certificates` (one row per service
+  record, unique on `service_record_id`, no client-facing INSERT policy/grant at all —
+  creation only possible through the new `generate_service_certificate()` SECURITY DEFINER
+  function, which does its own `has_permission('services.edit')` check first); a real
+  Postgres sequence (`service_certificate_number_seq`) generating `CAP-SVC-{year}-{6-digit}`
+  numbers server-side, idempotent per service record (regenerating never changes the number —
+  disclosed deliberate simplification: the sequence is global, not reset to 1 each January,
+  flag if strict annual reset is actually wanted); a new private `service-certificates`
+  Storage bucket + record-scoped RLS (`can_access_service_certificate()`, exact same pattern
+  as `can_access_service_record_photo()` from migration 0024).
+- **Web implementation**: `frontend/src/lib/serviceCertificatePdf.js` (jsPDF-based builder --
+  A4, CAP branding/colors, logo, company/client/machine/service-performed sections, a
+  conservative certification statement with no unsupported claims, optional photo section
+  with client-side downscale-to-JPEG compression, real multi-page pagination via a page-break-
+  aware cursor, footer with page numbers on every page). One real jsPDF API bug caught and
+  fixed before it could ship: `doc.internal.getNumberOfPages()` doesn't exist on this
+  version's type surface, only the top-level `doc.getNumberOfPages()` does — confirmed
+  against `node_modules/jspdf/types/index.d.ts` directly, not assumed. `ServiceRecords.jsx`
+  gained a "Service Certificate" section (Generate / Preview / Download / Regenerate,
+  include-photos toggle, permission-gated on `services.view`/`services.edit`) in the existing
+  detail panel. `Settings.jsx`'s previously-empty "General" tab now hosts the new Company
+  Details panel.
+- Explicitly NOT built this pass (Batch B/C, disclosed, not silently deferred): Email Client
+  button/flow, attachment upload, email history, Settings > Email section, Edge Function,
+  Resend integration, Android certificate/email UI or data layer.
+- Verified: `npm run lint`/`typecheck` clean, `npm test` 58/58 pass (no automated coverage for
+  the new PDF builder or UI — flagged, matches this project's existing test-coverage gap),
+  `npm run build` clean, exit 0. **NOT visually verified** — no browser tool available this
+  session to actually open a generated PDF and inspect layout/pagination/photo rendering; the
+  jsPDF call shapes were checked against the library's own type definitions (catching the
+  `getNumberOfPages()` bug above), which is real but not the same as seeing the rendered
+  output. Flag this clearly before calling Batch A "done" -- render at least one real
+  certificate and eyeball it before relying on this for an actual client.
+- Migration 0030 NOT yet applied (needs the user via SQL Editor, same as every prior
+  migration) -- none of this feature works end-to-end until it is.
+- Not committed or pushed yet.
+
+## 2026-08-17 (night, later) — Dashboard mini calendar now sourced from the same endpoint as the real /calendar page
+- User flagged (correctly): the mini "This week" calendar widget on Dashboard.jsx was built
+  from an independently-recomputed filter over raw `service_records` rows, NOT from the same
+  `/calendar/events` endpoint `CalendarPage.jsx` (the full `/calendar` page) actually uses. Two
+  separate implementations of "what's due this week" risk drifting out of sync over time (e.g.
+  if the endpoint's filtering logic changes, or a reschedule made via the full calendar's
+  "Reschedule" button doesn't get reflected identically).
+- Fixed: `Dashboard.jsx`'s `loadData()` now calls `apiClient.request('/calendar/events?...')`
+  with a 7-day (today..+6) range, the exact same call shape `CalendarPage.jsx` makes, and
+  renders the SAME event objects (`event.start`, `event.extendedProps.clientName`/
+  `machineBrand`/`machineModel`) that endpoint already builds — no separate client-side
+  filtering/deriving of "due this week" anymore.
+- "Latest services done" panel is unchanged (still sourced from `service_records` directly) —
+  that's "completed" data, not calendar/upcoming data, so it was never the thing being flagged.
+- Verified: `npm run lint`/`typecheck` clean, `npm test` 58/58 pass, `npm run build` clean.
+- Not committed yet.
+
+## 2026-08-17 (night) — Dashboard notes: "Add note" is now a popup dialog
+- Explicit request: creating a note (select a customer, type the message, press Save) should
+  be a small popup instead of the inline in-grid compose card `StickyNotes.jsx` used before.
+  Editing an existing note must keep working.
+- Implemented `NoteDialog` (shadcn `Dialog`, same primitive already used by
+  `ClientDetail.jsx`/`MachineDetail.jsx`/`ProductsServicesSettings.jsx`/`PhotoLightbox.jsx`,
+  so this isn't a new UI pattern for the app): customer picker (reuses the existing searchable
+  `ClientPicker`) + message textarea + Cancel/Save. Replaces the old inline compose card
+  entirely; "Add note" now opens this dialog instead.
+- Deliberately did NOT touch `StickyNoteCard`'s existing click-to-edit-inline behavior --
+  the request was explicit that editing must keep working, and it already did (content-only
+  edit, unaffected by this change). Editing the linked client on an existing note is still not
+  possible either way (pre-existing limitation, not introduced or fixed here) -- worth a
+  follow-up if wanted.
+- Verified: `npm run lint`/`typecheck` clean, `npm test` 58/58 pass (no coverage for this
+  component either way), `npm run build` clean, exit 0. Not live-clicked-through (no browser
+  tool this session, consistent with every other UI change tonight).
+- Not committed yet.
+
+## 2026-08-17 (evening, latest) — Register page made real (was 100% non-functional); Dashboard redesigned (mini week calendar, clickable stats, latest-services panel, full-width)
+- **Real bug found while doing what looked like a simple "link the Register page" request**:
+  `Register.jsx` called `apiClient.auth.register()`/`.verifyOtp()`/`.resendOtp()`/
+  `.loginWithProvider("google")` — NONE of these methods existed anywhere on the live
+  Supabase-backed `apiClient` (`supabaseApiClient.js`'s `auth` object only ever had
+  `me`/`logout`/`resetPasswordRequest`/`resetPassword`). Every registration attempt would have
+  thrown a TypeError immediately. This page has never worked since the 2026-08-13 Supabase
+  cutover — CLAUDE.md's own text ("New accounts are created via self-service sign-up
+  (Register.jsx)") was aspirational, not verified, until now.
+- Fixed for real: added `signUp()`/`resendSignupConfirmation()` to
+  `services/supabase/auth.js` (real `supabase.auth.signUp()`/`supabase.auth.resend()`); added
+  `register()`/`resendConfirmation()` to `SupabaseAuthContext.jsx`. `public.users`' existing
+  `handle_new_auth_user` trigger (0001_initial_schema.sql) auto-creates the profile row the
+  moment `auth.users` gets the new row, so the person appears in UserAdmin.jsx's list
+  immediately, matching the intended "select their name to assign a role" flow.
+- Rewrote `Register.jsx`: removed the fake "Continue with Google" button (no Google OAuth
+  provider is configured/verified for this Supabase project — shipping a dead button would be
+  the same class of bug this fix addresses) and the fake 6-digit-OTP entry screen (Supabase's
+  default confirmation flow is a clickable email link, not a code — an OTP UI would never
+  receive anything to type). Replaced with an honest "Check your email" state + working resend.
+- `Login.jsx`: added a "Don't have an account? Create one" link to `/register` (previously
+  completely unlinked from the live site — only reachable by typing the URL directly).
+- `UserAdmin.jsx`'s "New user?" button (`startNew()`) now opens `/register` in a **new tab**
+  rather than navigating the admin's own tab away — disclosed reasoning: `signUp()` would
+  replace the admin's own active session in that tab if this Supabase project ever has "Confirm
+  email" disabled (returns an immediate session). Not confirmed either way for this project;
+  the new-tab approach makes it moot.
+- **Dashboard redesign** (`Dashboard.jsx`), all explicitly requested:
+  - "Recent clients" panel replaced with a mini rolling 7-day calendar (today + 6 days, not
+    calendar Mon-Sun) showing per-day due-service counts + a short list, whole card links to
+    `/calendar`.
+  - "Upcoming work" panel renamed "Latest services done" — now shows the most recently
+    *completed* service records (by `service_date` descending) instead of upcoming/due ones,
+    each row showing client name + `work_performed`/`findings`/`notes` (whichever is present)
+    instead of machine+due-date. Links to `/machines/:id` (no dedicated service-record detail
+    route exists).
+  - All 4 top stat cards (Clients/Machines/Services logged/Active jobs) now clickable. Machines
+    links to `/clients` — there is no standalone Machines list page in this app (machines are
+    always browsed via their owning client); noted as a disclosed scope choice, not a new page
+    built.
+  - Removed the `max-w-7xl mx-auto` width cap (both loading skeleton and loaded content) —
+    dashboard now uses the full width `AppLayout` already provides, addressing "plenty of empty
+    space on the side."
+- Verified: `npm run lint`/`typecheck` clean, `npm test` 58/58 pass (unchanged — no test file
+  covers Dashboard/Register/Login, a real UI-test gap, see KNOWN_ISSUES.md), `npm run build`
+  clean, exit 0.
+- **NOT verified**: no live click-through test of the actual registration email flow (no browser
+  tool available this session, same disclosed gap as the pre-existing untested password-reset
+  flow — see `project_supabase_password_reset_untested` memory). Whether this Supabase project's
+  "Confirm email" setting is ON or OFF was not confirmed either way — the code handles both
+  branches, but which one actually fires for a real signup here is unverified.
+- Not committed or pushed yet.
+
+## 2026-08-17 (evening, later) — Production transactional data wiped for a full from-scratch test pass
+- Explicit user request + explicit confirmed scope (see DECISIONS.md's matching entry for full
+  detail/counts). Deleted: 659 clients, 5 machines, 5 service_records, 8 job_cards, 5
+  job_card_lines, 1 client_imports row, 3 `photos` bucket Storage objects. All confirmed 0/empty
+  after. `users` explicitly untouched — confirmed still exactly 1 row (the entire current user
+  base). Executed via a one-off `service_role`-key script, deleted immediately after use (not
+  left in the repo as a standing destructive tool). Not reversible from this session (no
+  confirmed backup/PITR access) — disclosed before running, user approved anyway.
+- **Correction minutes later**: user flagged Knowledge Base data was missed. All 5 `knowledge_*`
+  tables were already 0 rows (matches earlier finding that 0 real KB rows existed in production
+  at all), but the `documents` Storage bucket (KB-exclusive) had 1 orphaned file — purged,
+  re-verified empty. Lesson recorded in DECISIONS.md: don't narrow a "delete everything" request
+  by category judgment (e.g. "that's reference data") without asking first.
+- If starting a fresh QA/test pass next: the database is now empty of all customer/machine/
+  service/job/knowledge-base data. Confirm with the user before assuming this state is still
+  current, since a test pass will immediately start creating new records.
+
+## 2026-08-17 (evening) — User Management "Save Changes" 400 bug, round 2 (same file, one missed field)
+- User report: selecting a role in User Management and pressing "Save Changes" did not save.
+- Root cause: the SAME failure class as the 2026-08-16 `name`/`permission_overrides` bug (see
+  that session's entry below), one field short of being fully fixed. `UserAdmin.jsx`'s `edit()`
+  populates `form` from a user record that has already passed through `supabaseApiClient.js`'s
+  `withPermissionCount()` — which stamps a client-only `effective_permission_count` field onto
+  every user record (used only for the "N permissions" list badge, never a real column). `save()`
+  spreads all of `form` into the PUT body, so `effective_permission_count` rode along on every
+  save. PostgREST rejects the WHOLE update if any key doesn't match a real `public.users` column
+  (confirmed against `0001_initial_schema.sql` + `0005`/`0026`'s ALTERs — no such column exists
+  anywhere), so every single save 400'd, exactly reproducing the original bug's symptom.
+- Why the existing QA script (`supabase/scripts/qa-verify-useradmin-save-and-delete.mjs`, added
+  2026-08-16, previously reported "live-verified 12/12") didn't catch this: it hand-crafts a
+  clean, minimal PATCH payload (`{ role, is_active, effective_permissions }`) rather than
+  replicating the real contaminated shape `UserAdmin.jsx`'s `save()` actually sends. Its own
+  comment claims to send "the exact payload shape UserAdmin.jsx's save() sends" — that claim was
+  not accurate. Flagged as a real QA-script gap, not fixed this session (out of scope of the
+  reported bug; noted in KNOWN_ISSUES.md).
+- Fix: `frontend/src/api/supabaseApiClient.js`'s PUT/PATCH handler for the `users` table now also
+  strips `effective_permission_count` (the actual bug) plus `id`/`created_at`/`updated_at`
+  defensively (real columns, but never a legitimate part of an intentional edit from this form).
+  One file changed, 21 lines added, nothing removed.
+- Root cause independently confirmed twice: once directly (reading `UserAdmin.jsx` →
+  `supabaseApiClient.js` → `database.js`'s `updateRow()` → real `public.users` schema across
+  migrations 0001/0005/0026), and once via a `testing-bee` subagent doing the same trace
+  independently (no live Supabase MCP tool access was available in either this session or the
+  subagent's, despite the MCP server instructions appearing in context — flagged, not resolved).
+  Both converged on the same root cause and the same fix location.
+- Verified: `npm test` (58/58 pass), `npm run lint` (clean), `npm run typecheck` (clean),
+  `npm run build` (clean, exit 0). **Not yet live-verified against production Supabase** (no
+  MCP/live-query access this session) — a disposable-account REST script replicating the REAL
+  `UserAdmin.jsx` payload shape (including `effective_permission_count`) would be the strongest
+  follow-up confirmation, and would also give `qa-verify-useradmin-save-and-delete.mjs` the
+  accurate payload shape its comment already claims to use.
+- Not yet pushed to GitHub as of this entry — awaiting the user's go-ahead per normal workflow.
+
 ## 2026-08-17 (afternoon) — Full known-issues sweep + Priority 2/3 features (Customer Import, Clients page); pushed to GitHub, NOT yet deployed to Cloudflare
 - User gave a large combined work order: fix Priority-1 known issues (anon grants, KB photo
   expiry, Android auth migration state, QA accounts, notes denial-messaging, stale Android

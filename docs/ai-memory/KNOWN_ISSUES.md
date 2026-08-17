@@ -1,5 +1,84 @@
 # Known Issues
 
+## 2026-08-17 (night) — Service Certificate Batch A: code complete, needs migration + real visual verification
+
+**BLOCKS the feature from working at all until done**:
+1. `supabase/migrations/0030_service_certificates.sql` is NOT yet applied — needs the user via
+   the SQL Editor. Nothing in this feature (generate/preview/download/regenerate, company
+   settings) works end-to-end until it is.
+
+**Genuinely unverified, disclosed, not silently assumed working**:
+2. **No real PDF has been visually inspected.** jsPDF call shapes were checked against the
+   library's own `node_modules/jspdf/types/index.d.ts` (caught and fixed one real bug —
+   `doc.internal.getNumberOfPages()` doesn't exist, only top-level `doc.getNumberOfPages()`
+   does), but that's static verification, not the same as generating one and looking at it.
+   Generate a real certificate against a real service record (ideally one with long notes, one
+   with several photos, one with missing optional client/machine fields) and actually look at
+   the layout before trusting this for a real client.
+3. **Cross-origin photo loading for the certificate's Photos section is unverified.** Signed
+   Storage URLs are loaded into an `Image()` element with `crossOrigin="anonymous"` and drawn
+   to a canvas for downscaling — this requires Supabase Storage's response to carry a
+   permissive CORS header, which is very likely true (this is Supabase's normal behavior) but
+   was not confirmed live this session.
+4. **No automated test coverage** for `serviceCertificatePdf.js`, the new `CertificateSection`
+   UI, or `CompanySettingsPanel.jsx` — build/lint/typecheck clean only, matching this project's
+   existing pure-logic-only test coverage gap.
+5. Certificate numbering does not reset annually (disclosed simplification, see DECISIONS.md)
+   — flag if strict `CAP-SVC-2026-000001` reset-every-January is actually required.
+
+**Explicitly not built yet (Batch B/C, not a gap in Batch A's own scope)**:
+6. No email sending, no attachment upload, no email history, no Settings > Email section — all
+   blocked on the user creating a Resend account and providing an API key.
+7. No Android certificate/email UI or data-layer work at all yet.
+
+## 2026-08-17 (evening, latest) — Register page was 100% non-functional, now fixed; Dashboard redesigned — see SESSION_LOG.md
+
+**RESOLVED (build-verified, NOT live-verified)**: `Register.jsx` called `apiClient.auth`
+methods (`register`/`verifyOtp`/`resendOtp`/`loginWithProvider`) that never existed on the live
+Supabase `apiClient` — self-service registration has been completely broken since the
+2026-08-13 Supabase cutover, not just "unlinked." Fixed with real `supabase.auth.signUp()`
+plumbing; fake Google button and fake OTP-code UI removed (neither could have worked). Full
+detail in SESSION_LOG.md.
+
+**STILL OPEN / genuinely unverified**:
+1. **No live click-through test of registration** — whether a real confirmation email actually
+   arrives, and whether this Supabase project's "Confirm email" setting is ON or OFF, was not
+   confirmed (no browser tool, no dashboard/MCP access this session). Code handles both
+   branches; only a real signup attempt with a real inbox would confirm which one fires. Same
+   category of gap as the pre-existing untested password-reset flow.
+2. **No standalone Machines list page exists** — Dashboard's new clickable "Machines" stat card
+   links to `/clients` (the real browse-in point) instead, since machines are always viewed
+   in the context of their owning client in this app. Not a bug, a disclosed scope choice —
+   flag if a dedicated Machines list page is ever wanted.
+3. **No test coverage for Dashboard/Register/Login/UserAdmin** — this project's only automated
+   tests are pure-logic (`customerImport`/`recordPhotoPath`); none of today's changes have any
+   automated regression coverage, only lint/typecheck/build verification.
+
+## 2026-08-17 (evening) — User Management Save Changes 400, round 2 — see SESSION_LOG.md
+
+**RESOLVED (build-verified, NOT yet live-verified against production Supabase)**: `UserAdmin.jsx`
+save() sent a client-only `effective_permission_count` field (stamped on every user record by
+`withPermissionCount()` for the list-badge UI) straight through to the `public.users` PUT —
+PostgREST rejects the whole update on any unknown column, so every save 400'd. Same failure class
+as the 2026-08-16 `name`/`permission_overrides` bug, one field the original fix missed. Fixed in
+`supabaseApiClient.js`'s PUT/PATCH handler (strips `effective_permission_count`/`id`/
+`created_at`/`updated_at` for the `users` table now). `npm test`/`lint`/`typecheck`/`build` all
+clean. Full detail in SESSION_LOG.md.
+
+**NEW, genuinely open gap found while investigating the above**: `supabase/scripts/qa-verify-
+useradmin-save-and-delete.mjs` (2026-08-16) claims in its own header comment to send "the exact
+payload shape UserAdmin.jsx's save() sends," but actually hand-crafts a clean, minimal payload —
+which is why it reported "live-verified 12/12" while the real UI-driven save was still broken.
+Not fixed this session (separate from the reported bug). Should be updated to replicate the real
+contaminated `form`-spread shape (including `effective_permission_count`) so it can catch this
+class of bug in the future instead of passing around it.
+
+**No Supabase MCP tool access this session** (Queen Bee's own tool list, and independently a
+`testing-bee` subagent's) despite MCP server instructions for it appearing in context — could not
+query live schema/logs/advisors to confirm this fix against production directly; confirmed via
+repository code trace only (two independent traces, same conclusion). Worth checking why MCP
+tools aren't actually present next session if live Supabase queries are needed again.
+
 ## 2026-08-17 (afternoon) full sweep — see SESSION_LOG.md for full detail. Summary below.
 
 **RESOLVED this session** (fixed and verified, no action needed):
@@ -15,11 +94,21 @@
 - Repo hygiene: 4 confirmed-junk/dead files+directories removed, `AGENTS.md`/
   `docs/android/ANDROID_SUPABASE_MIGRATION.md` staleness corrected.
 
+**RESOLVED 2026-08-17 (evening)**: `supabase/migrations/0029_knowledge_base_permanent_file_paths.sql`
+is confirmed APPLIED to production. Verified read-only (no rows created) by calling both of its
+new RPC functions (`can_access_knowledge_media`/`can_access_knowledge_document`) via the
+service_role key from `supabase/.env` — both exist and are callable (previously would have
+errored `PGRST202`/"schema cache" if not applied). The migration file's own header still says
+"NOT YET APPLIED" as a stale artifact of when it was written — that comment is now incorrect and
+should be corrected the next time this file is touched, but the file itself was not edited here to
+avoid mixing an unrelated doc-only change into this verification. `supabase/scripts/qa-verify-
+kb-permanent-paths.mjs` (the full live write/cleanup test) was NOT run this check — this was a
+lighter, non-destructive existence check only, sufficient to answer "is it applied" without
+creating throwaway data. Run the full QA script if end-to-end behavior (permanent path storage +
+cross-user signed URL) needs re-confirming.
+
 **NEEDS THE USER — not something code alone can finish**:
-1. **Apply `supabase/migrations/0029_knowledge_base_permanent_file_paths.sql`** via the SQL
-   Editor (fixes the KB photo/document 7-day-expiry bug + a cross-user bucket-RLS gap; 0 real
-   rows exist today, so this is purely additive, no data risk). Code is done, waiting on this.
-2. **Android has no password-recovery path at all** — no "Forgot password?" UI, no deep-link/
+1. **Android has no password-recovery path at all** — no "Forgot password?" UI, no deep-link/
    App-Link capability, so a Supabase recovery email can never open the app even if one existed.
    A cheap interim (a link that opens the web `/forgot-password` page in a browser) is real,
    scoped work, not yet built — needs a decision on whether it's wanted before building it.
