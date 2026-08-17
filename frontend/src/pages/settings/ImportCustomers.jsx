@@ -9,6 +9,13 @@ import {
 import { Upload, FileSpreadsheet, ArrowRight, CheckCircle2, AlertTriangle, History, RotateCcw, Download } from "lucide-react";
 import { APP_FIELDS, guessMapping, buildPreview, executeImportRows } from "@/lib/customerImport";
 
+const RESULT_META = {
+  success: { label: "Imported", className: "bg-emerald-500/15 text-emerald-500" },
+  updated: { label: "Updated", className: "bg-blue-500/15 text-blue-500" },
+  skipped: { label: "Skipped", className: "bg-secondary text-muted-foreground" },
+  failed: { label: "Failed", className: "bg-destructive/15 text-destructive" },
+};
+
 const STEPS = ["Upload", "Map Columns", "Preview", "Import"];
 
 const STATUS_META = {
@@ -179,12 +186,17 @@ export default function ImportCustomers() {
       console.error("Failed to record import history row:", e);
     }
 
+    const processed = counts.success + counts.updated + counts.skipped + counts.failed;
+    const successRate = processed > 0 ? Number((((counts.success + counts.updated) / processed) * 100).toFixed(1)) : 0;
+
     setResult({
       imported: counts.success,
       updated: counts.updated,
       skipped: counts.skipped,
       failed: counts.failed,
       duplicates: duplicateSignals,
+      processed,
+      successRate,
       summary,
     });
     setStep(3);
@@ -207,11 +219,35 @@ export default function ImportCustomers() {
       "Customer": row.normalized.company_name || "(no name)",
       "Action Attempted": decisionFor(row),
       "Match Type": row.status,
+      "Failure Source": rowResults[row.index]?.source || "Unknown",
       "Error": rowResults[row.index]?.error || "Unknown error",
+      "Detail": rowResults[row.index]?.sourceDetail || "",
     })));
     const book = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(book, sheet, "Import Errors");
     XLSX.writeFile(book, `import-errors-${new Date().toISOString().slice(0, 10)}.csv`, { bookType: "csv" });
+  };
+
+  // Full per-row log (every row, not just failures) -- per explicit instruction: "The user
+  // specifically needs to know what was imported and what wasn't." The in-app table below
+  // covers this too; this is the downloadable/shareable equivalent.
+  const downloadFullLog = () => {
+    if (preview.rows.length === 0) return;
+    const sheet = XLSX.utils.json_to_sheet(preview.rows.map((row) => {
+      const outcome = rowResults[row.index];
+      return {
+        "Row": row.index + 1,
+        "Client": row.normalized.company_name || "(no name)",
+        "Match Type": STATUS_META[row.status]?.label || row.status,
+        "Result": outcome ? (RESULT_META[outcome.status]?.label || outcome.status) : "Not processed",
+        "Reason": row.errors?.join("; ") || row.reasons?.join("; ") || "",
+        "Failure Source": outcome?.source || "",
+        "Error Detail": outcome?.error || "",
+      };
+    }));
+    const book = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(book, sheet, "Import Log");
+    XLSX.writeFile(book, `import-log-${new Date().toISOString().slice(0, 10)}.csv`, { bookType: "csv" });
   };
 
   const reset = () => {
@@ -378,29 +414,83 @@ export default function ImportCustomers() {
       )}
 
       {step === 3 && result && (
-        <div className="text-center py-10 bg-card border border-border rounded-xl">
-          <CheckCircle2 className={`w-10 h-10 mx-auto mb-3 ${failedCount > 0 ? "text-amber-500" : "text-emerald-500"}`} />
-          <p className="text-foreground font-medium">{failedCount > 0 ? "Import finished with some failures" : "Import complete"}</p>
-          <p className="text-sm text-muted-foreground mt-1">
-            {result.imported} customer{result.imported !== 1 ? "s" : ""} imported ·{" "}
-            {result.updated} updated ·{" "}
-            {result.duplicates} flagged as duplicate · {result.skipped} skipped
-            {failedCount > 0 && <> · <span className="text-destructive font-medium">{failedCount} failed</span></>}
-          </p>
+        <div className="py-8 bg-card border border-border rounded-xl px-4 sm:px-6">
+          <div className="text-center">
+            <CheckCircle2 className={`w-10 h-10 mx-auto mb-3 ${failedCount > 0 ? "text-amber-500" : "text-emerald-500"}`} />
+            <p className="text-foreground font-medium">{failedCount > 0 ? "Import finished with some failures" : "Import complete"}</p>
+            <p className="text-sm text-muted-foreground mt-1">
+              {result.imported} customer{result.imported !== 1 ? "s" : ""} imported ·{" "}
+              {result.updated} updated ·{" "}
+              {result.duplicates} flagged as duplicate · {result.skipped} skipped
+              {failedCount > 0 && <> · <span className="text-destructive font-medium">{failedCount} failed</span></>}
+            </p>
+            {result.processed > 0 && (
+              <p className="text-xs text-muted-foreground mt-1">
+                Success rate: <span className="font-medium text-foreground">{result.successRate}%</span> ({result.imported + result.updated} of {result.processed} processed rows)
+              </p>
+            )}
+          </div>
 
           {failedCount > 0 && (
-            <div className="mt-5 mx-auto max-w-lg text-left bg-destructive/5 border border-destructive/20 rounded-xl p-3">
-              <p className="text-xs font-medium text-foreground mb-2">Failed rows</p>
-              <div className="max-h-40 overflow-y-auto space-y-1.5">
-                {preview.rows.filter((row) => rowResults[row.index]?.status === "failed").map((row) => (
-                  <div key={row.index} className="text-xs text-muted-foreground">
-                    <span className="text-foreground font-medium">Row {row.index + 1} — {row.normalized.company_name || "(no name)"}</span>
-                    <br />{rowResults[row.index]?.error}
-                  </div>
-                ))}
+            <div className="mt-5 mx-auto max-w-2xl text-left bg-destructive/5 border border-destructive/20 rounded-xl p-3">
+              <p className="text-xs font-medium text-foreground mb-2">Failed rows — diagnosed by where the failure originated</p>
+              <div className="max-h-52 overflow-y-auto space-y-2">
+                {preview.rows.filter((row) => rowResults[row.index]?.status === "failed").map((row) => {
+                  const outcome = rowResults[row.index];
+                  return (
+                    <div key={row.index} className="text-xs text-muted-foreground border-t border-destructive/10 pt-2 first:border-t-0 first:pt-0">
+                      <span className="text-foreground font-medium">Row {row.index + 1} — {row.normalized.company_name || "(no name)"}</span>
+                      <span className="ml-2 px-1.5 py-0.5 rounded bg-destructive/15 text-destructive text-[10px] font-medium uppercase tracking-wide">
+                        Source: {outcome?.source || "Unknown"}
+                      </span>
+                      <br />{outcome?.error}
+                      {outcome?.sourceDetail && <><br /><span className="italic">{outcome.sourceDetail}</span></>}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
+
+          {/* Full per-row log -- every row, not just failures (per explicit instruction: "The
+              user specifically needs to know what was imported and what wasn't"). */}
+          <div className="mt-5 mx-auto max-w-2xl text-left">
+            <p className="text-xs font-medium text-foreground mb-2">Import log</p>
+            <div className="bg-secondary/30 border border-border rounded-xl max-h-64 overflow-y-auto">
+              <table className="w-full text-xs">
+                <thead className="sticky top-0 bg-secondary/90 backdrop-blur">
+                  <tr>
+                    <th className="text-left px-3 py-1.5 font-medium text-muted-foreground">Row</th>
+                    <th className="text-left px-3 py-1.5 font-medium text-muted-foreground">Client</th>
+                    <th className="text-left px-3 py-1.5 font-medium text-muted-foreground">Result</th>
+                    <th className="text-left px-3 py-1.5 font-medium text-muted-foreground">Reason</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {preview.rows.map((row) => {
+                    const outcome = rowResults[row.index];
+                    const meta = outcome ? RESULT_META[outcome.status] : null;
+                    return (
+                      <tr key={row.index} className="border-t border-border">
+                        <td className="px-3 py-1.5 text-muted-foreground">{row.index + 1}</td>
+                        <td className="px-3 py-1.5 text-foreground">{row.normalized.company_name || "(no name)"}</td>
+                        <td className="px-3 py-1.5">
+                          {meta ? (
+                            <span className={`px-2 py-0.5 rounded-full font-medium ${meta.className}`}>{meta.label}</span>
+                          ) : (
+                            <span className="text-muted-foreground">Not processed</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-1.5 text-muted-foreground">
+                          {outcome?.status === "failed" ? outcome.error : (row.errors?.join(", ") || row.reasons?.join(", ") || "—")}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
 
           <div className="flex flex-wrap justify-center gap-2 mt-5">
             {failedCount > 0 && (
@@ -413,6 +503,9 @@ export default function ImportCustomers() {
                 </Button>
               </>
             )}
+            <Button variant="outline" className="gap-1.5" onClick={downloadFullLog}>
+              <Download className="w-3.5 h-3.5" /> Download Full Log
+            </Button>
             <Button variant="outline" onClick={reset}>Import Another File</Button>
           </div>
         </div>

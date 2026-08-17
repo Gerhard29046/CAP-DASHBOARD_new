@@ -367,6 +367,42 @@ export function buildPreview(rawRows, mapping, existingClients, extraColumnsToKe
 }
 
 /**
+ * Diagnoses WHERE an import-row failure actually originated (2026-08-17, per explicit
+ * instruction: "do not assume the import file is bad" / "the final error should make this
+ * distinction obvious"). Inspects the real shape errors take in this codebase:
+ *   - Postgres/PostgREST errors thrown by frontend/src/services/supabase/database.js are the
+ *     raw supabase-js PostgrestError object -- `{ message, details, hint, code }` -- where
+ *     `code` is either a genuine Postgres SQLSTATE (e.g. "23505" unique_violation, "23503"
+ *     foreign_key_violation, "42501" insufficient_privilege -- RLS) or a PostgREST-specific
+ *     code (e.g. "PGRST204" unknown column / stale schema cache, "PGRST301" JWT/auth).
+ *   - A network-level failure (offline, timeout, CORS) surfaces as a plain JS TypeError with
+ *     no `.code` at all, message usually containing "fetch" or "network".
+ *   - A bug in this file's own normalization/validation/matching logic would throw a plain JS
+ *     Error with no `.code` and a message that does NOT match any of the above shapes -- these
+ *     are grouped under "Frontend Importer" since they didn't come from Supabase at all.
+ * Never guesses "Source File" as the origin -- this function has no way to know the file was
+ * malformed (that's caught earlier, at validateRow(), before a row ever reaches
+ * executeImportRows() at all, and is reported as `status: "invalid"`, not a failure here).
+ */
+export function classifyImportError(error) {
+  const code = error?.code;
+  const message = String(error?.message || error || "");
+
+  if (code === "23505") return { source: "Database", detail: "Duplicate key violates a unique constraint (e.g. legacy_pastel_customer_code already exists on another record)." };
+  if (code === "23503") return { source: "Database", detail: "Foreign key violation -- this row references something that doesn't exist." };
+  if (code === "23514") return { source: "Database", detail: "Check constraint violation -- a field value is outside what the database allows." };
+  if (code === "42501") return { source: "Database", detail: "Row Level Security rejected this write -- the signed-in user's role/permissions don't allow it." };
+  if (code === "PGRST204") return { source: "Supabase/API", detail: "Unknown column referenced -- the app's field mapping doesn't match the current database schema (contact support, this is not a data problem)." };
+  if (code === "PGRST301" || code === "401" || code === 401) return { source: "Supabase/API", detail: "Authentication error -- the session may have expired mid-import." };
+  if (code === "429" || code === 429) return { source: "Supabase/API", detail: "Rate limited by the API -- try retrying failed rows after a short wait." };
+  if (typeof code === "string" && /^PGRST/.test(code)) return { source: "Supabase/API", detail: message || "PostgREST rejected this request." };
+  if (typeof code === "string" && /^\d{5}$/.test(code)) return { source: "Database", detail: message || "The database rejected this write." };
+  if (/failed to fetch|network|timeout|ECONNRESET|ETIMEDOUT/i.test(message)) return { source: "Supabase/API", detail: "Network/timeout error reaching the API -- try retrying failed rows." };
+  if (!code && message) return { source: "Frontend Importer", detail: message };
+  return { source: "Unknown", detail: message || "No further detail available." };
+}
+
+/**
  * Executes the import for a set of preview rows (from `buildPreview`), one row at a time,
  * with EACH ROW'S SUCCESS OR FAILURE FULLY ISOLATED from every other row.
  *
@@ -394,7 +430,11 @@ export function buildPreview(rawRows, mapping, existingClients, extraColumnsToKe
  *   the (caller-refreshed) `existingClients` list before executing, so a retry correctly
  *   targets anything a previous attempt already created/changed instead of using a
  *   preview-time-stale id (idempotency safety -- prevents a retry from creating duplicates).
- * @returns { [rowIndex]: { status: "success"|"updated"|"skipped"|"failed", clientId?, error? } }
+ * @returns { [rowIndex]: { status: "success"|"updated"|"skipped"|"failed", clientId?, error?,
+ *   errorCode?, source?, sourceDetail? } } -- `source`/`sourceDetail` (added 2026-08-17, see
+ *   classifyImportError() above) are only present on `"failed"` results, and identify WHERE
+ *   the failure originated ("Database" | "Supabase/API" | "Frontend Importer" | "Unknown") so
+ *   the UI never has to show a bare "Import failed." with no further explanation.
  */
 export async function executeImportRows(rows, getDecision, existingClients, deps, reclassifyOnRetry = false) {
   const results = {};
@@ -415,6 +455,7 @@ export async function executeImportRows(rows, getDecision, existingClients, deps
           results[row.index] = {
             status: "failed",
             error: "This row could not be matched to an existing customer to update.",
+            source: "Frontend Importer",
           };
           continue;
         }
@@ -426,6 +467,7 @@ export async function executeImportRows(rows, getDecision, existingClients, deps
           results[row.index] = {
             status: "failed",
             error: `Internal error: expected a database ID, got "${targetId}". This row was not sent to the database.`,
+            source: "Frontend Importer",
           };
           continue;
         }
@@ -449,10 +491,13 @@ export async function executeImportRows(rows, getDecision, existingClients, deps
         results[row.index] = { status: "success", clientId: created?.id };
       }
     } catch (e) {
+      const diagnosis = classifyImportError(e);
       results[row.index] = {
         status: "failed",
         error: e.message || "Unknown error",
         errorCode: e.code || null,
+        source: diagnosis.source,
+        sourceDetail: diagnosis.detail,
       };
     }
   }

@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   guessMapping, normalizeRow, normalizeEmail, normalizePhone, validateRow, classifyRow, buildPreview,
-  buildUpdatePayload, findFilePoolDuplicate, isValidUuid, executeImportRows,
+  buildUpdatePayload, findFilePoolDuplicate, isValidUuid, executeImportRows, classifyImportError,
 } from "../src/lib/customerImport.js";
 
 test("guessMapping pre-selects obvious header matches", () => {
@@ -401,4 +401,153 @@ test("executeImportRows: a duplicate_in_file row with no existingClientId fails 
   const results = await executeImportRows([row], () => "update", [], deps);
   assert.equal(results[0].status, "failed");
   assert.match(results[0].error, /could not be matched/);
+});
+
+// --- 2026-08-17 additions: failure-source diagnosis + large-import/partial-success accuracy ---
+
+test("classifyImportError: unique constraint violation (23505) diagnosed as Database", () => {
+  const result = classifyImportError(Object.assign(new Error("duplicate key value violates unique constraint"), { code: "23505" }));
+  assert.equal(result.source, "Database");
+  assert.match(result.detail, /unique constraint/i);
+});
+
+test("classifyImportError: RLS rejection (42501) diagnosed as Database, mentions permissions", () => {
+  const result = classifyImportError(Object.assign(new Error("new row violates row-level security policy"), { code: "42501" }));
+  assert.equal(result.source, "Database");
+  assert.match(result.detail, /row level security|permission/i);
+});
+
+test("classifyImportError: foreign key violation (23503) diagnosed as Database", () => {
+  const result = classifyImportError(Object.assign(new Error("insert or update violates foreign key constraint"), { code: "23503" }));
+  assert.equal(result.source, "Database");
+});
+
+test("classifyImportError: PostgREST schema-cache error (PGRST204) diagnosed as Supabase/API, not blamed on the source file", () => {
+  const result = classifyImportError(Object.assign(new Error("Could not find the column"), { code: "PGRST204" }));
+  assert.equal(result.source, "Supabase/API");
+});
+
+test("classifyImportError: network/timeout error (no code, fetch-shaped message) diagnosed as Supabase/API", () => {
+  const result = classifyImportError(new TypeError("Failed to fetch"));
+  assert.equal(result.source, "Supabase/API");
+});
+
+test("classifyImportError: a plain frontend bug (no code, arbitrary message) diagnosed as Frontend Importer, not Database", () => {
+  const result = classifyImportError(new Error("Cannot read properties of undefined (reading 'foo')"));
+  assert.equal(result.source, "Frontend Importer");
+});
+
+test("classifyImportError never blames Source File -- that classification only ever happens at validateRow(), before a row reaches executeImportRows", () => {
+  const samples = [
+    Object.assign(new Error("x"), { code: "23505" }),
+    Object.assign(new Error("x"), { code: "23503" }),
+    Object.assign(new Error("x"), { code: "23514" }),
+    Object.assign(new Error("x"), { code: "42501" }),
+    Object.assign(new Error("x"), { code: "PGRST204" }),
+    Object.assign(new Error("x"), { code: "PGRST301" }),
+    new TypeError("Failed to fetch"),
+    new Error("some frontend bug"),
+    {},
+  ];
+  for (const sample of samples) {
+    assert.notEqual(classifyImportError(sample).source, "Source File");
+  }
+});
+
+test("executeImportRows: a Database-coded failure carries source/sourceDetail on the result, not just a raw message", async () => {
+  const rows = [fakeRow(0)];
+  const deps = {
+    createClient: async () => { throw Object.assign(new Error("duplicate key value violates unique constraint on legacy_pastel_customer_code"), { code: "23505" }); },
+    updateClient: async () => {},
+  };
+  const results = await executeImportRows(rows, () => "import", [], deps);
+  assert.equal(results[0].status, "failed");
+  assert.equal(results[0].source, "Database");
+  assert.match(results[0].sourceDetail, /unique constraint/i);
+});
+
+test("executeImportRows: an RLS-denied failure carries source Database and mentions permissions, distinct from a data-format failure", async () => {
+  const rows = [fakeRow(0)];
+  const deps = {
+    createClient: async () => { throw Object.assign(new Error("new row violates row-level security policy for table clients"), { code: "42501" }); },
+    updateClient: async () => {},
+  };
+  const results = await executeImportRows(rows, () => "import", [], deps);
+  assert.equal(results[0].source, "Database");
+  assert.match(results[0].sourceDetail, /permission/i);
+});
+
+test("LARGE IMPORT: 1000 rows, every 7th row fails -- batch completes, exact counts, no row silently dropped", async () => {
+  const rows = Array.from({ length: 1000 }, (_, i) => fakeRow(i));
+  const deps = {
+    createClient: async (fields) => {
+      const i = Number(fields.company_name.replace("Customer ", ""));
+      if (i % 7 === 0) throw Object.assign(new Error("simulated failure"), { code: "23505" });
+      return { id: `uuid-${i}` };
+    },
+    updateClient: async () => {},
+  };
+  const results = await executeImportRows(rows, () => "import", [], deps);
+  assert.equal(Object.keys(results).length, 1000);
+  const succeeded = Object.values(results).filter((r) => r.status === "success").length;
+  const failed = Object.values(results).filter((r) => r.status === "failed").length;
+  const expectedFailed = Array.from({ length: 1000 }, (_, i) => i).filter((i) => i % 7 === 0).length;
+  assert.equal(failed, expectedFailed);
+  assert.equal(succeeded, 1000 - expectedFailed);
+  assert.equal(succeeded + failed, 1000);
+  assert.equal(results[0].status, "failed");
+  assert.equal(results[0].source, "Database");
+  assert.equal(results[1].status, "success");
+});
+
+test("PARTIAL SUCCESS / summary accuracy: mixed new + update + skip + fail, summary counts match rowResults exactly", async () => {
+  const existingClients = [{ id: "dddddddd-dddd-dddd-dddd-dddddddddddd", notes: "" }];
+  const rows = [
+    fakeRow(0, { status: "new" }),
+    fakeRow(1, { status: "new" }),
+    fakeRow(2, { status: "exact_match", existingClientId: existingClients[0].id }),
+    fakeRow(3, { status: "possible_duplicate", existingClientId: null }),
+    fakeRow(4, { status: "new" }),
+  ];
+  const decisionFor = (row) => (row.index === 3 ? "skip" : row.index === 2 ? "update" : "import");
+  const deps = {
+    createClient: async (fields) => {
+      if (fields.company_name === "Customer 4") throw Object.assign(new Error("simulated failure"), { code: "23505" });
+      return { id: `uuid-${fields.company_name}` };
+    },
+    updateClient: async () => {},
+  };
+  const results = await executeImportRows(rows, decisionFor, existingClients, deps);
+  const counts = Object.values(results).reduce((acc, r) => { acc[r.status] = (acc[r.status] || 0) + 1; return acc; }, {});
+  assert.equal(counts.success, 2);
+  assert.equal(counts.updated, 1);
+  assert.equal(counts.skipped, 1);
+  assert.equal(counts.failed, 1);
+  assert.equal(Object.keys(results).length, 5);
+  assert.equal(results[0].status, "success");
+  assert.equal(results[1].status, "success");
+  assert.equal(results[2].status, "updated");
+  assert.equal(results[2].clientId, existingClients[0].id);
+  assert.equal(results[3].status, "skipped");
+  assert.equal(results[4].status, "failed");
+  assert.equal(results[4].source, "Database");
+});
+
+test("a failure does not roll back or affect unrelated already-succeeded rows (no implicit transaction)", async () => {
+  const rows = [fakeRow(0), fakeRow(1), fakeRow(2)];
+  const createdIds = [];
+  const deps = {
+    createClient: async (fields) => {
+      if (fields.company_name === "Customer 1") throw new Error("simulated failure");
+      createdIds.push(fields.company_name);
+      return { id: `uuid-${fields.company_name}` };
+    },
+    updateClient: async () => {},
+  };
+  const results = await executeImportRows(rows, () => "import", [], deps);
+  assert.equal(results[0].status, "success");
+  assert.ok(createdIds.includes("Customer 0"));
+  assert.equal(results[1].status, "failed");
+  assert.equal(results[2].status, "success");
+  assert.ok(createdIds.includes("Customer 2"));
 });
