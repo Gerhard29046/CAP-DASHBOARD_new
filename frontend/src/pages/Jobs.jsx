@@ -50,6 +50,14 @@ function formatDate(date) {
   }
 }
 
+// Keep the visible fallback job number short when a newly-created job card has
+// not received its persisted job_number yet. The UUID remains the internal ID.
+function getDisplayJobNumber(job) {
+  if (job?.job_number) return job.job_number;
+  if (job?.id) return `JOB-${String(job.id).slice(-6).toUpperCase()}`;
+  return "JOB-UNKNOWN";
+}
+
 export default function Jobs() {
   const navigate = useNavigate();
   const [jobs, setJobs] = useState([]);
@@ -228,10 +236,12 @@ export default function Jobs() {
                         }}
                         tabIndex={0}
                         role="link"
-                        aria-label={`Open job ${job.job_number || job.id}`}
+                        aria-label={`Open job ${getDisplayJobNumber(job)}`}
                         className={`cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset ${selectedJob?.id === job.id ? "bg-primary/5" : ""}`}
                       >
-                        <TableCell className="pl-4 font-medium text-foreground py-3.5">{job.job_number || `JOB-${job.id}`}</TableCell>
+                        <TableCell className="pl-4 font-medium text-foreground py-3.5">
+                          {getDisplayJobNumber(job)}
+                        </TableCell>
                         <TableCell>{job.client?.company_name || job.client?.name || "Unknown Client"}</TableCell>
                         <TableCell>
                           <p className="text-foreground">{[job.machine?.brand, job.machine?.model].filter(Boolean).join(" ") || "Unknown Machine"}</p>
@@ -260,12 +270,12 @@ export default function Jobs() {
                   <button
                     key={job.id}
                     onClick={() => navigate(`/job-cards/${job.id}`)}
-                    aria-label={`Open ${job.job_number || `job ${job.id}`}`}
+                    aria-label={`Open ${getDisplayJobNumber(job)}`}
                     className="w-full flex items-start gap-3 p-4 text-left active:bg-secondary/60 transition-colors duration-150"
                   >
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between gap-2">
-                        <span className="font-medium text-foreground text-sm">{job.job_number || `JOB-${job.id}`}</span>
+                        <span className="font-medium text-foreground text-sm">{getDisplayJobNumber(job)}</span>
                         <StatusBadge status={job.status} />
                       </div>
                       <p className="text-sm text-muted-foreground mt-1 truncate">{job.client?.company_name || job.client?.name || "Unknown Client"}</p>
@@ -312,7 +322,7 @@ function JobDetailsPanel({ job, onClose, onOpen, onEdit, onComplete, updating })
     <div className="bg-card border border-border rounded-xl overflow-hidden">
       <div className="flex items-start justify-between p-5 border-b border-border">
         <div>
-          <h2 className="text-lg font-heading font-bold text-foreground">{job.job_number || `JOB-${job.id}`}</h2>
+          <h2 className="text-lg font-heading font-bold text-foreground">{getDisplayJobNumber(job)}</h2>
           <div className="mt-2"><StatusBadge status={job.status} /></div>
         </div>
         <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors">

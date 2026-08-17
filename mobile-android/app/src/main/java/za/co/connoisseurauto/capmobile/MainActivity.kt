@@ -1,7 +1,10 @@
 package com.CAPDATABASE.capdatabase
 
+import android.content.ActivityNotFoundException
+import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -651,6 +654,7 @@ private fun routeIdForLabel(label: String): String = when (label) {
     "Settings" -> CapNavRoute.Settings.route
     CapNavRoute.SettingsJobCards.label -> CapNavRoute.SettingsJobCards.route
     CapNavRoute.SettingsCatalogue.label -> CapNavRoute.SettingsCatalogue.route
+    CapNavRoute.AppSettings.label -> CapNavRoute.AppSettings.route
     else -> CapNavRoute.Home.route
 }
 
@@ -680,6 +684,7 @@ private fun labelForRouteId(routeId: String?): String = when (routeId) {
     CapNavRoute.Settings.route -> "Settings"
     CapNavRoute.SettingsJobCards.route -> CapNavRoute.SettingsJobCards.label
     CapNavRoute.SettingsCatalogue.route -> CapNavRoute.SettingsCatalogue.label
+    CapNavRoute.AppSettings.route -> CapNavRoute.AppSettings.label
     else -> "Dashboard"
 }
 
@@ -811,6 +816,9 @@ fun AdaptiveShell(vm: MainViewModel) {
                 composable(CapNavRoute.SettingsCatalogue.route) {
                     ScreenContent(CapNavRoute.SettingsCatalogue.label, vm, user, navigate, openRoute)
                 }
+                composable(CapNavRoute.AppSettings.route) {
+                    ScreenContent(CapNavRoute.AppSettings.label, vm, user, navigate, openRoute)
+                }
 
                 composable(CapNavRoute.ClientDetail.route) { entry ->
                     DetailContent(CapNavRoute.ClientDetail, entry.arguments?.getString(CapNavRoute.ClientDetail.ARG), vm, user, openRoute, onBack = { navController.popBackStack() })
@@ -845,6 +853,16 @@ private fun ScreenContent(
     jobsFilter: String = ""
 ) {
     val data = vm.recordsState
+
+    // App Settings reads no record collection at all (theme preference + two deep links into
+    // Android's own settings), so it is dispatched BEFORE the shared loading/error gate below.
+    // Otherwise a cold start or a backend outage would hide this device's own theme and
+    // notification controls behind a spinner or an error state they have nothing to do with.
+    if (selected == CapNavRoute.AppSettings.label) {
+        AppSettingsScreen()
+        return
+    }
+
     if (data.loading) {
         CapLoadingState()
         return
@@ -878,6 +896,11 @@ private fun ScreenContent(
         CapNavRoute.SettingsCatalogue.label -> RequireSettingsAccess(user) {
             ProductsServicesScreen(data.collection("products_services"), vm::save)
         }
+        // CapNavRoute.AppSettings is handled above, before the loading/error gate — and
+        // deliberately NOT wrapped in RequireSettingsAccess: it holds per-device preferences and
+        // deep links into Android's own settings, none of which touch business data, so gating it
+        // on `settings.access` would lock most users out of their own phone's theme and
+        // notification controls for no security benefit.
         "LogNewService" -> LogNewServiceScreen(data.collection("clients"), data.collection("machines"), vm::save, vm.actionMessage, vm, { onNavigate("Dashboard") }) { onNavigate("Dashboard") }
         "BookIn" -> BookInScreen(data.collection("clients"), data.collection("machines"), data.collection("job_cards"), vm::save, vm.actionMessage, vm, onOpen, { onNavigate("Dashboard") }) { onNavigate("Dashboard") }
     }
@@ -1003,11 +1026,25 @@ private fun DetailContent(
 }
 
 /**
- * Phase 12 "More" screen: everything that used to live in the old dropdown-menu / NavigationRail
- * now lives here, still gated by the exact same permission keys `destinations` has always used.
- * "Upcoming Services" is the existing due-services screen restyled in Phase 6 (route "Calendar")
- * — there is no separate literal calendar-grid view in this app, so this is intentionally a
- * single row, not a duplicate of some other calendar feature.
+ * The "More" hub: everything that used to live in the old dropdown-menu / NavigationRail, still
+ * gated by the exact same permission keys `destinations` has always used. "Upcoming Services" is
+ * the existing due-services screen restyled in Phase 6 (route "Calendar") — there is no separate
+ * literal calendar-grid view in this app, so this is intentionally a single row, not a duplicate
+ * of some other calendar feature.
+ *
+ * Structure, revised: a screen header, then a tappable profile summary, then named sections
+ * ("Operations" / "Resources" / "App" / no header for the sign-out card). The section headers sit
+ * *inside* each card via [CapSectionHeader] rather than floating above it, so a card is never
+ * separated from its own label by the column's spacing, and a hidden section takes its header with
+ * it automatically.
+ *
+ * Two deliberate calls worth recording:
+ *  - The old standalone "Account" row is gone. The profile summary card at the top navigates to
+ *    exactly the same destination ("Account"), and two rows that open one screen is more confusing
+ *    than discoverable — the whole point of the summary card is that it is the obvious entry point.
+ *  - The business Settings row is *labelled* "Business Settings" while still navigating to the
+ *    unchanged "Settings" label, purely so it reads distinctly from the new device-level "App
+ *    Settings" row directly beneath it. No route, permission, or call site changed.
  */
 @Composable
 private fun MoreScreen(user: CapUser, onNavigate: (String) -> Unit, onLogout: () -> Unit) {
@@ -1024,63 +1061,290 @@ private fun MoreScreen(user: CapUser, onNavigate: (String) -> Unit, onLogout: ()
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(Spacing.md)
     ) {
+        CapScreenHeader(
+            title = "More",
+            subtitle = "Your profile, the rest of the workshop screens, and app settings."
+        )
+
+        MoreProfileCard(user = user, onClick = { onNavigate("Account") })
+
         if (showOperations) {
             CapCard {
+                CapSectionHeader("Operations")
                 if (user.hasPermission(permissionFor("Machines"))) {
-                    CapListItem("Machines", leading = { Icon(Icons.Outlined.PrecisionManufacturing, null) }, showNavArrow = true, onClick = { onNavigate("Machines") })
+                    CapListItem(
+                        "Machines",
+                        subtitle = "Every machine on record",
+                        leading = { Icon(Icons.Outlined.PrecisionManufacturing, null) },
+                        showNavArrow = true,
+                        onClick = { onNavigate("Machines") }
+                    )
                 }
                 if (user.hasPermission(permissionFor("Calendar"))) {
-                    CapListItem("Upcoming Services", leading = { Icon(Icons.Outlined.CalendarMonth, null) }, showNavArrow = true, onClick = { onNavigate("Calendar") })
+                    CapListItem(
+                        "Upcoming Services",
+                        subtitle = "What is due, by week or month",
+                        leading = { Icon(Icons.Outlined.CalendarMonth, null) },
+                        showNavArrow = true,
+                        onClick = { onNavigate("Calendar") }
+                    )
                 }
                 if (user.hasPermission(permissionFor("Services"))) {
-                    CapListItem("Service Records", leading = { Icon(Icons.Outlined.Build, null) }, showNavArrow = true, onClick = { onNavigate("Services") })
+                    CapListItem(
+                        "Service Records",
+                        subtitle = "Work already logged",
+                        leading = { Icon(Icons.Outlined.Build, null) },
+                        showNavArrow = true,
+                        onClick = { onNavigate("Services") }
+                    )
                 }
                 if (user.hasPermission("job_cards.create")) {
-                    CapListItem("Book In", leading = { Icon(Icons.Outlined.EventAvailable, null) }, showNavArrow = true, onClick = { onNavigate("BookIn") })
+                    CapListItem(
+                        "Book In",
+                        subtitle = "Start a new job card",
+                        leading = { Icon(Icons.Outlined.EventAvailable, null) },
+                        showNavArrow = true,
+                        onClick = { onNavigate("BookIn") }
+                    )
                 }
             }
         }
 
         if (showResources) {
             CapCard {
+                CapSectionHeader("Resources")
                 if (user.hasPermission(permissionFor("Knowledge Base"))) {
-                    CapListItem("Machine Knowledge Base", leading = { Icon(Icons.AutoMirrored.Outlined.LibraryBooks, null) }, showNavArrow = true, onClick = { onNavigate("Knowledge Base") })
+                    CapListItem(
+                        "Machine Knowledge Base",
+                        subtitle = "Specs, notes, media, and service codes",
+                        leading = { Icon(Icons.AutoMirrored.Outlined.LibraryBooks, null) },
+                        showNavArrow = true,
+                        onClick = { onNavigate("Knowledge Base") }
+                    )
                 }
                 if (user.hasPermission(permissionFor("Invoices"))) {
-                    CapListItem("Invoice Queue", leading = { Icon(Icons.AutoMirrored.Outlined.ReceiptLong, null) }, showNavArrow = true, onClick = { onNavigate("Invoices") })
+                    CapListItem(
+                        "Invoice Queue",
+                        subtitle = "Job cards ready to be invoiced",
+                        leading = { Icon(Icons.AutoMirrored.Outlined.ReceiptLong, null) },
+                        showNavArrow = true,
+                        onClick = { onNavigate("Invoices") }
+                    )
                 }
                 if (user.hasPermission(permissionFor("Users"))) {
-                    CapListItem("Users", leading = { Icon(Icons.Outlined.AdminPanelSettings, null) }, showNavArrow = true, onClick = { onNavigate("Users") })
+                    CapListItem(
+                        "Users",
+                        subtitle = "Accounts, roles, and permissions",
+                        leading = { Icon(Icons.Outlined.AdminPanelSettings, null) },
+                        showNavArrow = true,
+                        onClick = { onNavigate("Users") }
+                    )
                 }
             }
         }
 
-        // App-configuration group. Settings sits above the status row rather than in the
-        // "Resources" card above: it configures how the app behaves (and now how it looks),
-        // which is the same kind of thing as the connection/sync screen and unlike the
-        // record-browsing destinations. Hidden entirely without `settings.access`, matching how
-        // every other gated row here behaves and how the web app gates its `/settings` route.
+        // "App" group: how the app is configured, as opposed to the record-browsing destinations
+        // above. Three deliberately different things live here and are worded so they cannot be
+        // mistaken for each other — business configuration (permission-gated, shared with the
+        // website), this device's own preferences (never gated), and the live backend connection.
         CapCard {
+            CapSectionHeader("App")
             if (user.hasPermission("settings.access")) {
-                CapListItem("Settings", leading = { Icon(Icons.Outlined.Settings, null) }, showNavArrow = true, onClick = { onNavigate("Settings") })
+                CapListItem(
+                    "Business Settings",
+                    subtitle = "Job cards, products & services",
+                    leading = { Icon(Icons.Outlined.Settings, null) },
+                    showNavArrow = true,
+                    // Unchanged destination label — only the visible wording differs.
+                    onClick = { onNavigate("Settings") }
+                )
             }
-            CapListItem("Connection and Sync Status", leading = { Icon(Icons.Outlined.CloudSync, null) }, showNavArrow = true, onClick = { onNavigate("Status") })
+            CapListItem(
+                "App Settings",
+                subtitle = "Appearance, notifications, about",
+                leading = { Icon(Icons.Outlined.PhoneAndroid, null) },
+                showNavArrow = true,
+                onClick = { onNavigate(CapNavRoute.AppSettings.label) }
+            )
+            CapListItem(
+                "Connection and Sync Status",
+                subtitle = "Live backend health and connection test",
+                leading = { Icon(Icons.Outlined.CloudSync, null) },
+                showNavArrow = true,
+                onClick = { onNavigate("Status") }
+            )
         }
 
         CapCard {
-            CapListItem("Account", leading = { Icon(Icons.Outlined.Person, null) }, showNavArrow = true, onClick = { onNavigate("Account") })
             CapListItem(
                 "Logout",
+                subtitle = "Sign out of ${user.email.ifBlank { "this account" }}",
                 leading = { Icon(Icons.AutoMirrored.Outlined.Logout, null, tint = MaterialTheme.colorScheme.error) },
                 onClick = { confirmLogout = true }
             )
         }
+
+        // Breathing room under the last card so it never sits flush against the bottom nav bar.
+        Spacer(Modifier.height(Spacing.lg))
     }
 
     if (confirmLogout) {
         LogoutConfirmDialog(onDismiss = { confirmLogout = false }) {
             confirmLogout = false
             onLogout()
+        }
+    }
+}
+
+/**
+ * The profile summary at the top of "More": avatar, name, role badge, email — the whole card is one
+ * tap target onto the existing [AccountScreen]. This exists to make the profile page findable, not
+ * to duplicate it; nothing here is editable and nothing here is a second copy of account state.
+ *
+ * Every field is defended against blank data ([CapUser] fields are plain strings that can legally
+ * be empty on a freshly provisioned account) and the name/email are single-line-ellipsised so a
+ * long address can never push the badge or the nav arrow off a small phone.
+ */
+@Composable
+private fun MoreProfileCard(user: CapUser, onClick: () -> Unit) {
+    CapCard(Modifier.clickable(onClick = onClick)) {
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Spacing.md)
+        ) {
+            CapUserAvatar(initialsOf(user.name))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                Text(
+                    user.name.ifBlank { "Signed-in user" },
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                if (user.email.isNotBlank()) {
+                    Text(
+                        user.email,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                CapStatusBadge(user.role.ifBlank { "User" }, StatusTone.Info)
+            }
+            Icon(
+                Icons.AutoMirrored.Outlined.ArrowForwardIos,
+                contentDescription = null,
+                modifier = Modifier.size(14.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Text(
+            "View and edit your profile",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(top = Spacing.sm)
+        )
+    }
+}
+
+/**
+ * Device-level app settings — the counterpart to, and deliberately separate from, the business
+ * [SettingsScreen]. Nothing on this screen is business configuration, so it carries no permission
+ * gate; everything on it is real.
+ *
+ * Notifications and storage/permissions are deep links into Android's own settings rather than
+ * in-app controls. That is the honest option, not a shortcut: this app has no notification system
+ * and no cache manager of its own, so an in-app toggle or "Clear cache" button would be a control
+ * that does nothing. The OS screens are the real ones and they are always present from API 26.
+ */
+@Composable
+private fun AppSettingsScreen() {
+    val context = LocalContext.current
+
+    // Both intents target settings screens the platform guarantees exist, so a failure here is a
+    // genuinely exceptional OEM edge case rather than an expected branch — caught so that it can
+    // never take the app down, and left visible via the surfaced message rather than swallowed.
+    var launchError by remember { mutableStateOf<String?>(null) }
+    fun open(intent: Intent) {
+        launchError = null
+        try {
+            context.startActivity(intent)
+        } catch (_: ActivityNotFoundException) {
+            launchError = "This device does not expose that Android settings screen."
+        }
+    }
+
+    LazyColumn(
+        Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(Spacing.md),
+        contentPadding = PaddingValues(bottom = 84.dp)
+    ) {
+        item {
+            CapScreenHeader(
+                title = "App Settings",
+                subtitle = "Personalize CAP Mobile on this device. These settings are not shared with your account or the website."
+            )
+        }
+
+        // Moved here from the business Settings hub: how the app looks on one handset is a device
+        // preference, not a business configuration, and it should not sit behind `settings.access`.
+        item { AppearanceSettingsCard() }
+
+        item {
+            CapCard {
+                CapSectionHeader("Device")
+                CapListItem(
+                    "Notifications",
+                    subtitle = "Opens Android's notification settings for CAP Mobile",
+                    leading = { Icon(Icons.Outlined.Notifications, null) },
+                    showNavArrow = true,
+                    onClick = {
+                        open(
+                            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                                .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                        )
+                    }
+                )
+                CapListItem(
+                    "App info & storage",
+                    subtitle = "Opens Android's App info screen — permissions, storage, and cache",
+                    leading = { Icon(Icons.Outlined.Storage, null) },
+                    showNavArrow = true,
+                    onClick = {
+                        open(
+                            Intent(
+                                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                Uri.fromParts("package", context.packageName, null)
+                            )
+                        )
+                    }
+                )
+                launchError?.let { CapInlineError(it) }
+                Text(
+                    "CAP Mobile does not send notifications yet, so there is nothing to switch on in the app itself — " +
+                        "the Android screen above is where any future notifications would be controlled.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = Spacing.sm, vertical = Spacing.xs)
+                )
+            }
+        }
+
+        item {
+            CapCard {
+                CapSectionHeader("About")
+                CapListItem(
+                    "${BuildConfig.VERSION_NAME} (build ${BuildConfig.VERSION_CODE})",
+                    subtitle = "App version",
+                    leading = { Icon(Icons.Outlined.Info, null) }
+                )
+                CapListItem(
+                    "Supabase",
+                    subtitle = "Data and sign-in provider",
+                    leading = { Icon(Icons.Outlined.Security, null) }
+                )
+            }
         }
     }
 }
@@ -4275,7 +4539,9 @@ private fun PermissionRow(
 
 // =================================================================================================
 // Settings — cross-platform parity Phase 9 (the Android counterpart of frontend/src/pages/
-// Settings.jsx and its two sub-panels), plus the Android-only Appearance section.
+// Settings.jsx and its two sub-panels). This is BUSINESS configuration only; the Android-only
+// Appearance section it once also carried now lives on the device-level "App Settings" screen,
+// which is reached from "More" and carries no permission gate.
 //
 // Structural divergence from the web reference, deliberate: the web page is a horizontal
 // TabsList of six tabs. Six tabs do not fit across a phone, and Material's own guidance is that
@@ -4337,8 +4603,9 @@ private fun SettingsScreen(user: CapUser, onNavigate: (String) -> Unit) {
             )
         }
 
-        item { AppearanceSettingsCard() }
-
+        // Appearance used to sit here. It moved to the device-level "App Settings" screen (reached
+        // from "More"): a theme choice is saved on one handset, is not shared with the website or
+        // the account, and should not require `settings.access` — which this whole hub does.
         item {
             CapCard {
                 CapSectionHeader("Configuration")
@@ -4430,6 +4697,9 @@ private fun SettingsNoteCard(
  * Appearance — Android only, and genuinely new behaviour rather than a port: the web app has no
  * theme switcher. Writes straight through [LocalCapThemeController], which applies the scheme
  * immediately and persists the choice locally (see ui/theme/CapThemePreferences.kt).
+ *
+ * Rendered by [AppSettingsScreen], not by [SettingsScreen] — it is a per-device preference rather
+ * than business configuration, so it must not sit behind `settings.access`.
  *
  * Radio rows rather than a segmented control: "Follow system" does not fit alongside two other
  * chips on a small phone without truncating, and each row here is a full-width 48dp target that

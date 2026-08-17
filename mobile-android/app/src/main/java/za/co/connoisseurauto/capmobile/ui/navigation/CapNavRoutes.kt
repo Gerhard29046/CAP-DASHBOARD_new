@@ -62,6 +62,14 @@ sealed class CapNavRoute(val route: String, val label: String) {
     data object SettingsJobCards : CapNavRoute("settings_job_cards", "Job Card Settings")
     data object SettingsCatalogue : CapNavRoute("settings_products_services", "Products and Services")
 
+    /**
+     * Device-level app settings, deliberately NOT part of the [Settings] family above and
+     * deliberately NOT gated on `settings.access`: this screen configures how CAP Mobile behaves
+     * on *this handset* (appearance, and deep links into Android's own per-app notification and
+     * App Info screens), not how the business is configured. Every signed-in user reaches it.
+     */
+    data object AppSettings : CapNavRoute("app_settings", "App Settings")
+
     // --- Detail destinations (record id argument) ------------------------------------------
     // Real NavHost destinations with their own back-stack entry. Each carries the record id
     // only -- the record itself is re-resolved from the live collection by the destination, so
@@ -103,7 +111,7 @@ sealed class CapNavRoute(val route: String, val label: String) {
         val topLevel: List<CapNavRoute> = listOf(
             Home, Clients, Machines, Services, Jobs, Calendar, KnowledgeBase,
             Invoices, Users, Status, More, Account, LogNewService, BookIn,
-            Settings, SettingsJobCards, SettingsCatalogue
+            Settings, SettingsJobCards, SettingsCatalogue, AppSettings
         )
 
         /** Detail destinations, addressed by record id rather than by label. */

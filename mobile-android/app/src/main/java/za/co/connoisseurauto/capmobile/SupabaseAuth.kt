@@ -1,6 +1,8 @@
 package com.CAPDATABASE.capdatabase
 
 import android.content.Context
+import android.content.SharedPreferences
+import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -16,6 +18,7 @@ import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.GeneralSecurityException
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -42,7 +45,7 @@ import javax.inject.Singleton
  * fix onward, whenever it expires or a request comes back 401 -- see [validAccessToken] /
  * [refreshAfterUnauthorized].
  *
- * NEVER log an access or refresh token. This file deliberately contains no logging at all;
+ * NEVER log an access or refresh token. This file deliberately contains no sensitive logging;
  * every error surfaced from here is one of a fixed set of product-facing strings (see
  * [readResponse]), never a raw body or token.
  */
@@ -111,19 +114,90 @@ class SupabaseAuthException(
     val isUnauthorized: Boolean = false
 ) : Exception(message)
 
+private const val SESSION_PREFS_FILE = "cap_supabase_session"
+
 @Singleton
-class SupabaseSessionStore @Inject constructor(@ApplicationContext context: Context) {
-    private val prefs by lazy {
+class SupabaseSessionStore @Inject constructor(@ApplicationContext private val context: Context) {
+    private val prefs by lazy { createPrefs() }
+
+    /**
+     * Initializes the encrypted shared preferences.
+     *
+     * Recovery behaviour:
+     * - If EncryptedSharedPreferences cannot open the existing session store because the
+     *   encrypted file/keyset is corrupted or mismatched, reset only this session preference
+     *   file and recreate it.
+     * - This includes AEADBadTagException and other security failures wrapped at any depth in
+     *   the exception cause chain.
+     * - The user's refresh token is intentionally lost in this recovery path, so the application
+     *   starts signed out and the user can authenticate again safely.
+     *
+     * We deliberately do NOT delete or reset the Android Keystore master key globally. The
+     * recovery is scoped to this application's Supabase session storage only.
+     */
+    private fun createPrefs(): SharedPreferences {
         val masterKey = MasterKey.Builder(context)
             .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
             .build()
+
+        return try {
+            createEncryptedPrefs(masterKey)
+        } catch (error: Exception) {
+            if (!isEncryptedPrefsFailure(error)) {
+                throw error
+            }
+
+            // Do not log the exception itself. Its stack trace is unnecessary for recovery and
+            // could expose implementation details in production logs.
+            Log.e(
+                "SupabaseSessionStore",
+                "Encrypted session storage could not be opened; resetting local session storage."
+            )
+
+            // Delete only the corrupted Supabase session preference file. Do not clear unrelated
+            // application preferences and do not delete the Android Keystore master key.
+            context.deleteSharedPreferences(SESSION_PREFS_FILE)
+
+            // Recreate the encrypted store. If this second attempt fails, allow the exception to
+            // propagate because the storage environment itself is still unusable.
+            createEncryptedPrefs(masterKey)
+        }
+    }
+
+    /**
+     * Creates the actual encrypted SharedPreferences instance.
+     *
+     * Keystore-backed AES-256-GCM protects the values, while AES-256-SIV protects the preference
+     * keys. Only the refresh token is stored here.
+     */
+    private fun createEncryptedPrefs(masterKey: MasterKey): SharedPreferences =
         EncryptedSharedPreferences.create(
             context,
-            "cap_supabase_session",
+            SESSION_PREFS_FILE,
             masterKey,
             EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
             EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
         )
+
+    /**
+     * Determines whether the failure came from the encrypted-preference/security layer.
+     *
+     * Some AndroidX Security / Tink failures wrap the underlying GeneralSecurityException in
+     * one or more other exceptions. Walk the complete cause chain rather than checking only the
+     * immediate cause.
+     */
+    private fun isEncryptedPrefsFailure(error: Throwable): Boolean {
+        var current: Throwable? = error
+
+        while (current != null) {
+            if (current is GeneralSecurityException || current is IOException) {
+                return true
+            }
+
+            current = current.cause
+        }
+
+        return false
     }
 
     fun saveRefreshToken(refreshToken: String) {
@@ -174,11 +248,17 @@ class SupabaseAuthRepository @Inject constructor(
      */
     suspend fun validAccessToken(): SupabaseAccessToken {
         val token = currentAccessToken
-            ?: throw SupabaseAuthException("Your session has expired. Sign in again.", isSessionExpired = true)
+            ?: throw SupabaseAuthException(
+                "Your session has expired. Sign in again.",
+                isSessionExpired = true
+            )
+
         val generation = sessionGeneration
+
         if (System.currentTimeMillis() < accessTokenExpiresAtMs - EXPIRY_SKEW_MS) {
             return SupabaseAccessToken(token, generation)
         }
+
         return refreshAfterUnauthorized(SupabaseAccessToken(token, generation))
     }
 
@@ -197,16 +277,23 @@ class SupabaseAuthRepository @Inject constructor(
      *         stored refresh token is deliberately NOT cleared, so going offline never signs
      *         the user out).
      */
-    suspend fun refreshAfterUnauthorized(stale: SupabaseAccessToken): SupabaseAccessToken =
+    suspend fun refreshAfterUnauthorized(
+        stale: SupabaseAccessToken
+    ): SupabaseAccessToken =
         withContext(Dispatchers.IO) {
             refreshMutex.withLock {
                 val current = currentAccessToken
+
                 if (current != null && sessionGeneration != stale.generation) {
                     // Someone else already refreshed while we waited on the lock.
                     return@withLock SupabaseAccessToken(current, sessionGeneration)
                 }
+
                 val refreshToken = sessionStore.savedRefreshToken()
-                    ?: throw SupabaseAuthException("Your session has expired. Sign in again.", isSessionExpired = true)
+                    ?: throw SupabaseAuthException(
+                        "Your session has expired. Sign in again.",
+                        isSessionExpired = true
+                    )
 
                 val response = try {
                     postJson(
@@ -215,17 +302,29 @@ class SupabaseAuthRepository @Inject constructor(
                         authToken = null
                     )
                 } catch (error: SupabaseAuthException) {
-                    if (error.isNetworkError) throw error // transient: keep the session intact
+                    if (error.isNetworkError) {
+                        throw error
+                    }
+
                     clearSession()
-                    throw SupabaseAuthException("Your session has expired. Sign in again.", isSessionExpired = true)
+
+                    throw SupabaseAuthException(
+                        "Your session has expired. Sign in again.",
+                        isSessionExpired = true
+                    )
                 }
 
                 val session = try {
                     parseSessionResponse(response)
                 } catch (_: Exception) {
                     clearSession()
-                    throw SupabaseAuthException("Your session has expired. Sign in again.", isSessionExpired = true)
+
+                    throw SupabaseAuthException(
+                        "Your session has expired. Sign in again.",
+                        isSessionExpired = true
+                    )
                 }
+
                 installSession(session)
                 SupabaseAccessToken(session.accessToken, sessionGeneration)
             }
@@ -247,9 +346,20 @@ class SupabaseAuthRepository @Inject constructor(
         sessionStore.clear()
     }
 
-    suspend fun login(email: String, password: String): SupabaseSession = withContext(Dispatchers.IO) {
-        val body = JSONObject().put("email", email.trim()).put("password", password)
-        val response = postJson("$baseUrl/auth/v1/token?grant_type=password", body, authToken = null)
+    suspend fun login(
+        email: String,
+        password: String
+    ): SupabaseSession = withContext(Dispatchers.IO) {
+        val body = JSONObject()
+            .put("email", email.trim())
+            .put("password", password)
+
+        val response = postJson(
+            "$baseUrl/auth/v1/token?grant_type=password",
+            body,
+            authToken = null
+        )
+
         parseSessionResponse(response).also { installSession(it) }
     }
 
@@ -265,16 +375,26 @@ class SupabaseAuthRepository @Inject constructor(
      * signal used to permanently sign the user out.
      */
     suspend fun restore(): SupabaseSession? = withContext(Dispatchers.IO) {
-        val refreshToken = sessionStore.savedRefreshToken() ?: return@withContext null
+        val refreshToken = sessionStore.savedRefreshToken()
+            ?: return@withContext null
+
         try {
             val body = JSONObject().put("refresh_token", refreshToken)
-            val response = postJson("$baseUrl/auth/v1/token?grant_type=refresh_token", body, authToken = null)
+
+            val response = postJson(
+                "$baseUrl/auth/v1/token?grant_type=refresh_token",
+                body,
+                authToken = null
+            )
+
             parseSessionResponse(response).also { installSession(it) }
         } catch (error: Exception) {
             // A network failure at cold start must NOT destroy the stored session -- the user is
             // simply offline, not signed out. Only an actual rejection of the refresh token
             // (or an unparseable response) means the session is really gone.
-            if (error is SupabaseAuthException && error.isNetworkError) null else {
+            if (error is SupabaseAuthException && error.isNetworkError) {
+                null
+            } else {
                 clearSession()
                 null
             }
@@ -283,11 +403,19 @@ class SupabaseAuthRepository @Inject constructor(
 
     suspend fun logout() = withContext(Dispatchers.IO) {
         val token = currentAccessToken
+
         if (token != null) {
             // Best-effort: revokes the refresh token server-side. Local sign-out below is
             // unconditional regardless of whether this network call succeeds.
-            runCatching { postJson("$baseUrl/auth/v1/logout", JSONObject(), authToken = token) }
+            runCatching {
+                postJson(
+                    "$baseUrl/auth/v1/logout",
+                    JSONObject(),
+                    authToken = token
+                )
+            }
         }
+
         clearSession()
     }
 
@@ -295,18 +423,28 @@ class SupabaseAuthRepository @Inject constructor(
      *  access token (RLS-gated, never the service-role key). */
     suspend fun loadProfile(userId: String): CapUser = withContext(Dispatchers.IO) {
         val url = "$baseUrl/rest/v1/users?id=eq.$userId&select=$PROFILE_COLUMNS"
+
         // Same refresh-once-then-retry-once contract as SupabaseData: a 401 here (long-idle app
         // resumed, token aged out) gets one refresh and one retry, never a loop.
         var token = validAccessToken()
+
         val body = try {
             httpGet(url, token.value)
         } catch (error: SupabaseAuthException) {
-            if (!error.isUnauthorized) throw error
-            token = refreshAfterUnauthorized(token) // throws isSessionExpired if truly gone
-            httpGet(url, token.value)               // a 401 on this attempt propagates as-is
+            if (!error.isUnauthorized) {
+                throw error
+            }
+
+            token = refreshAfterUnauthorized(token)
+            httpGet(url, token.value)
         }
+
         val rows = JSONArray(body)
-        if (rows.length() == 0) throw SupabaseAuthException("User profile not found.")
+
+        if (rows.length() == 0) {
+            throw SupabaseAuthException("User profile not found.")
+        }
+
         rows.getJSONObject(0).toCapUser()
     }
 
@@ -335,28 +473,46 @@ class SupabaseAuthRepository @Inject constructor(
      * [loadProfile] parses a fetch -- callers should replace their in-memory [CapUser] with this
      * method's result rather than assuming their own submitted values took effect verbatim.
      */
-    suspend fun updateProfile(userId: String, fields: Map<String, String?>): CapUser = withContext(Dispatchers.IO) {
+    suspend fun updateProfile(
+        userId: String,
+        fields: Map<String, String?>
+    ): CapUser = withContext(Dispatchers.IO) {
         val url = "$baseUrl/rest/v1/users?id=eq.$userId&select=$PROFILE_COLUMNS"
+
         val body = JSONObject().apply {
-            fields.forEach { (key, value) -> put(key, value ?: JSONObject.NULL) }
+            fields.forEach { (key, value) ->
+                put(key, value ?: JSONObject.NULL)
+            }
         }
+
         var token = validAccessToken()
+
         val responseText = try {
             patchJson(url, body, token.value)
         } catch (error: SupabaseAuthException) {
-            if (!error.isUnauthorized) throw error
+            if (!error.isUnauthorized) {
+                throw error
+            }
+
             token = refreshAfterUnauthorized(token)
             patchJson(url, body, token.value)
         }
+
         val rows = JSONArray(responseText)
-        if (rows.length() == 0) throw SupabaseAuthException("Unable to update your profile.")
+
+        if (rows.length() == 0) {
+            throw SupabaseAuthException("Unable to update your profile.")
+        }
+
         rows.getJSONObject(0).toCapUser()
     }
 
     private fun parseSessionResponse(raw: String): SupabaseSession {
         val json = JSONObject(raw)
+
         val user = json.optJSONObject("user")
             ?: throw SupabaseAuthException("Supabase did not return a user account.")
+
         return SupabaseSession(
             accessToken = json.getString("access_token"),
             refreshToken = json.getString("refresh_token"),
@@ -366,32 +522,59 @@ class SupabaseAuthRepository @Inject constructor(
         )
     }
 
-    private fun postJson(urlString: String, body: JSONObject, authToken: String?): String {
+    private fun postJson(
+        urlString: String,
+        body: JSONObject,
+        authToken: String?
+    ): String {
         val connection = URL(urlString).openConnection() as HttpURLConnection
+
         try {
             connection.requestMethod = "POST"
             connection.doOutput = true
             connection.setRequestProperty("apikey", anonKey)
             connection.setRequestProperty("Content-Type", "application/json")
             connection.setRequestProperty("Accept", "application/json")
-            if (authToken != null) connection.setRequestProperty("Authorization", "Bearer $authToken")
+
+            if (authToken != null) {
+                connection.setRequestProperty(
+                    "Authorization",
+                    "Bearer $authToken"
+                )
+            }
+
             connection.connectTimeout = 15_000
             connection.readTimeout = 20_000
-            OutputStreamWriter(connection.outputStream, Charsets.UTF_8).use { it.write(body.toString()) }
+
+            OutputStreamWriter(
+                connection.outputStream,
+                Charsets.UTF_8
+            ).use {
+                it.write(body.toString())
+            }
+
             return readResponse(connection)
         } catch (error: IOException) {
-            throw SupabaseAuthException("Network unavailable. Please check your connection.", isNetworkError = true)
+            throw SupabaseAuthException(
+                "Network unavailable. Please check your connection.",
+                isNetworkError = true
+            )
         } finally {
             connection.disconnect()
         }
     }
 
     /** Same shape as [postJson], but PATCH and with `Prefer: return=representation` so PostgREST
-     *  returns the updated row instead of an empty 204 -- [updateProfile] needs the server's own
-     *  view of the row back (e.g. its own `updated_at`), not just an assumption the submitted
-     *  values took effect verbatim. */
-    private fun patchJson(urlString: String, body: JSONObject, authToken: String): String {
+     * returns the updated row instead of an empty 204 -- [updateProfile] needs the server's own
+     * view of the row back (e.g. its own `updated_at`), not just an assumption the submitted
+     * values took effect verbatim. */
+    private fun patchJson(
+        urlString: String,
+        body: JSONObject,
+        authToken: String
+    ): String {
         val connection = URL(urlString).openConnection() as HttpURLConnection
+
         try {
             connection.requestMethod = "PATCH"
             connection.doOutput = true
@@ -399,30 +582,55 @@ class SupabaseAuthRepository @Inject constructor(
             connection.setRequestProperty("Content-Type", "application/json")
             connection.setRequestProperty("Accept", "application/json")
             connection.setRequestProperty("Prefer", "return=representation")
-            connection.setRequestProperty("Authorization", "Bearer $authToken")
+            connection.setRequestProperty(
+                "Authorization",
+                "Bearer $authToken"
+            )
+
             connection.connectTimeout = 15_000
             connection.readTimeout = 20_000
-            OutputStreamWriter(connection.outputStream, Charsets.UTF_8).use { it.write(body.toString()) }
+
+            OutputStreamWriter(
+                connection.outputStream,
+                Charsets.UTF_8
+            ).use {
+                it.write(body.toString())
+            }
+
             return readResponse(connection)
         } catch (error: IOException) {
-            throw SupabaseAuthException("Network unavailable. Please check your connection.", isNetworkError = true)
+            throw SupabaseAuthException(
+                "Network unavailable. Please check your connection.",
+                isNetworkError = true
+            )
         } finally {
             connection.disconnect()
         }
     }
 
-    private fun httpGet(urlString: String, token: String): String {
+    private fun httpGet(
+        urlString: String,
+        token: String
+    ): String {
         val connection = URL(urlString).openConnection() as HttpURLConnection
+
         try {
             connection.requestMethod = "GET"
             connection.setRequestProperty("apikey", anonKey)
-            connection.setRequestProperty("Authorization", "Bearer $token")
+            connection.setRequestProperty(
+                "Authorization",
+                "Bearer $token"
+            )
             connection.setRequestProperty("Accept", "application/json")
             connection.connectTimeout = 15_000
             connection.readTimeout = 20_000
+
             return readResponse(connection)
         } catch (error: IOException) {
-            throw SupabaseAuthException("Network unavailable. Please check your connection.", isNetworkError = true)
+            throw SupabaseAuthException(
+                "Network unavailable. Please check your connection.",
+                isNetworkError = true
+            )
         } finally {
             connection.disconnect()
         }
@@ -433,24 +641,49 @@ class SupabaseAuthRepository @Inject constructor(
      *  userMessage() convention already established in Core.kt for Firebase errors. */
     private fun readResponse(connection: HttpURLConnection): String {
         val code = connection.responseCode
-        val stream = if (code in 200..299) connection.inputStream else connection.errorStream
-        val text = stream?.let { BufferedReader(InputStreamReader(it, Charsets.UTF_8)).use(BufferedReader::readText) }.orEmpty()
+
+        val stream = if (code in 200..299) {
+            connection.inputStream
+        } else {
+            connection.errorStream
+        }
+
+        val text = stream?.let {
+            BufferedReader(
+                InputStreamReader(it, Charsets.UTF_8)
+            ).use(BufferedReader::readText)
+        }.orEmpty()
+
         if (code !in 200..299) {
             val description = runCatching {
                 val errorJson = JSONObject(text)
-                errorJson.optStringOrNull("error_description") ?: errorJson.optStringOrNull("msg")
+
+                errorJson.optStringOrNull("error_description")
+                    ?: errorJson.optStringOrNull("msg")
             }.getOrNull()
+
             throw SupabaseAuthException(
                 message = when {
-                    code == 400 && description?.contains("Invalid login credentials", ignoreCase = true) == true ->
+                    code == 400 &&
+                            description?.contains(
+                                "Invalid login credentials",
+                                ignoreCase = true
+                            ) == true ->
                         "Incorrect email address or password."
-                    code == 401 -> "Your session has expired. Sign in again."
-                    code == 429 -> "Too many login attempts. Please try again later."
-                    else -> "Unable to reach the authentication service. Please try again."
+
+                    code == 401 ->
+                        "Your session has expired. Sign in again."
+
+                    code == 429 ->
+                        "Too many login attempts. Please try again later."
+
+                    else ->
+                        "Unable to reach the authentication service. Please try again."
                 },
                 isUnauthorized = code == 401
             )
         }
+
         return text
     }
 }
@@ -465,23 +698,45 @@ class SupabaseAuthRepository @Inject constructor(
  */
 private fun JSONObject.accessTokenExpiryMs(): Long {
     val expiresAtSeconds = optLong("expires_at", 0L)
-    if (expiresAtSeconds > 0L) return expiresAtSeconds * 1000L
+
+    if (expiresAtSeconds > 0L) {
+        return expiresAtSeconds * 1000L
+    }
+
     val expiresInSeconds = optLong("expires_in", 0L)
-    if (expiresInSeconds > 0L) return System.currentTimeMillis() + expiresInSeconds * 1000L
+
+    if (expiresInSeconds > 0L) {
+        return System.currentTimeMillis() + expiresInSeconds * 1000L
+    }
+
     return System.currentTimeMillis() + FALLBACK_TTL_MS
 }
 
 private fun JSONObject.optStringOrNull(key: String): String? =
-    if (has(key) && !isNull(key)) optString(key, null) else null
+    if (has(key) && !isNull(key)) {
+        optString(key, null)
+    } else {
+        null
+    }
 
 private fun JSONObject.toCapUser(): CapUser {
     val permissionsArray = optJSONArray("effective_permissions")
+
     val permissions = if (permissionsArray != null) {
-        (0 until permissionsArray.length()).mapNotNull { permissionsArray.optStringOrNull(it) }.toSet()
-    } else emptySet()
+        (0 until permissionsArray.length())
+            .mapNotNull {
+                permissionsArray.optStringOrNull(it)
+            }
+            .toSet()
+    } else {
+        emptySet()
+    }
+
     return CapUser(
         id = getString("id"),
-        name = optStringOrNull("full_name") ?: optStringOrNull("email") ?: "Someone",
+        name = optStringOrNull("full_name")
+            ?: optStringOrNull("email")
+            ?: "Someone",
         email = optStringOrNull("email") ?: "",
         role = optStringOrNull("role") ?: "",
         active = optBoolean("is_active", false),
@@ -492,4 +747,8 @@ private fun JSONObject.toCapUser(): CapUser {
 }
 
 private fun JSONArray.optStringOrNull(index: Int): String? =
-    if (index in 0 until length() && !isNull(index)) optString(index, null) else null
+    if (index in 0 until length() && !isNull(index)) {
+        optString(index, null)
+    } else {
+        null
+    }
