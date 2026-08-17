@@ -1,5 +1,31 @@
 # Decisions
 
+## 2026-08-17 (later night) — Supabase Auth Redirect URL configuration recommended to the user
+
+- Decision/recommendation (not applied by Queen Bee -- Supabase project config is outside this
+  repo, the user must make this change in the Supabase dashboard themselves): given code-verified
+  evidence of what the app actually sends/handles (see `KNOWN_ISSUES.md`'s matching RESOLVED
+  entry), the Redirect URL allowlist should be:
+  - KEEP `http://localhost:5173/reset-password` -- real local dev port (confirmed via
+    `frontend/vite.config.js`, no `server.port` override, so Vite's own default 5173 applies),
+    real route, matches `requestPasswordReset()`'s dynamic `${window.location.origin}/reset-password`.
+  - KEEP `https://capdashboard.gerhardvanwijk.workers.dev/auth/callback` -- was already listed but
+    unimplemented until this session; now a real route (`AuthCallback.jsx`).
+  - ADD `https://capdashboard.gerhardvanwijk.workers.dev/reset-password` -- production's own
+    password-reset target was missing from the allowlist entirely; without it, a production
+    password-reset email's link would be rejected by Supabase before ever reaching the app.
+  - ADD `http://localhost:5173/auth/callback` -- for local-dev parity with the production entry
+    above, needed for local testing of self-registration's confirmation-email flow.
+  - Site URL: KEEP `https://capdashboard.gerhardvanwijk.workers.dev` -- already correct, this is
+    what the user said they'd already fixed; nothing in this session's code trace contradicts it.
+- Reason: every URL above is verified from the actual code path that sends it or the actual route
+  that receives it, not inferred/assumed -- see `SupabaseAuthContext.jsx` (`emailRedirectTo`),
+  `supabaseApiClient.js` (`resetPasswordRequest`'s `redirectTo`), and `App.jsx`'s route table.
+- Affected: Supabase project's Auth > URL Configuration only. No code in this repo enforces or
+  reads this list -- it's entirely external, Supabase-side configuration.
+- Reversal condition: if `/auth/callback`'s purpose changes (e.g. real OAuth is added later), this
+  recommendation should be revisited alongside that work.
+
 ## 2026-08-17 (night) — Service Certificate feature: Resend chosen for email, split into 3 batches, Batch A built
 - Decision: user gave a large 22-phase objective (branded PDF service certificate, generated
   from a completed service record, emailed to the client with an optional extra attachment,

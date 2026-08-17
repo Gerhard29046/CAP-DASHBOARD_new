@@ -1,5 +1,58 @@
 # Known Issues
 
+## RESOLVED (2026-08-17, later night) — Job Card save was 400ing on every edit; real /auth/callback page added; deployed live
+
+- **Root cause, confirmed against every migration touching `job_cards`**: `JobCardDetail.jsx`'s
+  `editForm` seeded a `notes` field from `jobCard.notes` -- `public.job_cards` has never had a
+  `notes` column (0001/0003/0008/0020/0022/0025 checked). No input anywhere in the edit form
+  ever rendered or set it; pure dead state that still rode along in `saveJobChanges()`'s spread
+  payload. PostgREST rejects an update outright on any unknown column, so **every single Job
+  Card save -- status, dates, technician, fault description, everything -- was failing with
+  PGRST204** in production, not just a "notes" feature gap. Fixed by removing the dead field
+  (no migration -- it was never real). Audited every other `entities.X.update()`/`.create()`
+  call site in `frontend/src/pages` (Client/Machine/ServiceRecord/JobCardLine/ProductService)
+  against the real schema -- all clean, this was the only mismatch.
+- **Auth**: `/auth/callback` was in Supabase's configured Redirect URLs but had **no matching
+  route anywhere in the app** -- any Supabase redirect landing there hit the plain 404 page.
+  Built a real `AuthCallback.jsx` (waits for the client SDK's automatic `detectSessionInUrl`
+  exchange, forwards `PASSWORD_RECOVERY` to the existing `/reset-password` page, a real session
+  into the app, no session to a clear expired-link message) and wired it as the new
+  `emailRedirectTo` target for signup confirmation (previously hardcoded to `/login`).
+  `/reset-password` itself was already correct and unchanged (`ResetPassword.jsx`, real page,
+  real `supabase.auth.updateUser({password})` call). See `DECISIONS.md` for the exact Supabase
+  Site URL / Redirect URL recommendation given to the user.
+- **Incidental finding**: `supabase/migrations/0030_service_certificates.sql` (Service
+  Certificate Batch A) is now confirmed **applied** to production (new read-only
+  `supabase/scripts/qa-check-0030-applied.mjs`) -- corrects the prior "NOT yet applied" status
+  recorded elsewhere in this file/`PROJECT_STATE.md`. The certificate generate/preview/download
+  UI (`CertificateSection` in `ServiceRecords.jsx`, per service record's detail panel) should
+  now be fully live -- still no real PDF has been visually inspected by a human.
+- **Found mid-session, not caused by this work, reviewed and left as-is**: two commits
+  (`72db6d4`, `bd1b103`) appeared directly on `main` from the user's own git identity while this
+  session was in progress -- not made through this session's delegation. Reviewed in full before
+  pushing/deploying anything: a small `Jobs.jsx` display fix (real, low-risk), a defensive
+  `SupabaseAuth.kt` fix for corrupted `EncryptedSharedPreferences` recovery (sound, matches this
+  project's "never log a token" rule), the already-reviewed Android More-screen rework getting
+  swept into the same commit, and a new sequential Job Card numbering feature in `BookIn.jsx`
+  (JOB-0001, JOB-0002...). **The numbering feature has a real, disclosed, NOT-yet-fixed race
+  condition**: `job_cards.job_number` has no database-level unique constraint, so the new
+  client-side "list all job cards, find the max matching number, retry once if the insert errors
+  as a duplicate" logic can never actually detect or prevent a real collision -- a duplicate
+  `job_number` insert simply succeeds silently (no DB error to retry on). Two Book-Ins
+  overlapping in time could receive the same job number. Not fixed this session (out of the
+  scope the user asked for) -- flagged here for a future dedicated fix (a Postgres sequence or a
+  `SELECT ... FOR UPDATE`-guarded RPC would close this properly; the current client-side
+  read-then-write has an inherent TOCTOU gap no amount of retry logic on the client side alone
+  can close without a real database constraint).
+- **Verification**: `npm run lint` / `typecheck` / `test` (58/58) / `build` all clean. Pushed
+  (`36dcb71`) and deployed live via `wrangler deploy`. Hit a mild version of the known transient
+  multi-deploy-race pattern (a second, independent deploy from the same account landed 55s after
+  this session's own deploy) -- live bundle byte-compared against the local build: identical
+  except one embedded static-asset hash reference (`optimaoutline-*.svg`), which resolves fine
+  live (200) either way -- confirmed functionally identical, not stale/broken, across 5 polls
+  with `Cache-Control: no-cache`. Zero "firebase" strings in the live bundle; `/auth/callback`
+  string confirmed present.
+
 ## RESOLVED (2026-08-17, night) — pushed to GitHub + deployed live to Cloudflare
 
 - User instruction: "push to github and build live cloudflare." Commits `7ecb714..c8001e0`

@@ -1,5 +1,34 @@
 # Session Log
 
+## 2026-08-17 (later night) — Job Card save PGRST204 fixed, real /auth/callback page added, pushed + deployed live
+- User reported "Save Changes" on Job Cards failing with `PGRST204: Could not find the 'notes'
+  column of 'job_cards'`. Traced the full save flow before touching anything: `JobCardDetail.jsx`
+  seeds `editForm.notes` from `jobCard.notes`, but `public.job_cards` never had a `notes` column
+  (checked every migration touching the table) and no input in the form ever set it -- dead state
+  spread into every PATCH. Removed it (no migration -- never a real field); audited every other
+  `entities.X.update()`/`.create()` call site in `frontend/src/pages` against the real schema,
+  found nothing else wrong.
+- Separately verified the password-reset/auth-callback flow per the user's explicit request:
+  `/reset-password` was already real and correct (`ResetPassword.jsx`). `/auth/callback` was
+  configured in Supabase's Redirect URLs but had no matching route in the app at all -- built a
+  real `AuthCallback.jsx` and pointed signup-confirmation's `emailRedirectTo` at it (was
+  hardcoded to `/login`). See `DECISIONS.md` for the exact Supabase config recommendation given
+  to the user.
+- User also asked where the "service completed" certificate button was -- found it already built
+  and wired (`CertificateSection` in `ServiceRecords.jsx`, per-record detail panel), just blocked
+  by migration `0030` not being applied. Wrote a read-only check script and confirmed **0030 IS
+  now applied** to production -- the feature should be fully live.
+- Mid-session, found two commits already on `main` from the user's own git identity, made outside
+  this session's delegation (`72db6d4`, `bd1b103`) -- reviewed both in full before pushing/
+  deploying anything on top of them (see `KNOWN_ISSUES.md`'s matching RESOLVED entry for the full
+  breakdown, including a real disclosed race condition found in the new sequential Job Card
+  numbering feature, not fixed this session).
+- Verified: `npm run lint`/`typecheck`/`test` (58/58)/`build` all clean. Committed (`36dcb71`),
+  pushed to `origin/main`, deployed live via `wrangler deploy` (correct account confirmed first).
+  Live bundle byte-compared against the local build after a second, independent deploy from the
+  same account landed 55s later -- confirmed functionally identical (one cosmetic static-asset
+  hash difference only, both resolving 200), stable across 5 polls with `Cache-Control: no-cache`.
+
 ## 2026-08-17 (night, latest) — pushed to GitHub, deployed live to Cloudflare
 - User instruction: "push to github and build live cloudflare." Found ~1,120 lines of
   uncommitted work from the same day's earlier sessions (Register.jsx fix, Dashboard redesign,
