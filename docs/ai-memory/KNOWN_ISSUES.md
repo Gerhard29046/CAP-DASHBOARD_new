@@ -1,5 +1,21 @@
 # Known Issues
 
+## RESOLVED (2026-08-17, night) — pushed to GitHub + deployed live to Cloudflare
+
+- User instruction: "push to github and build live cloudflare." Commits `7ecb714..c8001e0`
+  pushed to `origin/main`. `wrangler deploy` run from `frontend/` (correct account confirmed
+  beforehand). **Hit the same transient stale-asset flap as 2026-08-16** (live site briefly
+  served inconsistent old/new asset-hash combinations) — resolved via re-deploy + polling with
+  `Cache-Control: no-cache`, confirmed converged: live bundle byte-identical (`cmp`) to the
+  local build, HTTP 200, zero "firebase" strings, version
+  `18265129-a169-4304-8fd1-024399200319` at 100% traffic. See `SESSION_LOG.md`'s matching entry
+  and `.claude/agent-memory/queen-bee/technique_cloudflare_deploy_transient_stale_asset_flap.md`.
+  **This closes item 4 of the "NEEDS THE USER" list below** (`Deploy to Cloudflare`) — left
+  that original bullet in place for history, marked resolved there too.
+- Deploying the CODE does not apply the pending migration — `0030_service_certificates.sql`
+  still needs the SQL Editor (see the entry immediately below); the Service Certificate UI is
+  now live in the deployed bundle but will error against production Postgres until then.
+
 ## 2026-08-17 (night) — Service Certificate Batch A: code complete, needs migration + real visual verification
 
 **BLOCKS the feature from working at all until done**:
@@ -115,9 +131,11 @@ cross-user signed URL) needs re-confirming.
 3. **Real email deliverability for registration/password-reset has never been tested with a
    real inbox** — this blocks confidently telling real staff to self-register at `/register`
    for their Android/web accounts. Needs the user to actually test one real address.
-4. **Deploy to Cloudflare** — pushed to GitHub (`788ab49..ddbbe56`), confirmed no CI/CD
-   auto-deploys it (plain Worker config, no Pages git integration). A real `wrangler deploy` is
-   a separate, explicit action not run without your go-ahead.
+4. **RESOLVED 2026-08-17 (night)** — Deploy to Cloudflare: pushed to GitHub (`7ecb714..c8001e0`)
+   and deployed live via `wrangler deploy`, independently byte-verified against the live site
+   (see the dedicated RESOLVED entry above). Confirmed no CI/CD auto-deploys this repo (plain
+   Worker config, no Pages git integration) — a real `wrangler deploy` remains a separate,
+   explicit action each time.
 
 Everything below this point predates today's sweep (Firebase-era history, already-RESOLVED
 entries, or genuinely still-open items already itemized above) — kept for historical record,

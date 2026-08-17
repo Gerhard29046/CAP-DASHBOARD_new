@@ -1,5 +1,51 @@
 # Project State
-_Last verified: 2026-08-16 (overnight — production deploy to Cloudflare, explicit user
+_Last verified: 2026-08-17 (night — pushed to GitHub and deployed live to Cloudflare, explicit
+user instruction "push to github and build live cloudflare"). Commits `7ecb714..c8001e0`
+pushed to `origin/main` (4 commits: docs/memory catch-up, the Register.jsx self-service-
+registration fix + UserAdmin "open in new tab" change, the Dashboard redesign + Dashboard
+Notes popup dialog, and the Service Certificate Batch A feature). All of this was code
+written and disclosed-as-uncommitted in the prior (same-day) session — this session's own
+work was verification + commit + push + deploy, not new feature code.
+
+**Pre-deploy verification** (`testing-bee`, independent re-run against the full combined
+working tree before any commit): `npm run lint`/`typecheck` clean, `npm test` 58/58 pass,
+`npm run build` clean — confirmed via fresh output-artifact timestamps and the new
+certificate-logo asset correctly bundled (Vite printed no build-log text on this machine, a
+known Git-Bash/Windows TTY quirk, so artifact inspection was used instead of trusting an
+empty log).
+
+**Deploy: live, byte-verified, not just CLI-trusted.** `wrangler deploy` from `frontend/`
+(account confirmed correct beforehand: `gerhardvanwijk@gmail.com` /
+`3f30316d2958f170287083b0b7d680b5`, matching `wrangler.jsonc`'s pinned `account_id`).
+**Hit the same transient stale-asset flap documented 2026-08-16**: immediately after deploy,
+the live site intermittently served a mix of old/new asset hashes (once even a third,
+neither-old-nor-new hash combination) across consecutive requests to the same URL — confirmed
+genuinely happening via `CF-RAY`/`CF-Cache-Status` headers and a byte-level `cmp` between the
+locally-built and live-fetched JS bundle (same file size, different content at one embedded
+asset-hash reference), not just a shell/caching illusion. Resolved by re-running `wrangler
+deploy` (which reported "No updated asset files to upload" — confirming the correct build was
+already the registered asset set, just not yet the one being served) and polling with
+`Cache-Control: no-cache` every ~6-8s until 6+ consecutive requests agreed. **Final state,
+independently confirmed**: live `index.html` references `assets/index-jCbNSb2p.js` /
+`assets/index-DybUaVbX.css`, byte-identical (`cmp`, zero diff) to the local `dist/` build of
+the exact just-committed source; `HTTP 200`; zero "firebase" occurrences in the live JS
+bundle. Final version `18265129-a169-4304-8fd1-024399200319`, 100% traffic (`wrangler
+deployments list`). See `.claude/agent-memory/queen-bee/technique_cloudflare_deploy_transient_
+stale_asset_flap.md` for the reusable verification technique — this is the second occurrence
+of this exact platform behavior, worth expecting again on future deploys.
+
+**Still open, unaffected by this deploy** (see `KNOWN_ISSUES.md` for full detail, not
+repeated here): `supabase/migrations/0030_service_certificates.sql` (Service Certificate
+Batch A) is NOT applied — that feature's UI is now live in the deployed bundle but will error
+against production Postgres until the user applies it via the SQL Editor. No real certificate
+PDF has been visually inspected yet. No live click-through of the Register.jsx fix, Dashboard
+redesign, or Notes dialog was performed this session (no browser tool available) — build/lint/
+typecheck/test verification only, consistent with this project's established pattern for UI
+changes.
+
+---
+
+_Last verified before that: 2026-08-16 (overnight — production deploy to Cloudflare, explicit user
 authorization). **The web app (`frontend/`) is confirmed live in production** at
 `https://capdashboard.gerhardvanwijk.workers.dev`, version `8bc8552d-38f9-4bef-8086-02aa04a5840f`,
 independently verified (not just the CLI's own claim) by fetching the live page and confirming

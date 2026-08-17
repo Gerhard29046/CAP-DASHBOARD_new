@@ -1,5 +1,37 @@
 # Session Log
 
+## 2026-08-17 (night, latest) — pushed to GitHub, deployed live to Cloudflare
+- User instruction: "push to github and build live cloudflare." Found ~1,120 lines of
+  uncommitted work from the same day's earlier sessions (Register.jsx fix, Dashboard redesign,
+  Dashboard Notes popup dialog, Service Certificate Batch A feature + migration 0030) sitting
+  in the working tree, already individually verified in their own session-log entries but never
+  committed.
+- Reviewed the full diff directly (not just trusted the prior entries), confirmed Cloudflare
+  account identity correct (`gerhardvanwijk@gmail.com` / `3f30316d2958f170287083b0b7d680b5`),
+  delegated a fresh combined-working-tree re-verification to `testing-bee`
+  (lint/typecheck/test/build all clean, 58/58 tests, build artifacts independently inspected
+  since Vite printed no log text on this machine).
+- Committed as 4 logical commits (`ce2f8ee` docs/memory catch-up, `8a0a844` registration fix,
+  `d82685e` dashboard redesign + notes dialog, `c8001e0` service certificates), pushed to
+  `origin/main` (`7ecb714..c8001e0`).
+- Built (`npm run build`, confirmed via fresh artifact timestamps + 0 "firebase" strings) and
+  deployed (`wrangler deploy`). **Hit the same transient stale-asset flap as 2026-08-16**: the
+  live site briefly served inconsistent asset-hash combinations across consecutive requests
+  (confirmed via `CF-RAY`/`CF-Cache-Status` headers and a byte-level `cmp` showing genuinely
+  different content, not a caching illusion). Resolved by re-deploying (confirmed "no updated
+  asset files" — the correct build was already registered, just not yet the one being served)
+  and polling with `Cache-Control: no-cache` until 6+ consecutive requests agreed. **Final,
+  independently verified**: live bundle byte-identical (`cmp`, zero diff) to the local
+  just-built `dist/`, HTTP 200, zero "firebase" strings, version
+  `18265129-a169-4304-8fd1-024399200319` at 100% traffic.
+- New queen-bee memory: `technique_cloudflare_deploy_transient_stale_asset_flap.md` (this is
+  now a confirmed-recurring platform behavior on this Worker, not a one-off).
+- **Not done this session**: `supabase/migrations/0030_service_certificates.sql` still needs
+  the user via the SQL Editor — the Service Certificate UI is now live but will error against
+  production until applied. No live click-through of any of the 4 committed feature areas (no
+  browser tool available) — build/lint/typecheck/test verification only.
+
+
 ## 2026-08-17 (night, latest) — Service Certificate feature, Batch A (web, no email yet)
 - Large multi-phase user request (22 phases): generate a branded PDF "Service Certificate"
   from a completed service record, downloadable/previewable, emailable to the client with an
