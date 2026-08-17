@@ -1,142 +1,123 @@
 CAP DASHBOARD — LATEST PATCH NOTES
 ====================================
-Last updated: 2026-08-13
+Last updated: 2026-08-17 (morning)
 Deployed to: https://capdashboard.gerhardvanwijk.workers.dev
-Pushed to GitHub: origin/main (commit a1e4016)
+Pushed to GitHub: origin/main (commit 426a2fe)
 
 This file is updated after each work session so you can see what changed,
 what was actually tested (not just written), and what still needs your
 action. "Deployed" means it's live on the website above. "Applied" (for
-migrations) means it needs to be run in the Supabase SQL Editor.
+database changes) means it's already been run — nothing further needed
+unless stated otherwise.
 
 ====================================
 STILL NEEDS YOUR ACTION
 ====================================
 
-1. CONFIRMED DONE (checked 2026-08-13, later session): migrations 0020,
-   0021, and 0022 are all applied and live — photo uploads on Log Service/
-   Book In, the editable Job Statuses/Line Types lists in Settings > Job
-   Cards, and the Machine Type field on Book In should all work now.
+1. Old Google Calendar Cloud Functions (removed from the app back on
+   2026-08-12) were never actually deleted from Google Cloud, so they may
+   still be costing you money. The exact delete command is in
+   docs/ai-memory/KNOWN_ISSUES.md — ask Claude for it directly if you'd
+   rather not dig through that file.
 
-2. DONE (2026-08-13): Dashboard Notes now run entirely on Supabase --
-   no Cloud Function, no Worker, no separate service of any kind, nothing
-   left to deploy. Migration applied, and the full permissions test
-   (who can read/edit/delete which notes) was actually run against the
-   real database: 24 out of 24 checks passed, including that a regular
-   user genuinely cannot edit/delete someone else's note or fake who a
-   note is from, and that an administrator genuinely can. All test data
-   cleaned up afterward, independently double-checked.
-   Separately, still unresolved: the OLD Google Calendar Cloud Functions
-   (removed from the app back on 2026-08-12) were never actually deleted
-   from Google Cloud, so they may still be costing you money. Command to
-   delete them is in docs/ai-memory/KNOWN_ISSUES.md -- ask Claude for it
-   directly if you'd rather not dig through that file.
+2. The Knowledge Base's photo/document uploads on the WEBSITE have a real
+   bug: any photo or document uploaded there will silently stop loading
+   exactly 7 days after upload (the file itself is safe, the app just
+   loses track of how to find it again). This is a known, understood bug
+   with a clear fix planned, but it hasn't been built yet, so Android
+   doesn't have Knowledge Base upload either (on purpose — no point
+   building it against a broken foundation). If you've uploaded any real
+   Knowledge Base photos/documents more than a week ago, they may already
+   be affected — worth checking.
 
-3. When you're ready to test the real customer import: go to Settings >
-   Data Management > Import Customers and upload your Pastel Excel export.
-   Nothing has been imported yet — the importer is built and tested against
-   made-up data only.
+3. When you get a chance, try the new Settings screen on your phone
+   (bottom nav > More > Settings, Administrator accounts only) — it's
+   real and tested against the live database, but nobody has actually
+   looked at it running on a real screen yet.
+
+4. Try the new Light/Dark appearance toggle on Android (Settings >
+   Appearance) — same situation, works correctly by every test available
+   short of a human looking at it.
 
 ====================================
-WHAT'S LIVE ON THE WEBSITE NOW
+WHAT'S NEW SINCE THE LAST UPDATE (2026-08-13 -> 2026-08-17)
 ====================================
 
-BUG FIXES (things that were broken and now work):
-- Adding a product/service to a Job Card now actually shows up after you
-  refresh the page or reopen it. (It was saving to the database correctly
-  before, but the page wasn't re-reading it back — now fixed.)
-- The Jobs list page: clicking a job now reliably opens it. Before, on most
-  normal desktop screen sizes, clicking did nothing visible.
-- The Jobs list page no longer shows "Unknown Client" / "Unknown Machine"
-  for real jobs with real data — that was a display bug, not bad data.
-- Notes linked to a customer from the Dashboard now show up on that
-  customer's own page (they were being saved but never displayed there).
-- You can now edit an existing product/service line on a Job Card, not just
-  add or delete one.
-- The "Machine Type" field on the Add/Edit Machine form now actually saves
-  (it existed on screen but was silently ignored before).
-- Photo uploads on Log Service and Book In now actually save to the record
-  (pending migration 0020 above — the code is fixed, needs the database
-  column).
+DELETE BUTTONS (both website and Android):
+- You can now delete Clients, Job Cards, and Knowledge Base entries on
+  both platforms. Deleting a Client also removes its Machines (a real bug
+  fix — deleting a client with machines used to fail outright).
 
-NEW FEATURES:
-- Settings page (visible to Administrators only): Job Card configuration
-  (job numbering prefix, default status, default quantities, which
-  statuses/line types are available), and a Products & Services catalogue
-  you can manage yourself (add/edit/archive products and services with
-  prices) — these now feed directly into the "Add Line" picker on Job
-  Cards.
-- Customer Import tool (Settings > Data Management) — upload an Excel file
-  from Pastel, map the columns, preview what will be imported, see
-  duplicates flagged, then confirm. Built to be reusable for future
-  imports, not a one-time script.
+CUSTOMER IMPORT CAN NOW UPDATE EXISTING CUSTOMERS:
+- Previously the importer could only create new customers. Now it can
+  also update an existing one it recognizes (matched by code, email,
+  phone, or name) — you choose per row whether to skip, update, or import
+  as new. Notes are added to, never overwritten.
 
-DASHBOARD:
-- Greeting now says "Good morning / afternoon / evening, [your real name]"
-  based on the time of day, with the current date and time shown
-  underneath, updating live while the page is open.
+ANDROID — USERS & ROLES (new):
+- Administrators can now view and edit user roles/permissions from the
+  Android app, not just the website. Creating brand-new accounts still
+  has to happen through normal sign-up on either platform — that's a
+  deliberate security decision, not a missing feature.
 
-CALENDAR:
-- Fixed: the calendar now correctly switches between month view and list
-  view when you resize the browser window or rotate your device (it used
-  to only check this once when the page first loaded).
+ANDROID — CONNECTION STATUS FIXED:
+- The "Connection and Sync Status" screen was actually checking an old,
+  no-longer-used system in the background. It now genuinely checks the
+  real database, so it can't show "Connected" during a real outage or
+  "broken" when everything's actually fine.
 
-LOGIN PAGE:
-- Reduced a large empty gap that appeared above the login form on mobile
-  phones.
+ANDROID — OLD BACKEND FULLY REMOVED:
+- The Android app's old backend system (Firebase, the thing it used to
+  run on before the switch) has been completely and verifiably removed.
+  Both apps now run on exactly the same database, nothing split anymore.
+
+ANDROID — NEW SETTINGS SCREEN:
+- Administrators can now configure Job Card settings (numbering, default
+  status, which statuses/line types are available) and manage the
+  Products & Services catalogue directly from the Android app — the same
+  thing the website's Settings page already did, now on your phone too.
+
+ANDROID — LIGHT/DARK APPEARANCE:
+- The Android app can now switch between a light look, a dark look, or
+  automatically follow your phone's own setting. Before this, it only
+  ever had one dark look with no way to change it.
+
+A REAL BUG FOUND AND FIXED TODAY — "silent failure" on denied saves:
+- Found and fixed a subtle issue: in one specific scenario (an
+  administrator's permission being taken away while they still had a
+  settings screen open on the app), the app could have shown "Saved
+  successfully" even though the save was correctly blocked. No customer
+  data was ever at risk — the security check itself was always working
+  correctly, this was purely about the app being honest with the user
+  about what actually happened. Found through direct testing against the
+  live database, fixed, and re-tested — confirmed working now.
 
 ====================================
 WHAT WAS TESTED (not just written)
 ====================================
 - Every code change: automated checks (lint, type-check, build) — all
-  clean.
-- Job Card product/service add-edit-delete-refresh cycle: tested directly
-  against the live database with throwaway test data — 13/13 checks
-  passed, including confirming that editing a catalogue item's price later
-  does NOT change the price already charged on old job cards.
-- Jobs page fix: tested directly against the live database — 7/7 checks
-  passed.
-- Settings permissions: tested that an Administrator can access Settings
-  and a Technician cannot — working correctly both ways.
-- Customer importer: built a test spreadsheet matching real-world
-  scenarios (duplicate rows, missing data, similarly-named companies) and
-  ran it through the actual import logic — found and fixed two real gaps
-  in duplicate detection before you ever see the real file.
-- All test data was created and then fully deleted — nothing left behind
-  in the real database.
-
-====================================
-UPDATE — ANDROID REDESIGN (same day, later)
-====================================
-- The Android app has now been visually redesigned to match the web app's
-  look and feel — same dark navy/blue color scheme, same card style,
-  status badges, spacing, and typography as the website, while staying a
-  proper mobile app (bottom navigation, touch-friendly buttons, mobile-
-  style forms and dialogs) rather than a copy-paste of the web layout.
-- This was verified with a real rebuild before being committed: the app
-  compiled successfully, all automated checks still pass, and no new
-  warnings were introduced compared to before the redesign.
-- The Android app's connection to Firebase was NOT touched — it still logs
-  in and reads/writes data exactly as before, only the visual appearance
-  changed.
-- Nothing was changed in how the app talks to the database or handles
-  login — this was a look-and-feel update only.
+  clean, on both the website and the Android app.
+- The website was actually deployed and then checked live — not just
+  "the deploy command succeeded," but confirming the live site is
+  genuinely serving the new code.
+- The Android app was actually compiled and built into a real installable
+  file (not just "the code looks right") — including catching and fixing
+  two real bugs that only showed up when actually compiling it.
+- The new Settings feature (Job Card config + Products & Services) was
+  tested directly against the live database: creating, editing, and
+  archiving items, saving Job Card settings, and confirming a user
+  WITHOUT the right permission is genuinely blocked from all of the
+  above — 38 out of 38 checks passed, with everything cleaned up
+  afterward and independently double-checked.
 
 ====================================
 NOT YET DONE / IN PROGRESS
 ====================================
-- A full page-by-page mobile-phone-screen review of the WEBSITE is done —
-  every page you listed has been checked and any real problems found were
-  fixed. A small number of borderline/cosmetic items were noted but not
-  changed since they weren't clear-cut problems.
-- The Android redesign covered the main screens in one pass. If anything
-  looks off on a specific screen once you actually use it on a phone,
-  flag it and it can be refined further.
-- Responsive testing throughout this whole session has been done by
-  reading the code carefully, not by physically viewing pages in a real
-  browser or on a real phone (no browser/device testing tool is available
-  in this environment). Everything reported as "fixed" was reasoned
-  through and, where possible, tested against the real database — but a
-  final visual check by you on an actual phone/browser is still worthwhile.
-
-====================================
+- A final "does everything look good on every phone screen size" pass
+  across both apps hasn't been done yet — deliberately saved for last,
+  after everything else above was finished.
+- The website doesn't have a light/dark appearance option yet — only
+  Android does, for now. This is a bigger, separate piece of work.
+- The Knowledge Base upload bug (item 2 above) is understood but not yet
+  fixed — needs a small database change plus a matching code fix on the
+  website, then Android's own upload feature can be built.
