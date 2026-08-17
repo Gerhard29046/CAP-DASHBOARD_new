@@ -1,23 +1,34 @@
 import React, { useState } from "react";
-import { Link } from "react-router-dom";
-import { apiClient } from "@/api/apiClient";
+import { Link, useNavigate } from "react-router-dom";
+import { useAuth } from "@/lib/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { UserPlus, Mail, Lock, Loader2 } from "lucide-react";
-import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
+import { UserPlus, Mail, Lock, Loader2, MailCheck } from "lucide-react";
 import AuthLayout from "@/components/AuthLayout";
-import GoogleIcon from "@/components/GoogleIcon";
 import { toast } from "@/components/ui/use-toast";
 
+// REWRITTEN (2026-08-17): the previous version called apiClient.auth.register()/
+// verifyOtp()/resendOtp()/loginWithProvider("google") -- none of those methods exist
+// anywhere in the live Supabase-backed apiClient (supabaseApiClient.js's `auth` object only
+// ever had me/logout/resetPasswordRequest/resetPassword). Every registration attempt threw
+// a TypeError immediately -- this page has never actually worked since the Supabase
+// cutover. Now uses useAuth().register() (real supabase.auth.signUp(), see
+// SupabaseAuthContext.jsx), and shows an honest "check your email" state instead of a fake
+// 6-digit code entry (Supabase's default confirmation flow is a clickable email link, not a
+// code -- an OTP-entry UI would just never receive anything to type in). The "Continue with
+// Google" button is removed entirely rather than left clickable-but-dead: no Google OAuth
+// provider is configured/verified for this Supabase project, and shipping a button that
+// silently does nothing (or errors) is the same class of bug this rewrite is fixing.
 export default function Register() {
+  const navigate = useNavigate();
+  const { register, resendConfirmation } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [showOtp, setShowOtp] = useState(false);
-  const [otpCode, setOtpCode] = useState("");
+  const [confirmationSent, setConfirmationSent] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -26,28 +37,22 @@ export default function Register() {
       setError("Passwords do not match");
       return;
     }
+    if (password.length < 6) {
+      setError("Password must be at least 6 characters");
+      return;
+    }
     setLoading(true);
     try {
-      await apiClient.auth.register({ email, password });
-      setShowOtp(true);
+      const result = await register(email, password);
+      if (result.status === "signed_in") {
+        navigate("/");
+      } else if (result.status === "confirmation_required") {
+        setConfirmationSent(true);
+      } else {
+        setError(result.message || "Registration failed");
+      }
     } catch (err) {
       setError(err.message || "Registration failed");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleVerify = async () => {
-    setError("");
-    setLoading(true);
-    try {
-      const result = await apiClient.auth.verifyOtp({ email, otpCode });
-      if (result?.access_token) {
-        apiClient.auth.setToken(result.access_token);
-      }
-      window.location.href = "/";
-    } catch (err) {
-      setError(err.message || "Invalid verification code");
     } finally {
       setLoading(false);
     }
@@ -56,66 +61,35 @@ export default function Register() {
   const handleResend = async () => {
     setError("");
     try {
-      await apiClient.auth.resendOtp(email);
-      toast({
-        title: "Code sent",
-        description: "Check your email for the new code.",
-      });
+      await resendConfirmation(email);
+      toast({ title: "Email sent", description: "Check your inbox for the confirmation link." });
     } catch (err) {
-      setError(err.message || "Failed to resend code");
+      setError(err.message || "Failed to resend the confirmation email");
     }
   };
 
-  const handleGoogle = () => {
-    apiClient.auth.loginWithProvider("google", "/");
-  };
-
-  if (showOtp) {
+  if (confirmationSent) {
     return (
       <AuthLayout
-        icon={Mail}
-        title="Verify your email"
-        subtitle={`We sent a code to ${email}`}
+        icon={MailCheck}
+        title="Check your email"
+        subtitle={`We sent a confirmation link to ${email}`}
       >
+        <p className="text-sm text-muted-foreground text-center mb-6">
+          Click the link in that email to confirm your account, then sign in. Once you've
+          signed in, an administrator can select your name under User Management to assign
+          your role and permissions.
+        </p>
         {error && (
           <div className="mb-4 p-3 rounded-lg bg-destructive/10 text-destructive text-sm">
             {error}
           </div>
         )}
-        <div className="flex justify-center mb-6">
-          <InputOTP
-            maxLength={6}
-            value={otpCode}
-            onChange={setOtpCode}
-            autoFocus
-            autoComplete="one-time-code"
-          >
-            <InputOTPGroup>
-              <InputOTPSlot index={0} />
-              <InputOTPSlot index={1} />
-              <InputOTPSlot index={2} />
-              <InputOTPSlot index={3} />
-              <InputOTPSlot index={4} />
-              <InputOTPSlot index={5} />
-            </InputOTPGroup>
-          </InputOTP>
-        </div>
-        <Button
-          className="w-full h-12 font-medium"
-          onClick={handleVerify}
-          disabled={loading || otpCode.length < 6}
-        >
-          {loading ? (
-            <>
-              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              Verifying...
-            </>
-          ) : (
-            "Verify"
-          )}
+        <Button asChild className="w-full h-12 font-medium mb-3">
+          <Link to="/login">Go to sign in</Link>
         </Button>
-        <p className="text-center text-sm text-muted-foreground mt-4">
-          Didn't receive the code?{" "}
+        <p className="text-center text-sm text-muted-foreground">
+          Didn't get the email?{" "}
           <button onClick={handleResend} className="text-primary font-medium hover:underline">
             Resend
           </button>
@@ -138,24 +112,6 @@ export default function Register() {
         </>
       }
     >
-      <Button
-        variant="outline"
-        className="w-full h-12 text-sm font-medium mb-6"
-        onClick={handleGoogle}
-      >
-        <GoogleIcon className="w-5 h-5 mr-2" />
-        Continue with Google
-      </Button>
-
-      <div className="relative mb-6">
-        <div className="absolute inset-0 flex items-center">
-          <div className="w-full border-t border-border" />
-        </div>
-        <div className="relative flex justify-center text-xs uppercase">
-          <span className="bg-card px-3 text-muted-foreground">or</span>
-        </div>
-      </div>
-
       {error && (
         <div className="mb-4 p-3 rounded-lg bg-destructive/10 text-destructive text-sm">
           {error}

@@ -1,6 +1,9 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
 import { supabase } from "@/services/supabase/client";
-import { loadUserProfile, requestPasswordReset, signInWithPassword, signOut as supabaseSignOut } from "@/services/supabase/auth";
+import {
+  loadUserProfile, requestPasswordReset, signInWithPassword, signOut as supabaseSignOut,
+  signUp, resendSignupConfirmation,
+} from "@/services/supabase/auth";
 
 // Parallel Supabase-backed auth context, matching frontend/src/lib/AuthContext.jsx's
 // public interface (user/isAuthenticated/isLoadingAuth/authError/login/logout/
@@ -99,6 +102,38 @@ export function useSupabaseAuthState() {
     }
   };
 
+  // NEW (2026-08-17): real self-service registration, replacing Register.jsx's previously
+  // entirely-nonfunctional apiClient.auth.register()/verifyOtp() calls (see auth.js's
+  // signUp() header comment). Deliberately does NOT assume a session comes back -- most
+  // Supabase projects require email confirmation before a session is issued, so the caller
+  // needs to branch on `status`, not assume "signed_in" every time. Also deliberately does
+  // NOT touch `user`/local auth state on the "confirmation_required" path, so calling this
+  // from an already-signed-in session (e.g. an admin using this page to create a colleague's
+  // account) can't silently clobber the admin's own session unless Supabase actually hands
+  // back an immediate session (email confirmation disabled project-wide).
+  const register = async (email, password) => {
+    setAuthError(null);
+    try {
+      const data = await signUp(email, password, {
+        emailRedirectTo: `${window.location.origin}/login`,
+      });
+      if (data.session?.user) {
+        const profileRow = await loadUserProfile(data.session.user.id);
+        setUser(normalizeProfile(profileRow));
+        return { status: "signed_in" };
+      }
+      return { status: "confirmation_required" };
+    } catch (error) {
+      const message = supabaseAuthMessage(error);
+      setAuthError({ type: "supabase_error", message });
+      return { status: "error", message };
+    }
+  };
+
+  const resendConfirmation = async (email) => {
+    await resendSignupConfirmation(email, `${window.location.origin}/login`);
+  };
+
   const logout = async () => {
     await supabaseSignOut();
     setUser(null);
@@ -126,6 +161,8 @@ export function useSupabaseAuthState() {
     appPublicSettings: null,
     authChecked: !isLoadingAuth,
     login,
+    register,
+    resendConfirmation,
     logout,
     requestPasswordReset,
     navigateToLogin: () => { window.location.href = "/login"; },

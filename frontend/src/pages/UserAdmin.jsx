@@ -111,11 +111,22 @@ export default function UserAdmin() {
   // someone actually signs up through Supabase Auth -- there is no client-safe way to create a
   // real auth account (and therefore a valid public.users row) from here without a service_role
   // key, which frontend code must never hold. New accounts are created via self-service sign-up
-  // (Register.jsx); an admin's role here is to select that person afterward and configure their
+  // (Register.jsx, made real 2026-08-17 -- it used to call apiClient.auth methods that never
+  // existed); an admin's role here is to select that person afterward and configure their
   // role/permissions, not to originate the account.
+  //
+  // UPDATE (2026-08-17): opens Register.jsx in a NEW TAB rather than navigating this tab away.
+  // register() (SupabaseAuthContext.jsx) calls supabase.auth.signUp(), which -- if this
+  // Supabase project ever has "Confirm email" turned off -- returns an immediate session and
+  // would silently replace whatever session is currently active in that browser tab. An admin
+  // clicking this while signed in here must not risk losing their own session; a new tab
+  // isolates that risk entirely (browser tabs don't share supabase-js's in-memory session
+  // unless using the exact same storage, and even then the admin's own tab stays on their own
+  // page, unaffected by what happens in the other tab).
   const startNew = () => {
     setSelected(null); setMatrix([]); setForm(blank);
-    setMessage("New accounts are created by the person themselves at the Register page (email sign-up). Once they've registered, select their name from the list on the left to assign a role and permissions.");
+    window.open("/register", "_blank", "noopener,noreferrer");
+    setMessage("Opened the registration page in a new tab. Have the new person fill it in (or fill it in for them there) -- once they've registered and confirmed their email, select their name from the list on the left to assign a role and permissions.");
   };
 
   const cancel = () => { setSelected(null); setMatrix([]); setMessage(""); setConfirmingDelete(false); };

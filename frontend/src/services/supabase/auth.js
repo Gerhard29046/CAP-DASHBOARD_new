@@ -18,6 +18,37 @@ export async function signInWithPassword(email, password) {
   return data;
 }
 
+// NEW (2026-08-17): self-service registration. Register.jsx previously called
+// apiClient.auth.register()/verifyOtp()/resendOtp()/loginWithProvider() -- none of which
+// existed anywhere in the Supabase-backed apiClient (supabaseApiClient.js's `auth` object
+// only ever had me/logout/resetPasswordRequest/resetPassword). Those were dead calls left
+// over from the old Firebase-era apiClient.js's OTP-code + Google-provider flow; every
+// registration attempt would have thrown a TypeError immediately. Real Supabase sign-up:
+// public.users' `handle_new_auth_user` trigger (0001_initial_schema.sql) auto-creates the
+// profile row the moment auth.users gets the new row, so the person appears in
+// UserAdmin.jsx's list right away regardless of whether email confirmation is required to
+// actually log in yet.
+export async function signUp(email, password, options = {}) {
+  const { data, error } = await supabase.auth.signUp({
+    email: email.trim(),
+    password,
+    options,
+  });
+  if (error) throw error;
+  return data;
+}
+
+// Re-sends the signup confirmation email (Supabase's own rate-limited resend endpoint) --
+// used by Register.jsx's "Didn't get the email?" action.
+export async function resendSignupConfirmation(email, redirectTo) {
+  const { error } = await supabase.auth.resend({
+    type: "signup",
+    email: email.trim(),
+    options: { emailRedirectTo: redirectTo },
+  });
+  if (error) throw error;
+}
+
 export async function signOut() {
   const { error } = await supabase.auth.signOut();
   if (error) throw error;
