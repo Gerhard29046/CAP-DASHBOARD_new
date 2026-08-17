@@ -475,7 +475,6 @@ npm run lint
 npm run lint:fix
 npm run typecheck
 npm test
-npm run test:e2e:live
 ```
 
 Notes:
@@ -483,8 +482,16 @@ Notes:
 - `npm run typecheck` runs `tsc -p ./jsconfig.json`.
 - This is a JavaScript/JSDoc project, not a TypeScript migration.
 - Do not convert `.js` or `.jsx` files to `.ts` or `.tsx` incidentally.
-- `npm run test:e2e:live` uses live Supabase, not an emulator. Run it only deliberately and explain the risk first.
-- The frontend has **zero automated tests** as of the 2026-08-13 Supabase cutover (the only test file exercised a Firebase-ID-compat helper that was deleted along with the rest of the Firebase code). This is a real, disclosed gap, not an oversight to silently work around — flag it rather than assuming coverage exists.
+- `npm run test:e2e:live` was removed 2026-08-17 — `tests/live-sync.mjs` imported the `firebase`
+  npm package, which was fully removed from `frontend/` during the 2026-08-13 Supabase cutover,
+  so the script could only ever fail with a missing-module error. Found stale and deleted
+  (along with its `package.json` script entry) while cleaning up Android's equivalent stale
+  Firebase-era test artifact (`LiveFirebaseSmokeTest.kt`) — see `docs/ai-memory/DECISIONS.md`.
+- The frontend has a real, growing `node --test` suite as of 2026-08-17 (58 tests across
+  `tests/customerImport.test.js` and `tests/recordPhotoPath.test.js`, `npm test`) — this
+  replaces the "zero automated tests" state from the 2026-08-13 cutover. Still no component/
+  integration/E2E test layer (React Testing Library, Playwright, etc.) — only pure-logic unit
+  tests exist so far. Don't assume UI-level test coverage exists just because `npm test` passes.
 
 ## Backend — `backend/`
 

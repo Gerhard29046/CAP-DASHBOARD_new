@@ -1,5 +1,20 @@
 # Android → Supabase Migration — Phase A/B/C/D
 
+**STALE STATUS LINE BELOW, CORRECTED 2026-08-17 — READ THIS FIRST.** This file's own status
+line still said "Phases E–J NOT started" as late as 2026-08-17, which is no longer true and
+actively misled an agent that session (see `docs/ai-memory/DECISIONS.md`'s matching entry).
+**The migration is fully complete.** Firebase was removed from `mobile-android/` entirely on
+2026-08-16 (Phase 12 of the separate cross-platform parity initiative, real-build-verified —
+see `docs/ai-memory/ROADMAP.md`'s Phase 12 entry and `CLAUDE.md` §6.2). `Core.kt`'s
+`AuthRepository` has a single constructor dependency (`SupabaseAuthRepository`); there is no
+`FirebaseAuth`/`FirebaseFirestore` reference left anywhere in `mobile-android/` source. Before
+trusting anything below this point about "not started" phases, check `docs/ai-memory/
+ROADMAP.md` and `CLAUDE.md` §6.2 for the actual current state — this file was never fully
+updated as later sessions (outside this document's own A–D scope) finished the remaining work.
+
+Original content, preserved for history below (describes Phases A–D specifically, which really
+were this file's own scope and really are accurately described):
+
 Living document for the Android Firebase→Supabase migration (separate project from the
 completed web migration — see `docs/ai-memory/DECISIONS.md`'s 2026-08-13 entries for that
 one; do not confuse the two). Status: **Phase A (audit), Phase B (mapping + navigation
