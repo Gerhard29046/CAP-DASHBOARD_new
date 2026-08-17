@@ -1,9 +1,12 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { dashboardNotesClient } from "@/api/dashboardNotesClient";
 import { apiClient } from "@/api/apiClient";
 import { useAuth } from "@/lib/AuthContext";
 import { Link } from "react-router-dom";
-import { Plus, X, StickyNote, Building2, Search, Check } from "lucide-react";
+import { Plus, X, StickyNote, Building2, Search } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
+import { Button } from "@/components/ui/button";
 import moment from "moment";
 
 // Dashboard sticky notes -- GLOBAL (every signed-in user sees every note), explicit user
@@ -32,11 +35,12 @@ export default function StickyNotes() {
   const [notes, setNotes] = useState([]);
   const [clients, setClients] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [adding, setAdding] = useState(false);
-  const [draft, setDraft] = useState("");
-  const [linkedClientId, setLinkedClientId] = useState(null);
-  const [showClientPicker, setShowClientPicker] = useState(false);
-  const draftRef = useRef(null);
+  // NEW (2026-08-17, explicit request): "Add note" now opens a small popup dialog (select a
+  // customer, type the message, press Save) instead of the previous inline in-grid compose
+  // card. Existing per-note inline click-to-edit (StickyNoteCard below) is UNCHANGED -- the
+  // request was specifically "it should still be able to edit that note", i.e. don't break
+  // that existing capability while changing how a NEW note is created.
+  const [showAddDialog, setShowAddDialog] = useState(false);
 
   const load = async () => {
     try {
@@ -54,24 +58,13 @@ export default function StickyNotes() {
   };
 
   useEffect(() => { load(); }, []);
-  useEffect(() => { if (adding) draftRef.current?.focus(); }, [adding]);
 
   const clientMap = useMemo(() => Object.fromEntries(clients.map((c) => [c.id, c])), [clients]);
 
-  const resetDraft = () => { setDraft(""); setAdding(false); setLinkedClientId(null); setShowClientPicker(false); };
-
-  const addNote = async () => {
-    const content = draft.trim();
-    if (!content) { resetDraft(); return; }
+  const addNote = async ({ content, clientId }) => {
     const color = COLOR_KEYS[notes.length % COLOR_KEYS.length];
-    const clientId = linkedClientId;
-    resetDraft();
-    try {
-      const created = await dashboardNotesClient.create({ content, color, client_id: clientId });
-      setNotes((prev) => [created, ...prev]);
-    } catch (e) {
-      console.error("Failed to add note:", e);
-    }
+    const created = await dashboardNotesClient.create({ content, color, client_id: clientId });
+    setNotes((prev) => [created, ...prev]);
   };
 
   const updateNote = async (id, content) => {
@@ -98,13 +91,21 @@ export default function StickyNotes() {
 
   return (
     <section className="bg-card rounded-xl border border-border animate-slide-up" style={{ animationDelay: "200ms" }}>
+      {showAddDialog && (
+        <NoteDialog
+          clients={clients}
+          onClose={() => setShowAddDialog(false)}
+          onSave={async (payload) => { await addNote(payload); setShowAddDialog(false); }}
+        />
+      )}
+
       <div className="flex items-center justify-between px-5 py-4 border-b border-border">
         <h2 className="font-heading font-semibold text-foreground flex items-center gap-2">
           <StickyNote className="w-4.5 h-4.5 text-primary" />
           Notes
         </h2>
         <button
-          onClick={() => setAdding(true)}
+          onClick={() => setShowAddDialog(true)}
           className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
         >
           <Plus className="w-3.5 h-3.5" /> Add note
@@ -112,52 +113,12 @@ export default function StickyNotes() {
       </div>
 
       <div className="p-5">
-        {notes.length === 0 && !adding ? (
+        {notes.length === 0 ? (
           <p className="text-sm text-muted-foreground py-2">
             No notes yet. Add a quick reminder — visible to the whole team.
           </p>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-            {adding && (
-              <div className={`rounded-lg border p-3 min-h-[120px] flex flex-col gap-2 ${COLORS[COLOR_KEYS[notes.length % COLOR_KEYS.length]]}`}>
-                <textarea
-                  ref={draftRef}
-                  value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); addNote(); }
-                    if (e.key === "Escape") resetDraft();
-                  }}
-                  placeholder="Type a note…"
-                  className="flex-1 bg-transparent resize-none text-sm outline-none placeholder:text-current placeholder:opacity-50"
-                />
-                {linkedClientId && clientMap[linkedClientId] && (
-                  <ClientLabel name={clientMap[linkedClientId].company_name} onRemove={() => setLinkedClientId(null)} />
-                )}
-                {showClientPicker ? (
-                  <ClientPicker
-                    clients={clients}
-                    onSelect={(id) => { setLinkedClientId(id); setShowClientPicker(false); }}
-                    onClose={() => setShowClientPicker(false)}
-                  />
-                ) : (
-                  <div className="flex items-center justify-between gap-2">
-                    {!linkedClientId && (
-                      <button
-                        type="button"
-                        onClick={() => setShowClientPicker(true)}
-                        className="inline-flex items-center gap-1 text-xs opacity-70 hover:opacity-100 transition-opacity"
-                      >
-                        <Building2 className="w-3 h-3" /> Link client
-                      </button>
-                    )}
-                    <button type="button" onClick={addNote} className="ml-auto inline-flex items-center gap-1 text-xs font-medium opacity-80 hover:opacity-100">
-                      <Check className="w-3.5 h-3.5" /> Save
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
             {notes.map((note) => (
               <StickyNoteCard
                 key={note.id}
@@ -220,6 +181,87 @@ function ClientPicker({ clients, onSelect, onClose }) {
         Cancel
       </button>
     </div>
+  );
+}
+
+// Small popup for creating a new note: pick a customer, type the message, press Save.
+// Replaces the previous inline in-grid compose card (2026-08-17, explicit request).
+function NoteDialog({ clients, onClose, onSave }) {
+  const [content, setContent] = useState("");
+  const [clientId, setClientId] = useState(null);
+  const [showPicker, setShowPicker] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const selectedClient = clients.find((c) => c.id === clientId) || null;
+
+  const save = async () => {
+    const trimmed = content.trim();
+    if (!trimmed || saving) return;
+    setSaving(true);
+    try {
+      await onSave({ content: trimmed, clientId });
+    } catch (e) {
+      console.error("Failed to add note:", e);
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Add note</DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-3">
+          <div>
+            <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Customer (optional)</label>
+            {showPicker ? (
+              <ClientPicker
+                clients={clients}
+                onSelect={(id) => { setClientId(id); setShowPicker(false); }}
+                onClose={() => setShowPicker(false)}
+              />
+            ) : selectedClient ? (
+              <div className="flex items-center gap-2">
+                <span className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-lg border bg-primary/10 text-primary border-primary/20">
+                  <Building2 className="w-3.5 h-3.5" /> {selectedClient.company_name}
+                </span>
+                <button type="button" onClick={() => setClientId(null)} className="text-xs text-muted-foreground hover:text-foreground">
+                  Remove
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setShowPicker(true)}
+                className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground border border-dashed border-border rounded-lg px-3 py-2 w-full justify-center"
+              >
+                <Search className="w-3.5 h-3.5" /> Select a customer
+              </button>
+            )}
+          </div>
+
+          <div>
+            <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Message</label>
+            <Textarea
+              autoFocus
+              value={content}
+              onChange={(e) => setContent(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); save(); } }}
+              placeholder="Type a note…"
+              rows={4}
+            />
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={onClose} disabled={saving}>Cancel</Button>
+          <Button type="button" onClick={save} disabled={saving || !content.trim()}>
+            {saving ? "Saving…" : "Save"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { apiClient } from "@/api/apiClient";
 import { useAuth } from "@/lib/AuthContext";
 import { Link } from "react-router-dom";
-import { Users, Cpu, Wrench, CalendarClock, ChevronRight, Plus, ClipboardList } from "lucide-react";
+import { Users, Cpu, Wrench, CalendarClock, ChevronRight, Plus, ClipboardList, CalendarDays } from "lucide-react";
 import StatCard from "@/components/StatCard";
 import EmptyState from "@/components/EmptyState";
 import { Button } from "@/components/ui/button";
@@ -18,11 +18,18 @@ function greeting(now) {
   return "Good evening";
 }
 
+// Stat cards link straight into the relevant list page (2026-08-17, explicit request: "top
+// clients machines services and active jobs all should be clickable"). There is no dedicated
+// standalone Machines list page in this app today -- every machine is browsed via its owning
+// client (Clients -> ClientDetail -> MachineDetail) -- so the Machines card also points at
+// /clients, the real entry point, rather than a route that doesn't exist.
+const STAT_LINKS = { clients: "/clients", machines: "/clients", services: "/service-records", activeJobs: "/jobs" };
+
 export default function Dashboard() {
   const { user } = useAuth();
   const [stats, setStats] = useState({ clients: 0, machines: 0, services: 0, activeJobs: 0 });
-  const [upcoming, setUpcoming] = useState([]);
-  const [recentClients, setRecentClients] = useState([]);
+  const [weekServices, setWeekServices] = useState([]);
+  const [latestServices, setLatestServices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showLogService, setShowLogService] = useState(false);
   const [now, setNow] = useState(() => moment());
@@ -34,39 +41,65 @@ export default function Dashboard() {
 
   const loadData = async () => {
     try {
+      // Mini week calendar pulls from the SAME `/calendar/events` endpoint CalendarPage.jsx
+      // (the full /calendar page) uses -- not a separately-recomputed filter over raw
+      // service_records. Explicit request (2026-08-17): "it must reflect to the current
+      // existing one too" -- a reschedule made on the full calendar (EventDetails'
+      // "Reschedule" button PATCHes next_service_due) must show up here identically, and this
+      // widget must never drift out of sync with whatever that endpoint's own logic does.
+      const today = moment().startOf("day");
+      const weekEndExclusive = moment().startOf("day").add(7, "days");
+      const calendarQuery = new URLSearchParams({
+        start: today.toISOString(),
+        end: weekEndExclusive.toISOString(),
+        include_services: "1",
+      });
+
       const results = await Promise.allSettled([
         apiClient.entities.Client.list(),
         apiClient.entities.Machine.list(),
         apiClient.entities.ServiceRecord.list("-service_date", 100),
         apiClient.entities.JobCard.list(),
+        apiClient.request(`/calendar/events?${calendarQuery}`),
       ]);
-      const labels = ["clients", "machines", "service records", "job cards"];
+      const labels = ["clients", "machines", "service records", "job cards", "calendar events"];
       results.forEach((result, index) => {
         if (result.status === "rejected") console.error(`Dashboard failed to load ${labels[index]}:`, result.reason);
       });
-      const [clients, machines, services, jobCards] = results.map(result =>
+      const [clients, machines, services, jobCards] = results.slice(0, 4).map(result =>
         result.status === "fulfilled" && Array.isArray(result.value) ? result.value : []
       );
+      const calendarResult = results[4];
+      const calendarEventsThisWeek = calendarResult.status === "fulfilled" ? (calendarResult.value?.events || []) : [];
+
       const activeJobs = jobCards.filter(j => ["Open", "Booked In", "In Progress"].includes(j.status)).length;
       setStats({ clients: clients.length, machines: machines.length, services: services.length, activeJobs });
-      setRecentClients([...clients].sort((a, b) => (b.created_at || "").localeCompare(a.created_at || "")).slice(0, 5));
-
-      const today = moment().format("YYYY-MM-DD");
-      const next30 = moment().add(30, "days").format("YYYY-MM-DD");
-      const upcomingList = services.filter(s => s.next_service_due && s.next_service_due >= today && s.next_service_due <= next30);
-      upcomingList.sort((a, b) => a.next_service_due.localeCompare(b.next_service_due));
 
       const machineMap = {};
       machines.forEach(m => { machineMap[m.id] = m; });
       const clientMap = {};
       clients.forEach(c => { clientMap[c.id] = c; });
-
-      const enriched = upcomingList.slice(0, 5).map(s => ({
+      const enrich = (s) => ({
         ...s,
         machine: machineMap[s.machine_id],
         client: machineMap[s.machine_id] ? clientMap[machineMap[s.machine_id].client_id] : null,
-      }));
-      setUpcoming(enriched);
+      });
+
+      // Same event shape calendarEvents() (supabaseApiClient.js) already builds for the full
+      // /calendar page -- just re-sorted, no re-filtering/re-deriving of our own.
+      const weekEvents = [...calendarEventsThisWeek].sort((a, b) => (a.start || "").localeCompare(b.start || ""));
+      setWeekServices(weekEvents);
+
+      // "Latest services done" (replaces "Upcoming work") -- most recently completed service
+      // records, newest first. Only rows with an actual service_date count as "done". Not
+      // calendar data (this is "done", not "upcoming"), so still sourced from service_records
+      // directly, same as before.
+      const completed = services
+        .filter(s => s.service_date)
+        .sort((a, b) => (b.service_date || "").localeCompare(a.service_date || ""))
+        .slice(0, 6)
+        .map(enrich);
+      setLatestServices(completed);
     } catch (e) { console.error("Dashboard data load failed:", e); }
     finally { setLoading(false); }
   };
@@ -79,7 +112,7 @@ export default function Dashboard() {
 
   if (loading) {
     return (
-      <div className="max-w-7xl mx-auto space-y-6">
+      <div className="w-full space-y-6">
         <div className="space-y-2">
           <Skeleton className="h-8 w-64" />
           <Skeleton className="h-4 w-96" />
@@ -95,8 +128,19 @@ export default function Dashboard() {
     );
   }
 
+  // Rolling 7-day window starting today (not calendar Mon-Sun) -- "upcoming services in the
+  // week" reads more naturally as "the week ahead" than a week that could include past days.
+  // `weekServices` here is the exact same event list the full /calendar page renders (see
+  // loadData()) -- `event.start` is a YYYY-MM-DD date string, matching `key` below directly.
+  const weekDays = Array.from({ length: 7 }, (_, i) => {
+    const date = moment().add(i, "days");
+    const key = date.format("YYYY-MM-DD");
+    const dueCount = weekServices.filter(s => s.start === key).length;
+    return { date, key, dueCount, isToday: i === 0 };
+  });
+
   return (
-    <div className="max-w-7xl mx-auto">
+    <div className="w-full">
       {showLogService && (
         <LogServiceModal
           onClose={() => setShowLogService(false)}
@@ -112,8 +156,8 @@ export default function Dashboard() {
           </h1>
           <p className="text-xs text-muted-foreground mt-1">{formattedDateTime}</p>
           <p className="text-sm text-muted-foreground mt-1">
-            {upcoming.length > 0
-              ? `${upcoming.length} service${upcoming.length === 1 ? "" : "s"} due in the next 30 days.`
+            {weekServices.length > 0
+              ? `${weekServices.length} service${weekServices.length === 1 ? "" : "s"} due this week.`
               : "Here's what needs attention today."}
           </p>
         </div>
@@ -123,12 +167,12 @@ export default function Dashboard() {
         </Button>
       </div>
 
-      {/* Key operational stats */}
+      {/* Key operational stats -- each links into the relevant list page */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-8 stagger-in">
-        <StatCard icon={Users} label="Clients" value={stats.clients} accent="primary" />
-        <StatCard icon={Cpu} label="Machines" value={stats.machines} accent="warning" />
-        <StatCard icon={Wrench} label="Services logged" value={stats.services} accent="info" />
-        <StatCard icon={ClipboardList} label="Active jobs" value={stats.activeJobs} accent="success" />
+        <Link to={STAT_LINKS.clients} className="block"><StatCard icon={Users} label="Clients" value={stats.clients} accent="primary" /></Link>
+        <Link to={STAT_LINKS.machines} className="block"><StatCard icon={Cpu} label="Machines" value={stats.machines} accent="warning" /></Link>
+        <Link to={STAT_LINKS.services} className="block"><StatCard icon={Wrench} label="Services logged" value={stats.services} accent="info" /></Link>
+        <Link to={STAT_LINKS.activeJobs} className="block"><StatCard icon={ClipboardList} label="Active jobs" value={stats.activeJobs} accent="success" /></Link>
       </div>
 
       {/* Primary + secondary panels */}
@@ -136,22 +180,22 @@ export default function Dashboard() {
         <section className="bg-card rounded-xl border border-border animate-slide-up" style={{ animationDelay: "80ms" }}>
           <div className="flex items-center justify-between px-5 py-4 border-b border-border">
             <h2 className="font-heading font-semibold text-foreground flex items-center gap-2">
-              <CalendarClock className="w-4.5 h-4.5 text-primary" />
-              Upcoming work
+              <Wrench className="w-4.5 h-4.5 text-primary" />
+              Latest services done
             </h2>
-            <Link to="/upcoming-services" className="text-xs font-medium text-primary hover:underline">
+            <Link to="/service-records" className="text-xs font-medium text-primary hover:underline">
               View all
             </Link>
           </div>
-          {upcoming.length === 0 ? (
+          {latestServices.length === 0 ? (
             <EmptyState
-              icon={CalendarClock}
-              title="Nothing due soon"
-              description="No services are scheduled in the next 30 days."
+              icon={Wrench}
+              title="No services logged yet"
+              description="Completed services will show up here as soon as they're logged."
             />
           ) : (
             <div className="divide-y divide-border">
-              {upcoming.map(s => (
+              {latestServices.map(s => (
                 <Link
                   key={s.id}
                   to={`/machines/${s.machine_id}`}
@@ -159,10 +203,10 @@ export default function Dashboard() {
                 >
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-foreground truncate">
-                      {s.machine ? `${s.machine.brand} ${s.machine.model}` : "Machine"}
+                      {s.client?.company_name || "Unknown client"}
                     </p>
                     <p className="text-xs text-muted-foreground truncate mt-0.5">
-                      {s.client?.company_name || "—"} &middot; {moment(s.next_service_due).format("MMM D, YYYY")}
+                      {s.work_performed || s.findings || s.notes || "No description recorded"}
                     </p>
                   </div>
                   <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-foreground group-hover:translate-x-0.5 transition-all duration-150 shrink-0" />
@@ -172,44 +216,64 @@ export default function Dashboard() {
           )}
         </section>
 
-        <section className="bg-card rounded-xl border border-border animate-slide-up" style={{ animationDelay: "140ms" }}>
+        {/* Mini week calendar (replaces "Recent clients") -- same card footprint, whole card
+            links to the full /calendar page. */}
+        <section className="bg-card rounded-xl border border-border animate-slide-up flex flex-col" style={{ animationDelay: "140ms" }}>
           <div className="flex items-center justify-between px-5 py-4 border-b border-border">
             <h2 className="font-heading font-semibold text-foreground flex items-center gap-2">
-              <Users className="w-4.5 h-4.5 text-primary" />
-              Recent clients
+              <CalendarDays className="w-4.5 h-4.5 text-primary" />
+              This week
             </h2>
-            <Link to="/clients" className="text-xs font-medium text-primary hover:underline">
-              View all
+            <Link to="/calendar" className="text-xs font-medium text-primary hover:underline">
+              Open calendar
             </Link>
           </div>
-          {recentClients.length === 0 ? (
-            <EmptyState
-              icon={Users}
-              title="No clients yet"
-              description="Add your first client to start tracking machines and service history."
-              action={
-                <Button asChild size="sm">
-                  <Link to="/clients/new">Add Client</Link>
-                </Button>
-              }
-            />
-          ) : (
-            <div className="divide-y divide-border">
-              {recentClients.map(c => (
-                <Link
-                  key={c.id}
-                  to={`/clients/${c.id}`}
-                  className="flex items-center justify-between gap-3 px-5 py-3.5 hover:bg-secondary/60 transition-colors duration-150 group"
+          <Link to="/calendar" className="flex-1 flex flex-col p-4 hover:bg-secondary/30 transition-colors duration-150">
+            <div className="grid grid-cols-7 gap-1.5">
+              {weekDays.map(d => (
+                <div
+                  key={d.key}
+                  className={`rounded-lg border p-2 text-center flex flex-col items-center justify-center gap-1 min-h-[72px] ${
+                    d.isToday ? "border-primary bg-primary/10" : "border-border"
+                  }`}
                 >
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-foreground truncate">{c.company_name}</p>
-                    <p className="text-xs text-muted-foreground truncate mt-0.5">{c.contact_person || "No contact"}</p>
-                  </div>
-                  <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-foreground group-hover:translate-x-0.5 transition-all duration-150 shrink-0" />
-                </Link>
+                  <span className="text-[10px] font-medium uppercase text-muted-foreground">{d.date.format("ddd")}</span>
+                  <span className={`text-base font-heading font-bold ${d.isToday ? "text-primary" : "text-foreground"}`}>
+                    {d.date.format("D")}
+                  </span>
+                  {d.dueCount > 0 && (
+                    <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-primary text-primary-foreground text-[10px] font-semibold flex items-center justify-center">
+                      {d.dueCount}
+                    </span>
+                  )}
+                </div>
               ))}
             </div>
-          )}
+            <div className="flex-1 mt-3">
+              {weekServices.length === 0 ? (
+                <EmptyState
+                  icon={CalendarClock}
+                  title="Nothing due this week"
+                  description="No services are scheduled in the next 7 days."
+                />
+              ) : (
+                <div className="divide-y divide-border -mx-4">
+                  {weekServices.slice(0, 4).map(event => (
+                    <div key={event.id} className="flex items-center justify-between gap-3 px-4 py-2.5">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-foreground truncate">
+                          {[event.extendedProps?.machineBrand, event.extendedProps?.machineModel].filter(Boolean).join(" ") || "Machine"}
+                        </p>
+                        <p className="text-xs text-muted-foreground truncate mt-0.5">
+                          {event.extendedProps?.clientName || "—"} &middot; {moment(event.start).format("ddd, MMM D")}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </Link>
         </section>
       </div>
 
