@@ -334,14 +334,22 @@ export const supabaseApiClient = {
         // for genuinely public buckets. Switched to a signed URL instead, matching every
         // other private-bucket read path in this codebase.
         //
-        // KNOWN LIMITATION, not fixed here (narrower than the bug above): Firebase's
+        // KNOWN LIMITATION, still real, no longer silently landmine-shaped: Firebase's
         // getDownloadURL() (apiClient.js's equivalent) returns an effectively permanent
         // token URL that's safe to store in a record and reuse indefinitely. A Supabase
-        // signed URL expires (7 days below) -- if a caller persists this `file_url` value
-        // for long-term reuse rather than displaying it immediately, it will eventually
-        // stop working. Whoever wires this route to a real page/field should either
-        // re-sign on read instead of storing the URL, or store `path` and generate a fresh
-        // signed URL each time it's needed. Not solved here since no caller exists yet.
+        // signed URL expires (7 days below) -- a caller that persists this `file_url` value
+        // for long-term reuse rather than displaying it immediately WILL eventually break.
+        // This is exactly what happened to Knowledge Base's media/document uploads (see
+        // docs/ai-memory/KNOWN_ISSUES.md's matching entry) -- fixed 2026-08-17 by moving
+        // KnowledgeMachineDetail.jsx off this generic helper entirely, onto the dedicated
+        // permanent-path pair in services/supabase/storage.js (uploadKnowledgeMedia()/
+        // uploadKnowledgeDocument()/getKnowledgeFileSignedUrl()), the same pattern already used
+        // for service_records/job_cards photos (uploadRecordPhoto()) and the user's own profile
+        // photo (uploadProfilePhoto()). As of that fix, NO real caller in this codebase uses
+        // this UploadFile() integration anymore -- kept only as a generic primitive for a
+        // future feature that genuinely wants an ephemeral, non-persisted URL. Any new caller
+        // that wants to persist the result long-term must use the permanent-path pattern
+        // instead, not this function.
         await uploadFile("documents", path, optimizedFile, { optimizeImage: false });
         const fileUrl = await getSignedUrl("documents", path, 60 * 60 * 24 * 7);
         return { file_url: fileUrl };

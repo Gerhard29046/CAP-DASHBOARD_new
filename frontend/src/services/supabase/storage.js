@@ -123,3 +123,39 @@ export async function getRecordPhotoSignedUrl(path, expiresInSeconds = 60 * 60) 
 export async function deleteRecordPhoto(path) {
   await deleteFile(BUCKETS.photos, path);
 }
+
+// Record-scoped, PERMANENT-path storage for knowledge_media.file_url / knowledge_documents.
+// file_url -- fixes the live bug documented in docs/ai-memory/KNOWN_ISSUES.md ("KB photo/
+// document uploads permanently break 7 days after upload") the same way uploadRecordPhoto()
+// above already fixed the equivalent problem for service_records/job_cards: never persist a
+// signed URL, only the permanent object path (the column is still literally named `file_url`
+// on both tables -- 0013_knowledge_subcollections_real_fields.sql renamed it from
+// `storage_path` before any real caller existed -- but as of
+// 0029_knowledge_base_permanent_file_paths.sql it stores a path, not a URL; resolve a fresh
+// signed URL at display time via getKnowledgeFileSignedUrl()).
+//
+// Also depends on 0029's bucket RLS fix: the `documents` bucket's previous owner-scoped
+// policy made it impossible for any technician other than the original uploader to even
+// generate a signed URL for a KB file, defeating the shared-Knowledge-Base point of this
+// feature -- 0029 replaces it with knowledge_base.view/.create/.edit/.delete-gated,
+// record-scoped policies keyed off the `knowledge-media/{knowledge_machine_id}/...` /
+// `knowledge-documents/{knowledge_machine_id}/...` path convention used below.
+export async function uploadKnowledgeMedia(knowledgeMachineId, file) {
+  const optimized = await optimizeImageForUpload(file);
+  const path = `knowledge-media/${knowledgeMachineId}/${crypto.randomUUID()}-${optimized.name}`;
+  await uploadFile(BUCKETS.documents, path, optimized, { optimizeImage: false });
+  return path;
+}
+
+// Documents (PDFs) must not go through image optimization.
+export async function uploadKnowledgeDocument(knowledgeMachineId, file) {
+  const path = `knowledge-documents/${knowledgeMachineId}/${crypto.randomUUID()}-${file.name}`;
+  await uploadFile(BUCKETS.documents, path, file, { optimizeImage: false });
+  return path;
+}
+
+// Fresh signed URL for displaying/downloading a stored knowledge_media/knowledge_documents
+// path -- call at click/display time, never persist the result back into either table.
+export async function getKnowledgeFileSignedUrl(path, expiresInSeconds = 60 * 60) {
+  return getSignedUrl(BUCKETS.documents, path, expiresInSeconds);
+}

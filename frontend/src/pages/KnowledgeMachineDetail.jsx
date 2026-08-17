@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Link, useParams, useNavigate } from "react-router-dom";
 import { apiClient } from "@/api/apiClient";
 import { useAuth } from "@/lib/AuthContext";
+import { uploadKnowledgeMedia, uploadKnowledgeDocument, getKnowledgeFileSignedUrl } from "@/services/supabase/storage";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -69,16 +70,38 @@ export default function KnowledgeMachineDetail() {
     navigate("/knowledge-base");
   };
 
+  // FIX (2026-08-17): used to call apiClient.integrations.Core.UploadFile() and persist its
+  // 7-day signed URL directly into file_url -- the live bug documented in
+  // docs/ai-memory/KNOWN_ISSUES.md ("KB photo/document uploads permanently break 7 days after
+  // upload"). Now stores the PERMANENT Storage object path instead (same discipline as
+  // service_records/job_cards photos); see storage.js's uploadKnowledgeMedia()/
+  // uploadKnowledgeDocument() for the full writeup, and 0029_knowledge_base_permanent_file_paths.sql
+  // for the matching bucket-RLS fix (the old owner-scoped `documents` bucket policy also made
+  // this file invisible to any technician besides whoever uploaded it -- a second, independent
+  // bug this same migration closes).
   const upload = async (event, type) => {
     const files = [...event.target.files];
     for (const file of files) {
-      const { file_url } = await apiClient.integrations.Core.UploadFile({ file });
+      const file_url = type === "media"
+        ? await uploadKnowledgeMedia(id, file)
+        : await uploadKnowledgeDocument(id, file);
       await apiClient.request(`/knowledge-machines/${id}/${type}`, {
         method: "POST",
         body: JSON.stringify({ file_url, original_filename: file.name, title: file.name }),
       });
     }
     await load();
+  };
+
+  // file_url is now a permanent Storage object PATH, not a ready-to-use URL -- resolve a
+  // fresh signed URL at click time and never persist the result.
+  const openFile = async (path) => {
+    try {
+      const signedUrl = await getKnowledgeFileSignedUrl(path);
+      window.open(signedUrl, "_blank");
+    } catch (error) {
+      console.error("Unable to open this file", error);
+    }
   };
 
   if (!machine) {
@@ -213,7 +236,7 @@ export default function KnowledgeMachineDetail() {
               {machine.media.map((item) => (
                 <button
                   key={item.id}
-                  onClick={() => window.open(item.file_url, "_blank")}
+                  onClick={() => openFile(item.file_url)}
                   className="aspect-square rounded-lg overflow-hidden border border-border hover:border-primary/50 transition-colors duration-150 bg-secondary flex items-center justify-center text-xs text-muted-foreground p-2 text-center"
                 >
                   {item.caption || item.original_filename}
@@ -262,7 +285,7 @@ export default function KnowledgeMachineDetail() {
           {machine.documents?.length > 0 ? (
             <div className="flex flex-wrap gap-2">
               {machine.documents.map((item) => (
-                <Button variant="outline" size="sm" key={item.id} className="gap-1.5" onClick={() => window.open(item.file_url, "_blank")}>
+                <Button variant="outline" size="sm" key={item.id} className="gap-1.5" onClick={() => openFile(item.file_url)}>
                   <FileText className="w-3.5 h-3.5" /> {item.title}
                 </Button>
               ))}
