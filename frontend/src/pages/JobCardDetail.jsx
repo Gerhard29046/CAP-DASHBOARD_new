@@ -246,6 +246,21 @@ export default function JobCardDetail() {
     load();
   }, [id]);
 
+  // BUGFIX (found 2026-08-17, live 400 on every "Save Changes"): this form used to also seed
+  // `notes: jobCard.notes || ""` here. `public.job_cards` has never had a `notes` column
+  // (confirmed against every migration touching this table: 0001/0003/0008/0020/0022/0025) --
+  // no input anywhere in the edit form ever rendered or set `editForm.notes`, so it was pure
+  // dead state that still rode along because saveJobChanges() spreads the whole `editForm`
+  // object into the PATCH body. PostgREST rejects an update outright if the payload references
+  // an unknown column (same failure class as the 2026-08-16 UserAdmin.jsx `name`/
+  // `permission_overrides` bug and the 2026-08-17 `effective_permission_count` bug), so every
+  // Job Card save -- status changes, dates, technician, every real field alike -- was failing
+  // with PGRST204 in production. Removed here, not added as a migration: it was never a real
+  // field anywhere in this form's UI, so there is no user data to preserve. Every genuinely
+  // editable Job Card field (fault_description/technician_name/technician_notes/
+  // arrival_condition/arrival_condition_notes/machine_type/accessories_received/job_number/
+  // date_received/date_completed/status/client_id/machine_id) maps to a real column and is
+  // unaffected by this fix.
   const startEditing = () => {
     setEditForm({
       client_id: jobCard.client_id ? String(jobCard.client_id) : "",
@@ -261,7 +276,6 @@ export default function JobCardDetail() {
       arrival_condition: jobCard.arrival_condition || "",
       arrival_condition_notes: jobCard.arrival_condition_notes || "",
       technician_notes: jobCard.technician_notes || "",
-      notes: jobCard.notes || "",
     });
 
     setEditing(true);

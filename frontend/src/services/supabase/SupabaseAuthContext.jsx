@@ -115,7 +115,13 @@ export function useSupabaseAuthState() {
     setAuthError(null);
     try {
       const data = await signUp(email, password, {
-        emailRedirectTo: `${window.location.origin}/login`,
+        // 2026-08-17: was `/login`, a plain page with no idea a confirmation link brought the
+        // user there. `/auth/callback` (AuthCallback.jsx) now exists specifically to receive
+        // any Supabase auth redirect, exchange the session Supabase's client SDK already
+        // parses from the link automatically, and forward into the app with a real
+        // "You're signed in" moment -- also finally gives this app's already-configured
+        // Supabase Redirect URL for `.../auth/callback` something real to point at.
+        emailRedirectTo: `${window.location.origin}/auth/callback`,
       });
       if (data.session?.user) {
         const profileRow = await loadUserProfile(data.session.user.id);
@@ -131,7 +137,7 @@ export function useSupabaseAuthState() {
   };
 
   const resendConfirmation = async (email) => {
-    await resendSignupConfirmation(email, `${window.location.origin}/login`);
+    await resendSignupConfirmation(email, `${window.location.origin}/auth/callback`);
   };
 
   const logout = async () => {
