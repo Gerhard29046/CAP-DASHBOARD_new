@@ -3,6 +3,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
+import { SERVICE_WORK_ITEMS, joinWorkPerformed, parseWorkPerformed } from "@/lib/serviceWorkItems";
 
 export default function ServiceForm({ initial, onSubmit, onCancel, loading }) {
   const [form, setForm] = useState({
@@ -13,9 +15,21 @@ export default function ServiceForm({ initial, onSubmit, onCancel, loading }) {
     notes: initial?.notes || "",
     next_service_due: initial?.next_service_due || "",
   });
+  // Checklist selection state, separate from `form.work_performed` (which stays the plain
+  // comma-joined string actually sent to the database -- see lib/serviceWorkItems.js). Seeded
+  // from the existing value when editing a record this same checklist previously produced.
+  const [workItems, setWorkItems] = useState(() => parseWorkPerformed(initial?.work_performed));
 
   const set = (key, value) => {
     setForm((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const toggleWorkItem = (item) => {
+    setWorkItems((prev) => {
+      const next = { ...prev, [item]: !prev[item] };
+      set("work_performed", joinWorkPerformed(next));
+      return next;
+    });
   };
 
   return (
@@ -51,13 +65,17 @@ export default function ServiceForm({ initial, onSubmit, onCancel, loading }) {
 
       <div>
         <Label>Work Performed</Label>
-        <Textarea
-          value={form.work_performed}
-          onChange={(e) => set("work_performed", e.target.value)}
-          className="mt-1"
-          rows={3}
-          placeholder="Describe the service work completed..."
-        />
+        <div className="mt-1.5 grid sm:grid-cols-2 gap-2">
+          {SERVICE_WORK_ITEMS.map((item) => (
+            <label
+              key={item}
+              className="flex items-center gap-2.5 border border-border rounded-lg p-2.5 hover:bg-secondary/40 transition-colors duration-150 cursor-pointer"
+            >
+              <Checkbox checked={!!workItems[item]} onCheckedChange={() => toggleWorkItem(item)} />
+              <span className="text-sm text-foreground">{item}</span>
+            </label>
+          ))}
+        </div>
       </div>
 
       <div>

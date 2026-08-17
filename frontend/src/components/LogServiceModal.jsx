@@ -4,9 +4,11 @@ import { Search, ChevronRight, ArrowLeft, Camera, X, Check } from "lucide-react"
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { uploadRecordPhoto, deleteRecordPhoto, RECORD_PHOTO_NAMESPACES } from "@/services/supabase/storage";
 import { useSignedPhotoUrls } from "@/hooks/useSignedPhotoUrls";
+import { SERVICE_WORK_ITEMS, joinWorkPerformed } from "@/lib/serviceWorkItems";
 
 const STEPS = ["Select Client", "Select Machine", "Service Details"];
 
@@ -35,6 +37,9 @@ export default function LogServiceModal({ onClose, onDone }) {
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState(null);
   const [saving, setSaving] = useState(false);
+  // Checklist selection for "Work Performed" -- see lib/serviceWorkItems.js. This modal only
+  // ever creates a brand-new record (no `initial` prop), so it always starts empty.
+  const [workItems, setWorkItems] = useState({});
   const { urls: photoUrls } = useSignedPhotoUrls(photos);
 
   useEffect(() => {
@@ -52,6 +57,14 @@ export default function LogServiceModal({ onClose, onDone }) {
   );
 
   const setField = (k, v) => setForm(p => ({ ...p, [k]: v }));
+
+  const toggleWorkItem = (item) => {
+    setWorkItems((prev) => {
+      const next = { ...prev, [item]: !prev[item] };
+      setField("work_performed", joinWorkPerformed(next));
+      return next;
+    });
+  };
 
   // Machine selection is the earliest point machine_id is known -- create the service record
   // here (create-then-update design, per docs/ai-memory/DECISIONS.md's Phase 2 sequencing
@@ -228,8 +241,18 @@ export default function LogServiceModal({ onClose, onDone }) {
               </div>
 
               <div>
-                <Label>Service Notes</Label>
-                <Textarea value={form.work_performed} onChange={e => setField("work_performed", e.target.value)} placeholder="Describe the work performed…" className="mt-1 rounded-xl" rows={3} />
+                <Label>Work Performed</Label>
+                <div className="mt-1.5 space-y-2">
+                  {SERVICE_WORK_ITEMS.map((item) => (
+                    <label
+                      key={item}
+                      className="flex items-center gap-2.5 border border-border rounded-xl p-2.5 hover:bg-secondary/40 transition-colors duration-150 cursor-pointer"
+                    >
+                      <Checkbox checked={!!workItems[item]} onCheckedChange={() => toggleWorkItem(item)} />
+                      <span className="text-sm text-foreground">{item}</span>
+                    </label>
+                  ))}
+                </div>
               </div>
 
               <div>
