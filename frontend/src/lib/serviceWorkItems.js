@@ -32,10 +32,12 @@ export function joinWorkPerformed(selected) {
  * Reverse mapping for editing an EXISTING service record. Only recognizes a value that is
  * exactly a comma-joined combination of the known checklist items -- i.e. one this checkbox UI
  * itself produced. A record's `work_performed` written before this change (free prose) can't be
- * parsed back into checkbox state; re-editing an old record starts from an empty checklist
- * rather than guessing at the old text, which stays visible read-only exactly as before. This is
- * a disclosed, deliberate limitation, not a silent data-loss bug -- the old string is never
- * altered or discarded unless the user actually re-saves the form.
+ * parsed back into checkbox state; re-editing an old record starts from an empty checklist, with
+ * no indication in the edit form itself that prose used to be there (it's still visible on the
+ * read-only detail view -- ServiceRecords.jsx's "Work Performed" TextBlock -- just not inside the
+ * edit form). This is a disclosed, deliberate limitation, not a silent data-loss bug -- the old
+ * string in the database is never altered or discarded unless the user actually re-saves the
+ * form, at which point it's replaced by whatever the checklist says (possibly nothing ticked).
  */
 export function parseWorkPerformed(value) {
   const selected = {};

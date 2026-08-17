@@ -2775,6 +2775,79 @@ private fun CapPhotoViewerDialog(url: String, onDismiss: () -> Unit) {
     }
 }
 
+/** The fixed "Work performed" checklist that replaced the free-text field, matching the web list
+ *  in `frontend/src/lib/serviceWorkItems.js` exactly — both clients store the ticked items as one
+ *  comma-joined string in `service_records.work_performed`, which stays a plain text column.
+ *  Anything else the technician did belongs in the record's findings/notes fields, which the
+ *  service detail view already displays — note that neither Android service form currently offers
+ *  an input for them (a web-parity gap, deliberately not addressed here). */
+private val SERVICE_WORK_ITEMS = listOf(
+    "Replaced Filter Dryer",
+    "Replaced Vacuum Pump Oil",
+    "Calibrated Pressure Sensor",
+    "Calibrated Scales",
+    "Cleaned Machine"
+)
+
+/** Joins in [SERVICE_WORK_ITEMS] order, so the stored string is canonical no matter what order
+ *  the boxes were ticked in. */
+private fun joinWorkPerformed(selected: Map<String, Boolean>): String =
+    SERVICE_WORK_ITEMS.filter { selected[it] == true }.joinToString(", ")
+
+/**
+ * Seeds the checklist from a stored value. Only an exact combination of known items is recognised
+ * (the same rule as the web helper): free text written before the checklist existed parses to an
+ * empty selection, so editing such a record starts with nothing ticked. The old text is left in
+ * the database untouched unless the user saves over it.
+ */
+private fun parseWorkPerformed(value: String?): Map<String, Boolean> {
+    if (value.isNullOrBlank()) return emptyMap()
+    val parts = value.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+    val allKnown = parts.isNotEmpty() && parts.all { it in SERVICE_WORK_ITEMS }
+    return if (allKnown) parts.associateWith { true } else emptyMap()
+}
+
+/**
+ * The tick boxes themselves, shared by [LogNewServiceScreen] and [ServiceDialog]. The toggle lives
+ * on the row rather than the [Checkbox] so the whole row is a single 48dp accessible target — the
+ * same idiom as [PermissionRow].
+ */
+@Composable
+private fun WorkPerformedChecklist(
+    selected: Map<String, Boolean>,
+    onSelectedChange: (Map<String, Boolean>) -> Unit
+) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+        Text("Work performed", style = MaterialTheme.typography.titleSmall)
+        SERVICE_WORK_ITEMS.forEach { item ->
+            val checked = selected[item] == true
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(MaterialTheme.shapes.medium)
+                    .toggleable(
+                        value = checked,
+                        role = Role.Checkbox,
+                        onValueChange = { onSelectedChange(selected + (item to it)) }
+                    )
+                    .defaultMinSize(minHeight = 48.dp)
+                    .padding(vertical = Spacing.xs),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+            ) {
+                Checkbox(checked = checked, onCheckedChange = null)
+                Text(
+                    item,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
 /**
  * Dedicated full-screen form for logging a new service record (distinct from the compact
  * [ServiceDialog] modal used for quick edits elsewhere). Reachable only via the Dashboard's
@@ -2796,7 +2869,7 @@ private fun LogNewServiceScreen(
     var machineId by remember(clientId) { mutableStateOf(availableMachines.firstOrNull()?.id.orEmpty()) }
     var date by remember { mutableStateOf(today) }
     var technician by remember { mutableStateOf("") }
-    var workPerformed by remember { mutableStateOf("") }
+    var workItems by remember { mutableStateOf<Map<String, Boolean>>(emptyMap()) }
     var nextServiceDue by remember { mutableStateOf("") }
     var attemptedSubmit by remember { mutableStateOf(false) }
     var submitting by remember { mutableStateOf(false) }
@@ -2916,7 +2989,7 @@ private fun LogNewServiceScreen(
                     errorMessage = if (dateError) "Service date is required." else null
                 )
                 CapTextField(label = "Technician", value = technician, onValueChange = { technician = it })
-                CapTextField(label = "Work performed", value = workPerformed, onValueChange = { workPerformed = it })
+                WorkPerformedChecklist(selected = workItems, onSelectedChange = { workItems = it })
                 CapDateField(label = "Next service due", value = nextServiceDue, onValueChange = { nextServiceDue = it })
             }
         }
@@ -2968,7 +3041,7 @@ private fun LogNewServiceScreen(
                         "machine_id" to machineId,
                         "service_date" to date,
                         "technician_name" to technician.trim(),
-                        "work_performed" to workPerformed.trim(),
+                        "work_performed" to joinWorkPerformed(workItems),
                         "next_service_due" to nextServiceDue.trim()
                     ),
                     "Service record"
@@ -5331,15 +5404,15 @@ private fun ServiceDialog(machines: List<CapRecord>, initial: CapRecord?, onDism
     var machineId by remember(initial) { mutableStateOf(initial?.text("machine_id") ?: machines.firstOrNull()?.id.orEmpty()) }
     var date by remember(initial) { mutableStateOf(initial?.text("service_date")?.ifBlank { today } ?: today) }
     var technician by remember(initial) { mutableStateOf(initial?.text("technician_name").orEmpty()) }
-    var work by remember(initial) { mutableStateOf(initial?.text("work_performed").orEmpty()) }
+    var workItems by remember(initial) { mutableStateOf(parseWorkPerformed(initial?.text("work_performed"))) }
     var nextDue by remember(initial) { mutableStateOf(initial?.text("next_service_due").orEmpty()) }
     EditDialog(if (initial == null) "Add service" else "Edit service", onDismiss, machineId.isNotBlank() && date.isNotBlank(), {
-        onSave(mapOf("machine_id" to machineId, "service_date" to date, "technician_name" to technician.trim(), "work_performed" to work.trim(), "next_service_due" to nextDue.trim()))
+        onSave(mapOf("machine_id" to machineId, "service_date" to date, "technician_name" to technician.trim(), "work_performed" to joinWorkPerformed(workItems), "next_service_due" to nextDue.trim()))
     }) {
         SelectInput("Machine", machines.map { it.id to machineTitle(it) }, machineId) { machineId = it }
         CapDateField("Service date", date, { date = it }, required = true)
         TextInput("Technician", technician, { technician = it })
-        TextInput("Work performed", work, { work = it })
+        WorkPerformedChecklist(selected = workItems, onSelectedChange = { workItems = it })
         CapDateField("Next service due", nextDue, { nextDue = it })
     }
 }
