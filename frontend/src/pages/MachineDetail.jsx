@@ -19,6 +19,7 @@ import EmptyState from "@/components/EmptyState";
 import NoteRecord from "@/components/NoteRecord";
 import MachineForm from "@/components/MachineForm";
 import RecordPhotoGallery from "@/components/RecordPhotoGallery";
+import PhotoLightbox from "@/components/PhotoLightbox";
 import ServiceForm from "@/components/ServiceForm";
 import moment from "moment";
 
@@ -47,6 +48,7 @@ export default function MachineDetail() {
   const [showAddService, setShowAddService] = useState(false);
   const [editService, setEditService] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [lightboxUrl, setLightboxUrl] = useState(null);
 
   const load = async () => {
     const m = await apiClient.entities.Machine.get(id);
@@ -309,7 +311,7 @@ export default function MachineDetail() {
                         <p className="text-xs text-muted-foreground italic">{s.notes}</p>
                       </div>
                     )}
-                    <RecordPhotoGallery photos={s.photos} containerClassName="flex gap-2 overflow-x-auto pb-1 mb-1" />
+                    <RecordPhotoGallery photos={s.photos} onPhotoClick={setLightboxUrl} containerClassName="flex gap-2 overflow-x-auto pb-1 mb-1" />
                     {s.next_service_due && (
                       <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-border">
                         <Clock className="w-3.5 h-3.5 text-primary" />
@@ -368,6 +370,8 @@ export default function MachineDetail() {
           {editService && <ServiceForm initial={editService} onSubmit={handleEditService} onCancel={() => setEditService(null)} loading={saving} />}
         </DialogContent>
       </Dialog>
+
+      <PhotoLightbox url={lightboxUrl} onClose={() => setLightboxUrl(null)} />
     </div>
   );
 }

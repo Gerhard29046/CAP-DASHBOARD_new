@@ -176,7 +176,7 @@ class SupabaseDataRepository @Inject constructor(
                 preferReturn = true
             )
         }
-        requireRowAffected(response)
+        requireRowAffected(table, id, response)
         refreshSignals.tryEmit(table)
     }
 
@@ -184,7 +184,7 @@ class SupabaseDataRepository @Inject constructor(
         val response = withAuth { token ->
             request("$baseUrl/rest/v1/$table?id=eq.$id", "DELETE", token, null, preferReturn = true)
         }
-        requireRowAffected(response)
+        requireRowAffected(table, id, response)
         refreshSignals.tryEmit(table)
     }
 
@@ -214,12 +214,15 @@ class SupabaseDataRepository @Inject constructor(
      * to be visible under a SELECT/ALL policy before a filtered UPDATE/DELETE can match it at
      * all, so anything this app is allowed to change is by construction allowed to be returned.
      *
-     * Same message [request] uses for an outright 403, so an RLS denial reads identically to the
-     * user whichever shape it arrives in. Known limitation, deliberately not papered over here:
-     * a row another user deleted a moment ago also matches zero rows and so reports as a
-     * permission problem; distinguishing the two would need a second round-trip.
+     * A zero-row answer has exactly two possible causes, which [zeroRowMessage] tells apart with
+     * one extra round-trip taken ONLY on this already-failed path (never on the success path, so
+     * a normal save costs nothing extra): the RLS `USING` clause refused the write (the row is
+     * still there), or the `id=eq.` filter matched nothing because the row is gone (someone else
+     * deleted it while this screen was open). Whichever it is, this function ALWAYS throws -- the
+     * probe only chooses the wording, it can never turn a refused write back into a success. That
+     * invariant is the whole point of this function and must survive any future edit here.
      */
-    private fun requireRowAffected(response: String) {
+    private suspend fun requireRowAffected(table: String, id: String, response: String) {
         val affected = try {
             JSONArray(response).length()
         } catch (_: JSONException) {
@@ -228,7 +231,45 @@ class SupabaseDataRepository @Inject constructor(
             // is exactly the failure mode this whole function exists to remove.
             throw ApiException("Unable to confirm the change was saved. Please refresh and try again.")
         }
-        if (affected == 0) throw ApiException("You do not have permission to do that.")
+        if (affected == 0) throw ApiException(zeroRowMessage(table, id))
+    }
+
+    /**
+     * Chooses the honest message for a write that affected zero rows, by asking whether the row
+     * is still there at all.
+     *
+     * - Row still readable -> the write itself was refused: the same "You do not have permission
+     *   to do that." an outright 403 produces, so a denial reads identically to the user whichever
+     *   HTTP shape it arrived in.
+     * - Row not readable -> it is gone (or was never visible), which "permission" does not
+     *   describe honestly -- the user is told to refresh instead of being blamed for a permission
+     *   they may well have.
+     *
+     * Deliberate limitations, disclosed rather than hidden:
+     * - A row the caller may edit but may NOT read would be reported as "no longer available".
+     *   Not reachable in this app: every screen that offers an edit got the row from a
+     *   `select`-gated list read first, so anything editable here is by construction readable.
+     * - The probe races: a row deleted in the gap between the write and this check reports as
+     *   "no longer available" rather than as the denial it actually was. Harmless -- the row
+     *   really is gone by the time the user reads the message, and either way the write failed.
+     * - If the probe itself fails (offline, session died, 5xx) the outcome is genuinely unknown,
+     *   so it falls back to the pre-existing permission wording rather than inventing a
+     *   conclusion from a failed check. Never returns "it worked".
+     */
+    private suspend fun zeroRowMessage(table: String, id: String): String {
+        val denied = "You do not have permission to do that."
+        val rowStillExists = try {
+            val body = withAuth { token ->
+                request("$baseUrl/rest/v1/$table?id=eq.$id&select=id", "GET", token, null)
+            }
+            JSONArray(body).length() > 0
+        } catch (error: CancellationException) {
+            throw error // the caller went away; must not be swallowed into a message
+        } catch (_: Exception) {
+            return denied
+        }
+        return if (rowStillExists) denied
+        else "This record is no longer available -- it may have been deleted by someone else. Please refresh."
     }
 
     /** Row count for the Status screen's "sync" feature -- uses PostgREST's exact-count

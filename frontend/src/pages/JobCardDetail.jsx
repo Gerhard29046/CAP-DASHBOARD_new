@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import EmptyState from "@/components/EmptyState";
 import RecordPhotoGallery from "@/components/RecordPhotoGallery";
+import PhotoLightbox from "@/components/PhotoLightbox";
 import moment from "moment";
 
 const LINE_TYPES = ["Labour", "Part / Product", "Diagnosis", "Other"];
@@ -199,6 +200,7 @@ export default function JobCardDetail() {
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [savingJob, setSavingJob] = useState(false);
+  const [lightboxUrl, setLightboxUrl] = useState(null);
   const [editForm, setEditForm] = useState({});
 
   const [showAddLine, setShowAddLine] = useState(false);
@@ -713,6 +715,7 @@ export default function JobCardDetail() {
 
               <RecordPhotoGallery
                 photos={jobCard.arrival_photos}
+                onPhotoClick={setLightboxUrl}
                 containerClassName="flex flex-wrap gap-2"
                 imgClassName="w-24 h-24 rounded-xl object-cover border border-border hover:border-primary/50 transition-colors"
               />
@@ -827,6 +830,8 @@ export default function JobCardDetail() {
           </div>
         </div>
       </div>
+
+      <PhotoLightbox url={lightboxUrl} onClose={() => setLightboxUrl(null)} />
     </>
   );
 }

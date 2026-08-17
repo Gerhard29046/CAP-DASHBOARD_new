@@ -1,5 +1,16 @@
 # CAP Dashboard Engineering Guide
 
+> **STALE, superseded — read `CLAUDE.md` sections 1 and 6 first.** The "Architecture" section
+> immediately below describes a pre-Supabase-migration architecture (frontend/Android only
+> talking to Laravel) that has not been true since 2026-08-13 (web) / 2026-08-16 (Android).
+> Both clients now talk directly to Supabase (Postgres + Auth + Storage) via
+> `@supabase/supabase-js`/REST, protected by Postgres RLS, not Laravel. Left unedited below
+> per `CLAUDE.md`'s own instruction ("do not delete useful conventions from AGENTS.md; only
+> treat the obsolete architecture claims as superseded") — the conventions further down
+> (coding style, testing, security posture) remain valid; only this Architecture section's
+> data-flow claims are stale. Flagged in `docs/ai-memory/KNOWN_ISSUES.md`'s "Documentation
+> drift risk" entry since 2026-08-03; corrected here 2026-08-17.
+
 ## Architecture
 
 - `frontend/`: React/Vite web client. It only communicates with Laravel.
