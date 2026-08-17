@@ -10,7 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import PageHeader from "@/components/PageHeader";
 import EmptyState from "@/components/EmptyState";
-import { Search, UserPlus, ShieldCheck, User2, X } from "lucide-react";
+import { Search, UserPlus, ShieldCheck, User2, X, Trash2 } from "lucide-react";
 
 // BUGFIX (2026-08-16): `name` and a client-editable `password`/`password_confirmation` pair
 // were never real. public.users has no `name` column (it's `full_name` -- see
@@ -38,7 +38,7 @@ function permissionStateBadge(p) {
 }
 
 export default function UserAdmin() {
-  const { hasPermission } = useAuth();
+  const { user: currentUser, hasPermission } = useAuth();
   const [users, setUsers] = useState([]);
   const [roles, setRoles] = useState({});
   const [selected, setSelected] = useState(null);
@@ -49,6 +49,8 @@ export default function UserAdmin() {
   const [fieldErrors, setFieldErrors] = useState({});
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [deleting, setDeleting] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   const load = () => Promise.all([apiClient.request("/admin/users"), apiClient.request("/roles/permissions")])
     .then(([u, r]) => { setUsers(u); setRoles(r); });
@@ -61,6 +63,7 @@ export default function UserAdmin() {
     setForm({ ...blank, ...user });
     setMatrix(result.permissions);
     setMessage("");
+    setConfirmingDelete(false);
   };
 
   const roleChanged = (role) => {
@@ -115,7 +118,45 @@ export default function UserAdmin() {
     setMessage("New accounts are created by the person themselves at the Register page (email sign-up). Once they've registered, select their name from the list on the left to assign a role and permissions.");
   };
 
-  const cancel = () => { setSelected(null); setMatrix([]); setMessage(""); };
+  const cancel = () => { setSelected(null); setMatrix([]); setMessage(""); setConfirmingDelete(false); };
+
+  // NEW (2026-08-17, requested): admins can now remove a user's public.users profile row.
+  // `users_delete_admin` (0002_rls_policies.sql) already gates this server-side to
+  // `public.is_admin()` -- the same RLS-only pattern this project prefers over a new
+  // server-side service (see CLAUDE.md section 6.4). Gated here by `hasPermission("users.delete")`
+  // for consistency with "users.create" above; that key isn't in the permissions catalog (same
+  // as "users.create"/"users.view"), so in practice only admins see this via the `role ===
+  // "admin"` bypass in `hasPermission()`, matching the RLS policy's own admin-only scope exactly.
+  //
+  // DISCLOSED LIMITATION: this deletes the public.users PROFILE row only, not the underlying
+  // Supabase Auth account (auth.users) -- public.users.id is a foreign key referencing
+  // auth.users(id), the opposite direction of a cascade, so deleting the profile can never
+  // remove the login credential itself. A client can never do that safely (it requires the
+  // service_role key, which must never be shipped to frontend code). In practice this fully
+  // disables the account within the app -- `has_active_profile()` and every permission check
+  // depend on the public.users row existing, so a deleted user immediately loses all access --
+  // but the person could still complete a bare Supabase Auth sign-in with no profile/permissions
+  // afterward. A true "delete the login too" action would need a dedicated Supabase Edge
+  // Function (the one case CLAUDE.md's policy allows a new server-side service for), which does
+  // not exist in this project yet and was not built here without a separate explicit decision.
+  const removeUser = async () => {
+    if (!selected || deleting) return;
+    if (currentUser?.id === selected.id) {
+      setMessage("You cannot delete your own account from here.");
+      return;
+    }
+    setDeleting(true); setMessage("");
+    try {
+      await apiClient.request(`/users/${selected.id}`, { method: "DELETE" });
+      await load();
+      setSelected(null); setMatrix([]); setForm(blank); setConfirmingDelete(false);
+      setMessage(`${selected.full_name || selected.email}'s profile and access were removed. Their Supabase Auth login record itself was not deleted (not possible from client-side code) -- they can no longer sign in with any effect, since every permission check requires this profile row.`);
+    } catch (error) {
+      setMessage(error.message || "Unable to delete this user.");
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const showEditor = selected || matrix.length > 0;
 
@@ -273,7 +314,24 @@ export default function UserAdmin() {
               <p className="text-sm text-muted-foreground">
                 <span className="text-foreground font-medium">{enabled}</span> enabled &middot; {enabled - overrides} inherited &middot; {overrides} customised
               </p>
-              <div className="flex gap-2 shrink-0">
+              <div className="flex flex-wrap gap-2 shrink-0">
+                {hasPermission("users.delete") && selected && currentUser?.id !== selected.id && (
+                  confirmingDelete ? (
+                    <div className="flex items-center gap-2 border border-destructive/40 bg-destructive/5 rounded-lg px-2.5 py-1.5">
+                      <span className="text-xs text-destructive font-medium">Delete {selected.full_name || selected.email}?</span>
+                      <Button type="button" size="sm" variant="destructive" disabled={deleting} onClick={removeUser} className="gap-1.5 h-7">
+                        {deleting ? "Deleting…" : "Confirm"}
+                      </Button>
+                      <Button type="button" size="sm" variant="outline" disabled={deleting} onClick={() => setConfirmingDelete(false)} className="h-7">
+                        Cancel
+                      </Button>
+                    </div>
+                  ) : (
+                    <Button type="button" variant="outline" disabled={saving || deleting} onClick={() => setConfirmingDelete(true)} className="gap-1.5 text-destructive hover:text-destructive">
+                      <Trash2 className="w-3.5 h-3.5" /> Delete User
+                    </Button>
+                  )
+                )}
                 <Button type="button" variant="outline" disabled={saving} onClick={cancel} className="gap-1.5">
                   <X className="w-3.5 h-3.5" /> Cancel
                 </Button>
