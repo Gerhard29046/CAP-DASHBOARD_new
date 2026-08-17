@@ -21,6 +21,7 @@ export const BUCKETS = {
   documents: "documents",
   photos: "photos",
   attachments: "attachments",
+  serviceCertificates: "service-certificates",
 };
 
 export async function uploadFile(bucket, path, file, { upsert = false, optimizeImage = true } = {}) {
@@ -158,4 +159,26 @@ export async function uploadKnowledgeDocument(knowledgeMachineId, file) {
 // path -- call at click/display time, never persist the result back into either table.
 export async function getKnowledgeFileSignedUrl(path, expiresInSeconds = 60 * 60) {
   return getSignedUrl(BUCKETS.documents, path, expiresInSeconds);
+}
+
+// Record-scoped, PERMANENT-path storage for generated Service Certificate PDFs (Batch A of
+// the certificate/email workflow, 2026-08-17 -- see 0030_service_certificates.sql). Path
+// convention (matches that migration's can_access_service_certificate() exactly):
+//   service-certificates/{serviceRecordId}/{certificateNumber}.pdf
+// `upsert: true` always -- regenerating a certificate overwrites the SAME object at the SAME
+// path (the certificate_number, and therefore the path, never changes on regenerate; see
+// generate_service_certificate()'s header comment). Never optimizeImage (it's a PDF, not an
+// image) and never call uploadFile()'s default image-optimization path.
+export async function uploadServiceCertificate(serviceRecordId, certificateNumber, pdfBlob) {
+  const path = `${serviceRecordId}/${certificateNumber}.pdf`;
+  const file = new File([pdfBlob], `${certificateNumber}.pdf`, { type: "application/pdf" });
+  await uploadFile(BUCKETS.serviceCertificates, path, file, { upsert: true, optimizeImage: false });
+  return path;
+}
+
+// Fresh signed URL for previewing/downloading a stored certificate PDF -- call at
+// click/display time, never persist the result (service_certificates.pdf_path is the
+// permanent value; this is only ever used transiently).
+export async function getServiceCertificateSignedUrl(path, expiresInSeconds = 60 * 60) {
+  return getSignedUrl(BUCKETS.serviceCertificates, path, expiresInSeconds);
 }

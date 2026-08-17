@@ -5,6 +5,7 @@ import { Settings as SettingsIcon, ShieldCheck, ArrowRight } from "lucide-react"
 import JobCardSettingsPanel from "@/pages/settings/JobCardSettingsPanel";
 import ProductsServicesSettings from "@/pages/settings/ProductsServicesSettings";
 import ImportCustomers from "@/pages/settings/ImportCustomers";
+import CompanySettingsPanel from "@/pages/settings/CompanySettingsPanel";
 
 // Settings hub (Phase: Job Card configuration + Products & Services + Data Management,
 // 2026-08-13 UX redesign resume). Deliberately a small, cohesive tab structure rather than
@@ -37,11 +38,7 @@ export default function Settings() {
 
         <TabsContent value="general">
           <div className="bg-card border border-border rounded-xl p-5">
-            <h2 className="font-heading font-semibold text-foreground mb-1">General</h2>
-            <p className="text-sm text-muted-foreground">
-              No general application-wide settings are wired up yet. This section will grow as
-              real, working settings are identified — nothing is added here just to fill space.
-            </p>
+            <CompanySettingsPanel />
           </div>
         </TabsContent>
 

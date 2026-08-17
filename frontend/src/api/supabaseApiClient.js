@@ -267,6 +267,27 @@ async function request(path, options = {}) {
       delete body.password;
       delete body.password_confirmation;
     }
+    if (table === "users") {
+      // BUGFIX (2026-08-17): UserAdmin.jsx's edit() populates its form state from a fetched
+      // user record that has already passed through withPermissionCount() (added to every
+      // /admin/users and /users/:id list-and-detail response so the UI can show a "N
+      // permissions" badge). That helper stamps a synthetic `effective_permission_count` field
+      // onto the record -- it is NOT a real column on public.users (see
+      // 0001_initial_schema.sql + 0005/0026's ALTERs: id, email, full_name, role, is_active,
+      // effective_permissions, preferences, created_at, updated_at, legacy_firebase_uid,
+      // photo_path only). save() spreads that whole form object into the PUT body, so
+      // `effective_permission_count` rode along on every single save. PostgREST rejects an
+      // update outright if ANY key doesn't match a real column, so -- exactly like the
+      // name/permission_overrides bug fixed 2026-08-16 above -- every "Save Changes" click
+      // (role changes, active/disabled toggle, permission edits alike) 400'd silently in
+      // production despite that fix. Also strip id/created_at/updated_at defensively: they're
+      // real columns but immutable/caller-supplied-unnecessarily, never legitimately part of
+      // an intentional edit from this form.
+      delete body.effective_permission_count;
+      delete body.id;
+      delete body.created_at;
+      delete body.updated_at;
+    }
     return withPermissionCount(await updateRow(table, id, body));
   }
   if (method === "DELETE") { await deleteRow(table, id); return null; }
@@ -295,6 +316,72 @@ const jobCardSettingsApi = {
   },
 };
 
+// Singleton settings row (public.company_settings, id boolean primary key default true) --
+// same shape as jobCardSettingsApi above. See 0030_service_certificates.sql's header: only
+// company_name is seeded with a real value; address/phone/email/vat_number stay null until
+// an admin fills them in (Settings > General) -- the certificate PDF omits any null field's
+// line rather than inventing a placeholder.
+const companySettingsApi = {
+  get: async () => {
+    const { data, error } = await supabase.from("company_settings").select("*").eq("id", true).single();
+    if (error) throw error;
+    return data;
+  },
+  update: async (patch) => {
+    const { data, error } = await supabase
+      .from("company_settings")
+      .update(patch)
+      .eq("id", true)
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  },
+};
+
+// Service Certificates (public.service_certificates, 0030_service_certificates.sql). Row
+// creation ONLY happens through the generate_service_certificate() RPC -- the table has no
+// client-facing INSERT policy/grant at all (see that migration's comment for why) -- so this
+// is intentionally NOT a makeEntity() table; `create`/insert would silently be rejected by
+// PostgREST (no privilege) if someone tried.
+const serviceCertificatesApi = {
+  // Returns null (not an error) if no certificate has been generated for this service record
+  // yet -- callers use this to decide whether to show "Generate" vs. "Regenerate/Preview/
+  // Download".
+  getForServiceRecord: async (serviceRecordId) => {
+    const { data, error } = await supabase
+      .from("service_certificates")
+      .select("*")
+      .eq("service_record_id", serviceRecordId)
+      .maybeSingle();
+    if (error) throw error;
+    return data;
+  },
+  // Server-side, safe-database-mechanism numbering (see migration) -- never generated in the
+  // frontend. Idempotent: calling this again for the same service record reuses the existing
+  // certificate_number (regenerate never changes the number).
+  generate: async (serviceRecordId, includePhotos) => {
+    const { data, error } = await supabase.rpc("generate_service_certificate", {
+      p_service_record_id: serviceRecordId,
+      p_include_photos: includePhotos,
+    });
+    if (error) throw error;
+    return data;
+  },
+  // Called after the PDF has actually been uploaded to Storage, to record its permanent
+  // object path (never a signed URL -- see storage.js's uploadServiceCertificate()).
+  setPdfPath: async (id, pdfPath) => {
+    const { data, error } = await supabase
+      .from("service_certificates")
+      .update({ pdf_path: pdfPath })
+      .eq("id", id)
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  },
+};
+
 export const supabaseApiClient = {
   request,
   entities: {
@@ -307,6 +394,8 @@ export const supabaseApiClient = {
     User: makeEntity("users"),
     ProductService: makeEntity("products_services"),
     JobCardSettings: jobCardSettingsApi,
+    CompanySettings: companySettingsApi,
+    ServiceCertificate: serviceCertificatesApi,
     ClientImport: makeEntity("client_imports"),
     // Dashboard notes are NOT exposed via makeEntity() here -- they have their own
     // dedicated client (frontend/src/api/dashboardNotesClient.js, called directly from

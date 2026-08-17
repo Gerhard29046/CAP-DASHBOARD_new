@@ -1,16 +1,22 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   Search, ClipboardCheck, Calendar, Building2, Wrench, Camera, X, CheckCircle2, ChevronRight,
+  Award, Loader2, Eye, Download, RefreshCw,
 } from "lucide-react";
 import { apiClient } from "@/api/apiClient";
+import { useAuth } from "@/lib/AuthContext";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import PageHeader from "@/components/PageHeader";
 import EmptyState from "@/components/EmptyState";
 import StatCard from "@/components/StatCard";
 import RecordPhotoGallery from "@/components/RecordPhotoGallery";
+import { buildServiceCertificatePdf } from "@/lib/serviceCertificatePdf";
+import { getRecordPhotoSignedUrl, uploadServiceCertificate, getServiceCertificateSignedUrl } from "@/services/supabase/storage";
 
 function formatDate(date) {
   if (!date) return "Not set";
@@ -37,9 +43,28 @@ export default function ServiceRecords() {
   const loadRecords = async () => {
     setLoading(true);
     try {
-      const data = await apiClient.entities.ServiceRecord.list();
-      setRecords(data || []);
-      if (data?.length > 0) setSelectedRecord(data[0]);
+      // BUGFIX (2026-08-17, found while building the Service Certificate feature):
+      // apiClient.entities.ServiceRecord.list() is a plain `select * from service_records`
+      // (makeEntity()/listRows() in supabaseApiClient.js/database.js do no join) -- it has
+      // never actually returned a nested `.machine`/`.machine.client`, even though
+      // getClient()/the whole detail panel below always assumed it did. In production this
+      // meant every row silently showed "Unknown Client" and blank machine/contact details.
+      // Fetching machines+clients alongside and joining them client-side here, matching the
+      // same enrich pattern already used by Dashboard.jsx/InvoiceQueue.jsx for the identical
+      // shape of join.
+      const [records, machines, clients] = await Promise.all([
+        apiClient.entities.ServiceRecord.list(),
+        apiClient.entities.Machine.list(),
+        apiClient.entities.Client.list(),
+      ]);
+      const machineMap = Object.fromEntries((machines || []).map((m) => [m.id, m]));
+      const clientMap = Object.fromEntries((clients || []).map((c) => [c.id, c]));
+      const enriched = (records || []).map((r) => {
+        const machine = machineMap[r.machine_id];
+        return { ...r, machine: machine ? { ...machine, client: clientMap[machine.client_id] || null } : null };
+      });
+      setRecords(enriched);
+      if (enriched.length > 0) setSelectedRecord(enriched[0]);
     } catch (error) {
       console.error("Failed to load service records:", error);
       setRecords([]);
@@ -278,7 +303,195 @@ function ServiceDetailPanel({ record, onPhotoClick }) {
             />
           )}
         </DetailSection>
+
+        <DetailSection icon={Award} title="Service Certificate">
+          <CertificateSection record={record} client={client} photos={photos} />
+        </DetailSection>
       </div>
+    </div>
+  );
+}
+
+// Batch A of the certificate/email workflow (2026-08-17, explicit user request). Every row
+// on this page is, by this page's own definition ("Completed Services" / "Completed on-site
+// services performed at client premises"), already a completed service -- service_records
+// has no draft/in-progress concept anywhere in the real data model (confirmed: no page reads
+// or filters on its `status` column at all; a record is only ever created, via
+// LogServiceModal.jsx, once the technician has already filled in service_date/
+// work_performed). So the certificate action is available for every record here, matching
+// "do not make the certificate action available for an incomplete service unless there is an
+// explicit reason to do so" -- there is no incomplete state to exclude.
+function CertificateSection({ record, client, photos }) {
+  const { hasPermission } = useAuth();
+  const canGenerate = hasPermission("services.edit");
+  const canView = hasPermission("services.view");
+
+  const [certificate, setCertificate] = useState(null);
+  const [loadingCert, setLoadingCert] = useState(true);
+  const [includePhotos, setIncludePhotos] = useState(photos.length > 0);
+  const [generating, setGenerating] = useState(false);
+  const [busyAction, setBusyAction] = useState(null); // "preview" | "download" | null
+  const [error, setError] = useState("");
+  // Kept only for the certificate just generated in THIS session -- lets Preview/Download
+  // work instantly without a Storage round-trip. Cleared whenever the selected record
+  // changes; a certificate generated in an earlier session is always re-fetched via a fresh
+  // signed URL instead (see openCertificate() below).
+  const [freshBlobUrl, setFreshBlobUrl] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setError("");
+    setFreshBlobUrl(null);
+    setIncludePhotos(photos.length > 0);
+    setLoadingCert(true);
+    apiClient.entities.ServiceCertificate.getForServiceRecord(record.id)
+      .then((row) => { if (!cancelled) setCertificate(row); })
+      .catch((e) => { console.error("Failed to load certificate status:", e); if (!cancelled) setCertificate(null); })
+      .finally(() => { if (!cancelled) setLoadingCert(false); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `photos` is derived fresh from
+    // `record` on every render (getPhotos()), re-running on its reference would refetch on
+    // every render; `record.id` is the real, stable trigger.
+  }, [record.id]);
+
+  const generate = async () => {
+    setGenerating(true);
+    setError("");
+    try {
+      const [certRow, company] = await Promise.all([
+        apiClient.entities.ServiceCertificate.generate(record.id, includePhotos),
+        apiClient.entities.CompanySettings.get(),
+      ]);
+
+      let photoUrls = [];
+      if (includePhotos && photos.length > 0) {
+        photoUrls = (await Promise.all(photos.map(async (path) => {
+          try { return await getRecordPhotoSignedUrl(path); } catch { return null; }
+        }))).filter(Boolean);
+      }
+
+      const blob = await buildServiceCertificatePdf({
+        certificateNumber: certRow.certificate_number,
+        serviceRecord: record,
+        machine: record.machine,
+        client,
+        company,
+        photoUrls,
+        includePhotos,
+        generatedAt: new Date(certRow.generated_at || Date.now()),
+      });
+
+      const pdfPath = await uploadServiceCertificate(record.id, certRow.certificate_number, blob);
+      const updated = await apiClient.entities.ServiceCertificate.setPdfPath(certRow.id, pdfPath);
+
+      setCertificate(updated);
+      setFreshBlobUrl(URL.createObjectURL(blob));
+    } catch (e) {
+      console.error("Failed to generate service certificate:", e);
+      setError(e.message || "Could not generate the certificate.");
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const openCertificate = async (mode) => {
+    setBusyAction(mode);
+    setError("");
+    try {
+      let url = freshBlobUrl;
+      if (!url) {
+        url = await getServiceCertificateSignedUrl(certificate.pdf_path);
+      }
+      if (mode === "preview") {
+        window.open(url, "_blank", "noopener,noreferrer");
+      } else {
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `${certificate.certificate_number}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      }
+    } catch (e) {
+      console.error(`Failed to ${mode} certificate:`, e);
+      setError(e.message || `Could not ${mode} the certificate.`);
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  if (!canView) {
+    return <p className="text-sm text-muted-foreground">You do not have permission to view service certificates.</p>;
+  }
+
+  if (loadingCert) {
+    return <Skeleton className="h-24 rounded-lg" />;
+  }
+
+  return (
+    <div className="space-y-3">
+      {error && (
+        <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          {error}
+        </div>
+      )}
+
+      {certificate ? (
+        <div className="rounded-lg border border-border bg-secondary/40 p-3.5">
+          <div className="flex items-center gap-2 mb-1">
+            <Award className="w-4 h-4 text-primary" />
+            <p className="text-sm font-medium text-foreground">Certificate Generated</p>
+          </div>
+          <p className="text-sm text-foreground font-mono">{certificate.certificate_number}</p>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Generated {formatDate(certificate.generated_at)}
+            {!certificate.pdf_path && " — PDF pending, try regenerating."}
+          </p>
+          <div className="flex flex-wrap gap-2 mt-3">
+            <Button
+              type="button" size="sm" variant="outline"
+              disabled={!certificate.pdf_path || busyAction !== null}
+              onClick={() => openCertificate("preview")}
+              className="gap-1.5"
+            >
+              {busyAction === "preview" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Eye className="w-3.5 h-3.5" />}
+              Preview
+            </Button>
+            <Button
+              type="button" size="sm" variant="outline"
+              disabled={!certificate.pdf_path || busyAction !== null}
+              onClick={() => openCertificate("download")}
+              className="gap-1.5"
+            >
+              {busyAction === "download" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+              Download PDF
+            </Button>
+            {canGenerate && (
+              <Button type="button" size="sm" variant="outline" disabled={generating} onClick={generate} className="gap-1.5">
+                {generating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                {generating ? "Regenerating…" : "Regenerate"}
+              </Button>
+            )}
+          </div>
+        </div>
+      ) : (
+        <p className="text-sm text-muted-foreground">No certificate has been generated for this service yet.</p>
+      )}
+
+      {!certificate && canGenerate && (
+        <div className="space-y-2.5">
+          {photos.length > 0 && (
+            <label className="flex items-center gap-2 cursor-pointer">
+              <Checkbox checked={includePhotos} onCheckedChange={(v) => setIncludePhotos(!!v)} />
+              <span className="text-sm text-foreground">Include service photos ({photos.length})</span>
+            </label>
+          )}
+          <Button type="button" onClick={generate} disabled={generating} className="gap-2">
+            {generating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Award className="w-4 h-4" />}
+            {generating ? "Generating…" : "Generate Service Certificate"}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
