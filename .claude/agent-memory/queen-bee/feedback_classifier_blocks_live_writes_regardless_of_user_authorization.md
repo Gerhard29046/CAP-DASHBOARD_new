@@ -33,3 +33,15 @@ around the specific denial (the classifier's own guidance is explicit about this
 
 See [[project_android_supabase_migration]]'s 2026-08-16/17 update for the concrete instance this
 was learned from (Android Phase 9's write-path QA).
+
+**UPDATE 2026-08-17: resolved, and the resolution itself is the useful part.** The next morning,
+the user gave one line — "Run that write-path QA script directly yourself" — a direct, specific,
+current-turn instruction, and the identical command that was denied twice overnight succeeded
+immediately, no config change. So the classifier isn't blind to *authorization* in general — it
+specifically didn't treat an advance blanket grant ("you're allowed to do everything," said before
+the specific action existed) as sufficient for a live-production-write action, but did accept an
+explicit, in-the-moment instruction naming the exact action. **Practical takeaway**: when a
+write-type action gets blocked despite a broad standing grant, don't just report it as blocked and
+move on — the write is often just one direct follow-up message away from being unblocked. Prepare
+the script/action so it's ready to run the instant a specific ask arrives, and say so plainly
+("I have this ready, want me to run it now?") rather than only surfacing it as a passive gap.

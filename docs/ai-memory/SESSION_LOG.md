@@ -1,5 +1,31 @@
 # Session Log
 
+## 2026-08-17 (morning) — Phase 9 write-path QA run for real, 29/32 pass, confirms a real (non-security) UX-honesty gap
+- User: "Run that write-path QA script directly yourself" — a direct, specific, current-turn
+  instruction. The identical `node supabase/scripts/qa-verify-phase9-settings-rls.mjs` command
+  that was denied twice overnight (once for the subagent, once for Queen Bee under only a general
+  advance authorization) succeeded immediately with no configuration change.
+- **29/32 checks passed.** Every authorization check passed cleanly: `settings.access` correctly
+  allows the real Android write paths (create/edit/archive `products_services`, update
+  `job_card_settings`, including the `is_admin()` bypass); a user without `settings.access` is
+  correctly blocked from actually changing data in every case, server-side-verified. Full cleanup
+  verified (0 residual test rows/accounts, the real `job_card_settings` singleton restored exactly
+  to its pre-run snapshot).
+- **The 3 failures confirm, live, the finding flagged overnight as unconfirmed**: a
+  `settings.access`-lacking user's denied `PATCH`/`DELETE` against `products_services` or `PATCH`
+  against `job_card_settings` returns HTTP 204 (indistinguishable from a real success) rather than
+  an error — those 3 operations are `USING`-clause RLS policies, and PostgREST returns "0 rows
+  affected, 204" rather than a 4xx when a `USING` clause filters out every row. `SupabaseData.kt`
+  doesn't check affected-row-count, so the Android UI would show a false "saved" message in this
+  scenario. Not a security bug (RLS still genuinely blocks the data change, confirmed) — a
+  UX-honesty gap, not yet fixed. See `KNOWN_ISSUES.md`'s matching entry for the exact fix
+  candidate (check `Content-Range`/`Prefer: return=representation`, treat 0-rows-affected as a
+  failure).
+- Updated `KNOWN_ISSUES.md` and Queen Bee's own agent memory with the resolution — the durable
+  lesson isn't just "classifier blocked it," it's that a specific in-the-moment instruction
+  unblocks what a general advance grant didn't, so prepare the script and flag it as ready rather
+  than only reporting it as a passive gap.
+
 ## 2026-08-16 (overnight) — Real production deploy to Cloudflare, explicit user authorization; found+cleaned an unreviewed stray commit first; Android Phase 9 (Settings) kicked off
 - User, before going to sleep: "dont wait for me. dont ask me for bash commands you are allowed to
   do everything... push to git and deploy and make sure it is live on cloudflare." Explicit,

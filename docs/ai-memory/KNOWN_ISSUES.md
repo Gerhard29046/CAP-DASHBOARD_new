@@ -1,36 +1,51 @@
 # Known Issues
 
-## NOT YET LIVE-VERIFIED — Android Phase 9 write paths (`products_services`/`job_card_settings`); a real QA script exists but was blocked from running by this session's own tool classifier (2026-08-16 overnight)
+## CONFIRMED LIVE (2026-08-17, user ran the script directly) — Android Phase 9 write paths work correctly for authorization, but denied UPDATE/DELETE surface as a silent HTTP 204 instead of an error
 
-- `testing-bee` wrote `supabase/scripts/qa-verify-phase9-settings-rls.mjs` — 22 checks, mirrors
-  `SupabaseData.kt`'s exact request shapes, throwaway users at 3 permission levels (no access /
-  explicit grant / admin bypass), safe snapshot-and-restore of the real `job_card_settings`
-  singleton, independently re-verified cleanup. Both the subagent's own attempt to run it AND
-  Queen Bee's direct attempt were denied by Claude Code's auto-mode classifier (a live-production-
-  write action) — not a code problem, not something either agent tried to route around. **The
-  script itself was never executed.** Someone outside this session's tool restrictions (the user
-  directly, or a future session with a different permission configuration) needs to run
-  `node supabase/scripts/qa-verify-phase9-settings-rls.mjs` to actually close this gap.
-- What this means practically: Phase 9's write paths are code-reviewed against the already-live
-  RLS policies (`0018_products_services_and_job_card_settings.sql`) and structurally match a
-  `has_permission('settings.access')` pattern already proven correct elsewhere in this schema
-  (e.g. `dashboard_notes`'s 24/24 live-verified matrix), but have not themselves been
-  live-exercised. Reads were live-verified (see the Android Phase 9 `SESSION_LOG.md` entry).
-- **Real, disclosed-but-unconfirmed finding surfaced by writing (not running) the script**:
-  `products_services_update`/`_delete` and `job_card_settings_update` are all `USING`-clause RLS
-  policies (only `products_services_insert` is `WITH CHECK`). PostgREST's semantics mean a
-  `USING`-clause denial can return 2xx with zero rows affected, rather than a hard error — and
-  `SupabaseData.kt`'s `update()` (`MainActivity.kt`'s `MainViewModel.save()` call chain) only
-  checks the HTTP status code, not affected-row-count or `Prefer: return=representation`. If this
-  reading is correct, a user whose `settings.access` is revoked mid-session (while the Settings
-  screen is still reachable from cached nav state) could see "Job Card settings saved and
-  synchronized" while the server silently changed nothing. **Not a security bug** — the RLS policy
-  itself still correctly blocks the actual data change, and normal navigation already can't reach
-  this screen without the permission (`RequireSettingsAccess` gate + hidden nav entry +
-  `permittedCollections` gating, all confirmed via code read). It's a UX-honesty gap, matching the
-  class of thing this project has fixed before when found (e.g. no-fake-success elsewhere in this
-  codebase) — not fixed here, since the underlying reading was never confirmed against a live
-  response (that's exactly what the blocked script would have settled).
+- **The write-path QA script blocked overnight (see the RESOLVED entry below) was run for real
+  once the user gave a direct, current-turn instruction to run it** — the auto-mode classifier
+  that blocked both the subagent and Queen Bee's own attempt overnight did not block a
+  same-action run triggered by an explicit user instruction in the conversation. **29/32 checks
+  passed.** Every authorization check passed: `settings.access` correctly allows create/update/
+  archive/delete on `products_services` and update on `job_card_settings` (including the
+  `is_admin()` bypass path for an admin with no explicit grant); a user WITHOUT `settings.access`
+  is correctly blocked from actually changing any data (`INSERT` hard-fails 403; `UPDATE`/`DELETE`
+  leave the row/singleton **genuinely, server-side-verified unchanged** in every case); cleanup
+  fully verified (0 residual rows, 0 residual test accounts, the real `job_card_settings`
+  singleton restored to its exact pre-run snapshot).
+- **The 3 failures are exactly the finding predicted overnight, now confirmed against real HTTP
+  responses, not just a policy reading**: a `settings.access`-lacking user's `PATCH`/`DELETE`
+  against `products_services` or `PATCH` against `job_card_settings` returns **HTTP 204** (the
+  same status a real, successful write returns), not an error — because those 3 operations are
+  gated by `USING`-clause RLS policies, and PostgREST's semantics for a `USING` clause that
+  filters out every matching row is "successfully affected 0 rows," not a 4xx. (Only
+  `products_services_insert`, a `WITH CHECK` policy, correctly hard-fails 403 — confirmed live
+  too.) `SupabaseData.kt`'s `update()`/`delete()` only check the HTTP status code, so
+  `MainViewModel.save()`/`deleteThenRun()` would report success to the Android UI even though
+  nothing changed server-side.
+- **Still not a security bug** — data is never actually exposed or modified; RLS itself is
+  correctly enforcing authorization in every case tested. It's a UX-honesty gap: a user whose
+  `settings.access` is revoked mid-session, while the Settings screen is still reachable from
+  cached nav state, could see a false "saved" message. **Not fixed yet** — flagging as a real,
+  now-confirmed (not hypothetical) candidate fix: have `SupabaseData.kt`'s `update()`/`delete()`
+  request `Prefer: return=representation` (or check the `Content-Range` header) and treat "0 rows
+  affected" as a failure, the same honesty standard this codebase already holds itself to
+  elsewhere (e.g. `AccountScreen`'s real-error-not-fake-success handling).
+
+**Original overnight entry, preserved for history — the blocker below is resolved, the finding
+above is what actually happened once unblocked:**
+
+## RESOLVED (2026-08-17) — the classifier block was session/trigger-specific, not permanent
+
+- Overnight, both the subagent's own attempt to run `qa-verify-phase9-settings-rls.mjs` and Queen
+  Bee's own direct attempt (under a blanket "you're allowed to do everything" grant made *before*
+  the specific action) were denied by Claude Code's auto-mode classifier. The next morning, the
+  user gave a direct, specific, current-turn instruction ("run that write-path QA script directly
+  yourself") and the identical command succeeded without any config change. Durable lesson: a
+  broad advance authorization and a specific in-the-moment instruction are not equivalent to this
+  classifier, even though both are "the user's real intent" from a human's perspective — see
+  [[feedback_classifier_blocks_live_writes_regardless_of_user_authorization]] in Queen Bee's own
+  agent memory for the general rule, now updated with this resolution.
 
 ## NEW, disclosed, no active data exposure — `anon` role has default table-level grants on every table created after `0002_rls_policies.sql`'s schema-wide revoke (found 2026-08-16 overnight, Android Phase 9 build verification)
 
