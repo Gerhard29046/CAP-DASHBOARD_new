@@ -1,5 +1,98 @@
 # Session Log
 
+## 2026-08-17 (afternoon) — Full known-issues sweep + Priority 2/3 features (Customer Import, Clients page); pushed to GitHub, NOT yet deployed to Cloudflare
+- User gave a large combined work order: fix Priority-1 known issues (anon grants, KB photo
+  expiry, Android auth migration state, QA accounts, notes denial-messaging, stale Android
+  test), then build out Customer Import (Priority 2) and the Clients page (Priority 3) as
+  production-grade features, then a full known-issues sweep with a fix-what's-safe/list-what-
+  needs-permission pass, then push to GitHub and check deploy status.
+- **anon default-grant gap (migration 0028)**: real 20-table empirical sweep found 4 tables
+  (client_imports/dashboard_notes/job_card_settings/products_services) missing the `anon`
+  table-level revoke that 0002 gave the other 16 — root-caused to this Supabase project's own
+  platform-level default-privilege grant, independent of 0002's revoke. User applied 0028;
+  live-reverified 23/23 (all 20 tables now hard-block anon, authenticated access unaffected).
+- **KB photo/document 7-day expiry bug + a second bucket-RLS bug found in the same trace**:
+  `KnowledgeMachineDetail.jsx` stored a 7-day signed URL instead of a permanent path (0 real
+  rows in production, confirmed, no backfill needed); separately, the `documents` bucket's
+  owner-scoped RLS made a KB file invisible to any technician besides its uploader, defeating
+  the shared-KB point of the feature. Migration 0029 (record-scoped RLS matching 0024's
+  pattern) + storage.js's uploadKnowledgeMedia/uploadKnowledgeDocument/getKnowledgeFileSignedUrl
+  prepared, code-complete, lint/typecheck/build clean — **0029 NOT yet applied**, needs the
+  user's SQL Editor same as every migration.
+- **User Management delete-user action** (explicit user request, not originally in the work
+  order): admin-only delete of a user's public.users profile row, backed by the pre-existing
+  `users_delete_admin` RLS policy. Disclosed limitation surfaced in the UI: deletes the profile
+  only, not the auth.users login record (impossible client-side without service_role).
+  Live-verified 12/12 (role/active-toggle persistence re-confirmed correct in both directions,
+  non-admin delete genuinely blocked, admin delete genuinely works, auth.users genuinely
+  untouched).
+- **4 throwaway QA accounts**: reported in full (email/IDs/role/active), then deleted per
+  explicit user approval, independently confirmed gone from both auth.users and public.users.
+  Only the 1 real admin account remains in production.
+- **Android auth migration investigation** (`supabase-android-bee`, no Bash/no Supabase MCP
+  this session — traced entirely from code): login/logout/token-refresh/permissions all traced
+  correct, no bug found. Password reset is **entirely web-only** — Android has no
+  forgot-password UI, no deep-link/App-Link intent filter, so a Supabase recovery redirect can
+  never reach the app. The "only 1 real user migrated" gap is a **business/process gap**, not a
+  code bug: `public.users.id` can only ever be populated by a real Supabase Auth sign-up
+  trigger, so real staff must self-register at `/register` before an admin can assign their
+  role — nobody has done this yet. Flagged real risk: email deliverability for that
+  registration/reset flow has never been tested with a real inbox.
+- **Notes/Settings denial-vs-already-deleted messaging** (`SupabaseData.kt`): implemented by
+  `supabase-android-bee`, one extra GET probe on a zero-row response distinguishes "no
+  permission" from "already deleted by someone else" without weakening the always-throw
+  invariant the 426a2fe fix established. Build-verified by `testing-bee` from a clean build:
+  16/16 unit tests (unchanged baseline), 0 lint errors/28 warnings (down from 31, unrelated
+  drift), real APK. **Not verified against live production** (needs disposable-account REST
+  script) — disclosed, not done this pass.
+- **`LiveFirebaseSmokeTest.kt`**: confirmed genuinely obsolete (asserts UI text that exists
+  nowhere in the app) and deleted. Found and fixed the exact same bug class on web while at it:
+  `frontend/tests/live-sync.mjs` (`npm run test:e2e:live`) imports the `firebase` npm package,
+  fully removed from `frontend/` since 2026-08-13 — could only ever fail with a missing-module
+  error. Deleted both, corrected CLAUDE.md's stale "zero automated tests" claim (58 real tests
+  now exist) and `docs/android/ANDROID_SUPABASE_MIGRATION.md`'s stale "Phases E-J not started"
+  status line (materially misled the investigating subagent this session).
+- **Customer Import (Priority 2)**: inspected the existing implementation first — it was
+  already a genuinely production-grade importer (existing-client dedup, in-file dedup,
+  per-row fault isolation, retry-failed-rows, 36 tests). Added the real remaining gaps:
+  `classifyImportError()` diagnoses failure source (Database/Supabase-API/Frontend Importer,
+  never "Source File" for an execution-time failure), success-rate %, a full per-row post-import
+  log (not just failures), richer error-report export. 18 new tests (58 total, all pass),
+  including a 1000-row large-import run and an explicit no-implicit-transaction check.
+- **Clients page (Priority 3)**: combinable per-field filters (Name/Contact/Phone/Email/
+  Address), sortable/clickable column headers, a "Find Duplicates" review view reusing
+  customerImport.js's exact matching signals (not a second detection system) that links to the
+  existing (already cascade-safe, already-confirmed) ClientDetail delete flow rather than
+  reimplementing delete. Found and fixed a real gap while tracing it: ClientDetail's Edit/
+  Delete buttons rendered unconditionally regardless of clients.edit/clients.delete permission
+  (RLS already blocked the actual write server-side — never a security hole, but a real UX gap)
+  — now gated to match. Android Clients parity was explicitly NOT checked this pass — disclosed
+  gap, not silently assumed either way.
+- **In-app photo viewer** (a previously-deferred KNOWN_ISSUES.md item, fixed opportunistically
+  during the sweep): new `PhotoLightbox.jsx`, wired into `MachineDetail.jsx`/`JobCardDetail.jsx`.
+  `ServiceRecords.jsx` already had its own working in-app lightbox from an earlier, undocumented
+  session — KNOWN_ISSUES.md was stale on that specific call site.
+- **Repo hygiene sweep**: deleted `rename_api_client.py`/`rename_api_client_TEMP.txt` (0-byte
+  scratch files flagged since 2026-08-03), `frontend/.claude/`/`supabase/.claude/`/
+  `mobile-android/.claude/` (untracked Ruflo tooling-cache junk, confirmed already merged into
+  canonical `.claude/agent-memory/queen-bee/` — a prior session's own delete attempt was
+  classifier-blocked; not blocked this time), plus 2 more stray 0-byte junk files
+  (`independent`, `drift`) matching the documented Bash-shell-fragment pattern. Corrected
+  `AGENTS.md`'s stale pre-Supabase architecture section with the same staleness notice
+  CLAUDE.md already carries for it.
+- Verified throughout: `npm run lint`/`typecheck`/`test`(58/58)/`build` all clean on every
+  frontend commit; Android build-verified 16/16 unit tests, 0 lint errors, real APK.
+- **Pushed to GitHub** (`git push origin main`, 7 commits, `788ab49..ddbbe56`) — **NOT deployed
+  to Cloudflare**. Confirmed no CI/CD auto-deploy exists (`wrangler.jsonc` is a plain Worker
+  config, no Pages git-integration, the only `.github/workflows/` file is Android CI) — a
+  GitHub push alone does not put anything live. `wrangler whoami` re-confirmed the correct
+  account (`Gerhardvanwijk@gmail.com's Account`). Actual deploy deliberately not run without a
+  separate, explicit go-ahead per CLAUDE.md section 12.
+- **Left needing the user's explicit action/approval**: apply migration 0029 (KB permanent
+  paths); decide on Android forgot-password parity (currently no code, not even a "open the web
+  page" link); test real email deliverability for registration/password-reset before telling
+  real staff to self-register; run an actual Cloudflare deploy if wanted.
+
 ## 2026-08-17 (morning, continued) — Silent-success-on-denied-write fixed and live-confirmed 38/38
 - User: "Yes, go ahead and fix it" (the UX-honesty gap the write-path QA run had just confirmed).
 - Delegated to `supabase-android-bee` (its scope — `SupabaseData.kt` only) with the exact root

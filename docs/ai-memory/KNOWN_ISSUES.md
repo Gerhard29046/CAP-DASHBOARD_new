@@ -1,5 +1,39 @@
 # Known Issues
 
+## 2026-08-17 (afternoon) full sweep — see SESSION_LOG.md for full detail. Summary below.
+
+**RESOLVED this session** (fixed and verified, no action needed):
+- `anon` default-grant gap on 4 tables — migration 0028 applied + live-reverified 23/23.
+- 4 leftover throwaway QA accounts — deleted per explicit approval, confirmed gone.
+- Notes/Settings denial-vs-already-deleted messaging — fixed, build-verified 16/16 (NOT
+  verified against live production yet — needs a disposable-account REST script if wanted).
+- `LiveFirebaseSmokeTest.kt` + web's equivalent dead `test:e2e:live` script — both deleted.
+- Web: photo click opens a new tab instead of an in-app viewer — fixed on
+  `MachineDetail.jsx`/`JobCardDetail.jsx` (`ServiceRecords.jsx` already had its own).
+- `ClientDetail.jsx` Edit/Delete buttons showing regardless of `clients.edit`/`clients.delete`
+  permission — gated to match the real RLS policy (never a security hole, was a UX gap).
+- Repo hygiene: 4 confirmed-junk/dead files+directories removed, `AGENTS.md`/
+  `docs/android/ANDROID_SUPABASE_MIGRATION.md` staleness corrected.
+
+**NEEDS THE USER — not something code alone can finish**:
+1. **Apply `supabase/migrations/0029_knowledge_base_permanent_file_paths.sql`** via the SQL
+   Editor (fixes the KB photo/document 7-day-expiry bug + a cross-user bucket-RLS gap; 0 real
+   rows exist today, so this is purely additive, no data risk). Code is done, waiting on this.
+2. **Android has no password-recovery path at all** — no "Forgot password?" UI, no deep-link/
+   App-Link capability, so a Supabase recovery email can never open the app even if one existed.
+   A cheap interim (a link that opens the web `/forgot-password` page in a browser) is real,
+   scoped work, not yet built — needs a decision on whether it's wanted before building it.
+3. **Real email deliverability for registration/password-reset has never been tested with a
+   real inbox** — this blocks confidently telling real staff to self-register at `/register`
+   for their Android/web accounts. Needs the user to actually test one real address.
+4. **Deploy to Cloudflare** — pushed to GitHub (`788ab49..ddbbe56`), confirmed no CI/CD
+   auto-deploys it (plain Worker config, no Pages git integration). A real `wrangler deploy` is
+   a separate, explicit action not run without your go-ahead.
+
+Everything below this point predates today's sweep (Firebase-era history, already-RESOLVED
+entries, or genuinely still-open items already itemized above) — kept for historical record,
+not re-summarized here.
+
 ## RESOLVED (2026-08-17) — silent-success-on-denied-write fixed, live-confirmed 38/38
 
 - Fixed per explicit user instruction ("Yes, go ahead and fix it"). `SupabaseData.kt`'s
