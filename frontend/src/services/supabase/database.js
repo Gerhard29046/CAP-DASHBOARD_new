@@ -1,9 +1,17 @@
 import { supabase } from "@/services/supabase/client";
+import { sanitizeForWrite } from "@/lib/sanitizeForWrite";
 
 // Generic Supabase table helpers. Not wired into apiClient.js yet -- entity-specific
 // services (CustomerService, JobCardService, etc. -- Phase 1) should be built on top of
 // these rather than pages calling supabase.from(...) directly, matching the existing
 // apiClient.js abstraction boundary (no page should call the backend SDK directly).
+//
+// createRow()/updateRow() run every write through sanitizeForWrite() first -- see
+// src/lib/sanitizeForWrite.js for why (empty-string form fields breaking date/numeric
+// columns). Re-exported here so existing importers (supabaseApiClient.js's singleton
+// settings APIs, which bypass these helpers via raw supabase.from() calls) don't need a
+// second import path.
+export { sanitizeForWrite };
 
 export async function listRows(table, { filters = {}, orderBy, limit } = {}) {
   let query = supabase.from(table).select("*");
@@ -24,13 +32,13 @@ export async function getRow(table, id) {
 }
 
 export async function createRow(table, values) {
-  const { data, error } = await supabase.from(table).insert(values).select().single();
+  const { data, error } = await supabase.from(table).insert(sanitizeForWrite(values)).select().single();
   if (error) throw error;
   return data;
 }
 
 export async function updateRow(table, id, values) {
-  const { data, error } = await supabase.from(table).update(values).eq("id", id).select().single();
+  const { data, error } = await supabase.from(table).update(sanitizeForWrite(values)).eq("id", id).select().single();
   if (error) throw error;
   return data;
 }

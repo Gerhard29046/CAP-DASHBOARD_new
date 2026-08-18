@@ -1,5 +1,5 @@
 import { supabase } from "@/services/supabase/client";
-import { listRows, getRow, createRow, updateRow, deleteRow, subscribeToTable } from "@/services/supabase/database";
+import { listRows, getRow, createRow, updateRow, deleteRow, subscribeToTable, sanitizeForWrite } from "@/services/supabase/database";
 import {
   ClientService, MachineService, ServiceRecordService, JobCardService, JobCardLineService,
   SiteService, UserService, PermissionService, RolePermissionService, KnowledgeBaseService,
@@ -307,7 +307,7 @@ const jobCardSettingsApi = {
   update: async (patch) => {
     const { data, error } = await supabase
       .from("job_card_settings")
-      .update(patch)
+      .update(sanitizeForWrite(patch))
       .eq("id", true)
       .select()
       .single();
@@ -330,7 +330,7 @@ const companySettingsApi = {
   update: async (patch) => {
     const { data, error } = await supabase
       .from("company_settings")
-      .update(patch)
+      .update(sanitizeForWrite(patch))
       .eq("id", true)
       .select()
       .single();

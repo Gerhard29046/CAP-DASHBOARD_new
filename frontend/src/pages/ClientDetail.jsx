@@ -91,6 +91,12 @@ export default function ClientDetail() {
   const [showEdit, setShowEdit] = useState(false);
   const [showAddMachine, setShowAddMachine] = useState(false);
   const [saving, setSaving] = useState(false);
+  // BUG FIX (2026-08-18): none of this page's save handlers previously caught a thrown
+  // error -- if the write failed (e.g. a still-genuinely-invalid value slipping past
+  // sanitizeForWrite()'s empty-string-to-null fix, or a real network/permission error),
+  // `setSaving(false)` was skipped and the dialog stayed stuck on "Saving..." forever with
+  // no message. Now caught, surfaced, and the button always un-sticks.
+  const [saveError, setSaveError] = useState("");
 
   // Notes linked to this specific client (see StickyNotes.jsx -- the Dashboard's "Link
   // client" note flow persists client_id correctly, but nothing previously read it back
@@ -164,23 +170,42 @@ export default function ClientDetail() {
 
   const handleEdit = async (form) => {
     setSaving(true);
-    await apiClient.entities.Client.update(id, form);
-    setSaving(false);
-    setShowEdit(false);
-    load();
+    setSaveError("");
+    try {
+      await apiClient.entities.Client.update(id, form);
+      setShowEdit(false);
+      load();
+    } catch (e) {
+      console.error("Failed to save client:", e);
+      setSaveError(e?.message || "Couldn't save changes. Please try again.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleDelete = async () => {
-    await apiClient.entities.Client.delete(id);
-    navigate("/clients");
+    try {
+      await apiClient.entities.Client.delete(id);
+      navigate("/clients");
+    } catch (e) {
+      console.error("Failed to delete client:", e);
+      setSaveError(e?.message || "Couldn't delete this client. Please try again.");
+    }
   };
 
   const handleAddMachine = async (form) => {
     setSaving(true);
-    await apiClient.entities.Machine.create({ ...form, client_id: id });
-    setSaving(false);
-    setShowAddMachine(false);
-    load();
+    setSaveError("");
+    try {
+      await apiClient.entities.Machine.create({ ...form, client_id: id });
+      setShowAddMachine(false);
+      load();
+    } catch (e) {
+      console.error("Failed to add machine:", e);
+      setSaveError(e?.message || "Couldn't save this machine. Please try again.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   if (loading) {
@@ -422,17 +447,23 @@ export default function ClientDetail() {
       </div>
 
       {/* Edit dialog */}
-      <Dialog open={showEdit} onOpenChange={setShowEdit}>
+      <Dialog open={showEdit} onOpenChange={(open) => { setShowEdit(open); if (open) setSaveError(""); }}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Edit Client</DialogTitle></DialogHeader>
+          {saveError && (
+            <p className="text-sm text-destructive bg-destructive/10 rounded-lg px-3 py-2">{saveError}</p>
+          )}
           <EditClientForm initial={client} onSubmit={handleEdit} onCancel={() => setShowEdit(false)} loading={saving} />
         </DialogContent>
       </Dialog>
 
       {/* Add Machine dialog */}
-      <Dialog open={showAddMachine} onOpenChange={setShowAddMachine}>
+      <Dialog open={showAddMachine} onOpenChange={(open) => { setShowAddMachine(open); if (open) setSaveError(""); }}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Add Machine</DialogTitle></DialogHeader>
+          {saveError && (
+            <p className="text-sm text-destructive bg-destructive/10 rounded-lg px-3 py-2">{saveError}</p>
+          )}
           <MachineForm onSubmit={handleAddMachine} onCancel={() => setShowAddMachine(false)} loading={saving} />
         </DialogContent>
       </Dialog>
