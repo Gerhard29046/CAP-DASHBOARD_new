@@ -289,7 +289,14 @@ export default function MachineDetail() {
             ) : (
               <div className="space-y-3">
                 {services.map(s => (
-                  <div key={s.id} className="bg-card border border-border rounded-xl p-4">
+                  <div
+                    key={s.id}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => navigate(`/service-records?id=${s.id}`)}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); navigate(`/service-records?id=${s.id}`); } }}
+                    className="bg-card border border-border rounded-xl p-4 cursor-pointer hover:border-primary/40 hover:bg-secondary/30 transition-colors duration-150"
+                  >
                     <div className="flex items-start justify-between mb-3">
                       <div className="flex items-center gap-2.5">
                         <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
@@ -305,7 +312,7 @@ export default function MachineDetail() {
                           )}
                         </div>
                       </div>
-                      <div className="flex gap-1 shrink-0">
+                      <div className="flex gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
                         <Button variant="ghost" size="icon" onClick={() => setEditService(s)} className="h-8 w-8 text-muted-foreground hover:text-foreground">
                           <Pencil className="w-3.5 h-3.5" />
                         </Button>
@@ -335,7 +342,9 @@ export default function MachineDetail() {
                         <p className="text-xs text-muted-foreground italic">{s.notes}</p>
                       </div>
                     )}
-                    <RecordPhotoGallery photos={s.photos} onPhotoClick={setLightboxUrl} containerClassName="flex gap-2 overflow-x-auto pb-1 mb-1" />
+                    <div onClick={(e) => e.stopPropagation()}>
+                      <RecordPhotoGallery photos={s.photos} onPhotoClick={setLightboxUrl} containerClassName="flex gap-2 overflow-x-auto pb-1 mb-1" />
+                    </div>
                     {s.next_service_due && (
                       <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-border">
                         <Clock className="w-3.5 h-3.5 text-primary" />

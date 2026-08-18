@@ -11,7 +11,6 @@ export default function MachineForm({ initial, onSubmit, onCancel, loading }) {
   const [form, setForm] = useState({
     brand: initial?.brand || "",
     model: initial?.model || "",
-    machine_type: initial?.machine_type || "",
     serial_number: initial?.serial_number || "",
     refrigerant_type: initial?.refrigerant_type || "",
     installation_date: initial?.installation_date || "",
@@ -32,21 +31,15 @@ export default function MachineForm({ initial, onSubmit, onCancel, loading }) {
           <Input value={form.model} onChange={e => set("model", e.target.value)} required className="mt-1 h-11 rounded-xl" />
         </div>
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div>
-          {/* BUG FIX (2026-08-13): machine_type is a real, existing column, displayed as a
-              badge on both MachineDetail.jsx and ClientDetail.jsx's machine list, but this
-              form (used for both Add and Edit Machine) never had a field for it -- every
-              machine was silently created/edited with machine_type permanently null. Free
-              text, matching serial_number's pattern, since no fixed enum of machine types
-              is evidenced anywhere in the codebase. */}
-          <Label>Machine Type</Label>
-          <Input value={form.machine_type} onChange={e => set("machine_type", e.target.value)} placeholder="e.g. Split System, Chiller" className="mt-1 h-11 rounded-xl" />
-        </div>
-        <div>
-          <Label>Serial Number</Label>
-          <Input value={form.serial_number} onChange={e => set("serial_number", e.target.value)} className="mt-1 h-11 rounded-xl" />
-        </div>
+      <div>
+        {/* REMOVED (2026-08-18, explicit user request): the "Machine Type" free-text field
+            (added 2026-08-13, see git history) is intentionally gone from this form again --
+            Brand/Model/Serial Number are the only identifying fields needed when adding a
+            machine. `machine_type` remains a real column and MachineDetail.jsx/
+            ClientDetail.jsx still render its badge for any machine that already has one, but
+            new/edited machines no longer collect it here. */}
+        <Label>Serial Number</Label>
+        <Input value={form.serial_number} onChange={e => set("serial_number", e.target.value)} className="mt-1 h-11 rounded-xl" />
       </div>
       <div>
         <Label>Refrigerant Type</Label>

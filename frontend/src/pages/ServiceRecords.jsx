@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   Search, ClipboardCheck, Calendar, Building2, Wrench, Camera, X, CheckCircle2, ChevronRight,
   Award, Loader2, Eye, Download, RefreshCw,
@@ -32,6 +33,8 @@ function getPhotos(record) {
 }
 
 export default function ServiceRecords() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const deepLinkId = searchParams.get("id");
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -39,6 +42,22 @@ export default function ServiceRecords() {
   const [selectedPhoto, setSelectedPhoto] = useState(null);
 
   useEffect(() => { loadRecords(); }, []);
+
+  // Deep-link support: MachineDetail's "Service History" rows link here as
+  // `/service-records?id=<serviceRecordId>` so a specific service can be opened directly
+  // (including its certificate) instead of only being reachable via Edit. Re-run whenever the
+  // records list or the id param changes, since the initial load's own `enriched[0]` default
+  // selection races with this on first mount.
+  useEffect(() => {
+    if (!deepLinkId || records.length === 0) return;
+    const match = records.find((r) => r.id === deepLinkId);
+    if (match) setSelectedRecord(match);
+  }, [deepLinkId, records]);
+
+  const selectRecord = (record) => {
+    setSelectedRecord(record);
+    setSearchParams(record ? { id: record.id } : {}, { replace: true });
+  };
 
   const loadRecords = async () => {
     setLoading(true);
@@ -64,7 +83,10 @@ export default function ServiceRecords() {
         return { ...r, machine: machine ? { ...machine, client: clientMap[machine.client_id] || null } : null };
       });
       setRecords(enriched);
-      if (enriched.length > 0) setSelectedRecord(enriched[0]);
+      // Skip the default "first record" selection when arriving via a deep link (see the
+      // deepLinkId effect above) -- it would otherwise flash record[0] before the intended
+      // record takes over a render later.
+      if (!deepLinkId && enriched.length > 0) setSelectedRecord(enriched[0]);
     } catch (error) {
       console.error("Failed to load service records:", error);
       setRecords([]);
@@ -161,7 +183,7 @@ export default function ServiceRecords() {
                       return (
                         <TableRow
                           key={record.id}
-                          onClick={() => setSelectedRecord(record)}
+                          onClick={() => selectRecord(record)}
                           aria-label={`View details for ${client?.company_name || client?.name || "this service record"}`}
                           className={`cursor-pointer ${selectedRecord?.id === record.id ? "bg-primary/5" : ""}`}
                         >
@@ -209,7 +231,7 @@ export default function ServiceRecords() {
                   return (
                     <button
                       key={record.id}
-                      onClick={() => setSelectedRecord(record)}
+                      onClick={() => selectRecord(record)}
                       aria-label={`View details for ${client?.company_name || client?.name || "this service record"}`}
                       className={`w-full text-left flex items-start gap-3 p-4 transition-colors duration-150 ${selectedRecord?.id === record.id ? "bg-primary/5" : "active:bg-secondary/60"}`}
                     >
