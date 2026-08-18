@@ -1,6 +1,46 @@
 # Session Log
 
-## 2026-08-18 (latest) — Service History click-through + certificate access, Add Machine form simplified, deployed to prod
+## 2026-08-18 (latest) — Service Records layout side-by-side; Next Service Due auto-populates 1 year out (DB trigger, NOT yet applied)
+
+**Objective** (user): make the Service Records list/detail panels sit side-by-side (they were
+only side-by-side at the 2xl breakpoint) and trim the table down (removed Technician/Photos
+columns from the desktop table only -- still shown in the detail panel); then, once a service
+is logged, automatically populate `next_service_due` as one year later so it surfaces on
+Dashboard's calendar / UpcomingServices.jsx without the technician having to type it manually.
+
+**Changes**:
+- `frontend/src/pages/ServiceRecords.jsx`: two-column grid breakpoint `2xl` → `lg` (matches the
+  desktop table's own breakpoint); dropped Technician/Photos table columns.
+- `supabase/migrations/0031_service_records_default_next_service_due.sql` (**NOT yet
+  applied** -- needs the SQL Editor, same as every other migration in this repo): a
+  `BEFORE INSERT OR UPDATE` trigger on `service_records` that fills `next_service_due =
+  service_date + 1 year`, only when left null, only the first time a row gets its
+  `service_date` (handles `LogServiceModal.jsx`'s two-phase create -- INSERT with just
+  `machine_id`, then UPDATE sets `service_date` etc.). A technician's own explicit value always
+  wins; a later intentional clear of an already-serviced record's `next_service_due` is not
+  silently re-filled. Deliberately DB-level, not just client JS, so it applies to Android too
+  (writes the same table/RLS per `CLAUDE.md` 6.2).
+- `frontend/src/lib/serviceDates.js` (new): `addOneYear()` helper, pure UTC arithmetic. Caught
+  a real bug before shipping: a naive local-time `Date` + `toISOString()` round-trip silently
+  shifts the result back one day in any UTC+ timezone, including this app's own SAST (South
+  Africa, UTC+2) -- e.g. `2026-12-31` was coming out `2027-12-30`. Fixed and covered by
+  `tests/serviceDates.test.js` (5 new tests, incl. the UTC-shift and Feb-29-leap-day cases).
+- `ServiceForm.jsx`/`LogServiceModal.jsx`: Next Service Date input now visibly defaults to
+  service date + 1 year as the technician fills the form (mirrors the DB trigger so the field
+  never looks empty before save), stays live as Service Date changes until manually edited,
+  never overwrites an existing value when editing a record that already has one.
+
+**Verified**: lint/typecheck/build clean, 76/76 tests pass. Deployed (explicit user approval,
+established pattern this session) — `npx wrangler deploy`, live JS bundle byte-compared
+identical to local `dist/`.
+
+**Outstanding, needs the user's explicit action**: migration `0031` must be applied via the
+Supabase SQL Editor before the auto-population actually takes effect in the database — the
+frontend UX default (visible before save) works already, but a service logged through any path
+that bypasses the form's own default (e.g. a future API integration, or Android before its own
+equivalent is confirmed) won't get the DB-level backstop until 0031 is applied.
+
+## 2026-08-18 — Service History click-through + certificate access, Add Machine form simplified, deployed to prod
 
 **Objective** (user): make Clients → Machines → Service History rows clickable to view the
 service (not just Edit) and generate the certificate from there; verify no role/permission

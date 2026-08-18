@@ -1,5 +1,15 @@
 # Known Issues
 
+## OPEN (2026-08-18, latest) — Migration 0031 (Next Service Due auto-populate) prepared but NOT applied
+
+`supabase/migrations/0031_service_records_default_next_service_due.sql` adds a DB trigger so a
+logged service's `next_service_due` defaults to one year later when left blank (drives Dashboard's
+calendar / `UpcomingServices.jsx`). Code-complete, lint/typecheck/build clean, but like every
+migration in this repo it needs the user to run it via the Supabase SQL Editor — no automated
+apply pipeline exists. Until applied, the DB-level backstop doesn't exist yet; the frontend's own
+visible default (`ServiceForm.jsx`/`LogServiceModal.jsx` pre-filling the field) already works
+today regardless, since it's plain client JS already deployed.
+
 ## RESOLVED (2026-08-18, latest) — Edit Client save was 400ing on every save; full site-wide form/save sweep found no other instance
 
 - **User-reported**: another issue updating a client record. Root cause: `apiClient.entities.
