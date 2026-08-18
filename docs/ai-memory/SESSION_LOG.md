@@ -1,6 +1,60 @@
 # Session Log
 
-## 2026-08-18 (latest still) — Edit Client save bug found+fixed+live-verified; full site-wide form/save/relationship sweep
+## 2026-08-18 (latest) — Service History click-through + certificate access, Add Machine form simplified, deployed to prod
+
+**Objective** (user): make Clients → Machines → Service History rows clickable to view the
+service (not just Edit) and generate the certificate from there; verify no role/permission
+hits an unexpected wall doing so; remove the "Machine Type" field from the Add/Edit Machine
+form (Brand/Model/Serial Number only); confirm the KB 7-day photo-expiry bug status; then
+deploy.
+
+**Changes** (`frontend/`):
+- `pages/MachineDetail.jsx`: each Service History card is now a full click target (keyboard
+  accessible) navigating to `/service-records?id=<id>`. Edit/Delete buttons and the photo
+  gallery inside the card `stopPropagation` so they still work independently.
+- `pages/ServiceRecords.jsx`: added `?id=` deep-link support via `useSearchParams` — opens with
+  that specific record selected (skips the previous "default to newest record" behavior when a
+  deep link is present) and updates the URL (`replace`) when a row is selected, so links are
+  shareable. Reused the page's existing certificate generate/preview/download/regenerate UI —
+  no new certificate code was needed.
+- `components/MachineForm.jsx`: removed the "Machine Type" free-text field (added 2026-08-13,
+  see git history) per explicit user request. `machine_type` remains a real column; existing
+  badges on `MachineDetail.jsx`/`ClientDetail.jsx` still render for machines that already have a
+  value. Supabase `.update()` only patches sent fields, so editing a machine no longer touches/
+  clears any existing `machine_type` value.
+
+**Role/RLS verification performed** (not just asserted): `service_records`'s own RLS `SELECT`
+policy (`0002_rls_policies.sql`) already requires `services.view`, and `/service-records`'s
+`RoleGuard` requires the exact same permission, both ultimately checking the same
+`effective_permissions` column via `public.has_permission()` (server) /
+`hasPermission()` (client, identical logic incl. admin bypass). Structural conclusion: a user
+who can see a Service History row (RLS already proved they have `services.view`) can never hit
+"Access Denied" clicking through to `/service-records`. Also confirmed `frontend/src/lib/
+roles.js`'s `ROLE_NAV_ACCESS`/`ROLE_CAPABILITIES` exports are dead code (zero other references
+repo-wide) — not the real permission source, so not relied upon.
+
+**7-day photo storage question**: confirmed already resolved in a prior session (2026-08-17
+web fix via migration `0029`, live-verified 12/12; 2026-08-18 Android-side fix) — no new work
+needed this session, see `KNOWN_ISSUES.md`'s matching RESOLVED entry. Only ever affected
+Knowledge Base photos/documents, never `service_records.photos`/`job_cards.arrival_photos`.
+
+**Verification run**: `npm run lint`, `npm run typecheck`, `npm test` (71/71), `npm run build`
+all clean.
+
+**Deployed to production** (explicit user approval — "please run and deploy"): committed
+(`16122ec`), `npx wrangler whoami` confirmed correct account
+(`gerhardvanwijk@gmail.com`/`3f30316d2958f170287083b0b7d680b5`), `npx wrangler deploy` succeeded
+(`https://capdashboard.gerhardvanwijk.workers.dev`, version `e1089b05-8f92-491c-8ef9-0dc162501aa8`).
+Deploy verified for real, not just trusted from the CLI's own success message: fetched the live
+`index.html` and the live main JS bundle with `Cache-Control: no-cache` and `cmp`'d the bundle
+byte-for-byte against local `dist/` — identical.
+
+**Remaining/not done**: no live human click-through of the new Service History → certificate
+flow was performed (no browser tool available this session, see `feedback_qa_scripted_verification`
+memory) — code/build-verified only, matching this repo's existing "no real Service Certificate
+PDF has been visually inspected by a human" gap noted in `KNOWN_ISSUES.md`.
+
+## 2026-08-18 — Edit Client save bug found+fixed+live-verified; full site-wide form/save/relationship sweep
 
 **Objective** (user): "run through all the forms, client page where i edit any records and see
 if it saves and populate to the database. i got another issue updating a client record... this
