@@ -1,5 +1,73 @@
 # Session Log
 
+## 2026-08-18 (latest still) — Edit Client save bug found+fixed+live-verified; full site-wide form/save/relationship sweep
+
+**Objective** (user): "run through all the forms, client page where i edit any records and see
+if it saves and populate to the database. i got another issue updating a client record... this
+apply to all forms across global on the site. and make sure it all can save without errors.
+make sure database relationships work."
+
+**Root cause found and fixed**: `apiClient.entities.Client.get()` (`supabaseApiClient.js`'s
+`clientEntity.get` override) stamps a synthetic `machines` array onto every client record it
+returns (this client's joined machine list, used for the Machines panel elsewhere on
+`ClientDetail.jsx`) -- confirmed NOT a real column on `public.clients` against
+`0001_initial_schema.sql` (id/company_name/contact_person/email/phone/address/notes/is_active/
+created_at/updated_at only). `ClientDetail.jsx`'s `EditClientForm` seeded its form state as
+`{ ...initial }` -- the full client record including that synthetic field -- so every "Save
+Changes" click on Edit Client sent `machines: [...]` straight through to the PostgREST update.
+PostgREST rejects an update outright on any unknown column, so **editing a client's own company
+name/contact/phone/email/address/notes was failing on every single save**, not a display bug.
+Same failure class as the 2026-08-16/17 `UserAdmin.jsx` bugs already fixed in this project.
+
+**Fixed at two layers** (`frontend/src/pages/ClientDetail.jsx`, `frontend/src/api/
+supabaseApiClient.js`):
+1. `EditClientForm` now seeds only real, editable columns explicitly (company_name/
+   contact_person/phone/email/address/notes), matching every other form in this app
+   (`MachineForm`/`ServiceForm`/`AddClient`).
+2. `clientEntity.update()` now strips `machines` defensively before writing, same pattern as
+   the `users` table's stripping in `request()`'s PUT branch, so this can't break again
+   regardless of what any future caller does.
+
+**Full app-wide sweep performed**, per the explicit "apply to all forms globally" instruction --
+read every page/component with an `apiClient.entities.X.create()/update()` call (grep-driven,
+then each site read individually) and checked whether the payload could ever contain a
+synthetic/joined field or a value the target table doesn't have a column for:
+`AddClient.jsx`, `MachineDetail.jsx` + `MachineForm.jsx`, `JobCardDetail.jsx` (already fixed
+2026-08-17 for its own `notes` bug -- re-confirmed still explicit-field-seeded), `BookIn.jsx`,
+`LogServiceModal.jsx` + `ServiceForm.jsx`, `Jobs.jsx`, `KnowledgeMachineForm.jsx`,
+`KnowledgeMachineDetail.jsx`, `ProductsServicesSettings.jsx`, `JobCardSettingsPanel.jsx`,
+`CompanySettingsPanel.jsx`, `ImportCustomers.jsx` (+ `customerImport.js`'s `buildUpdatePayload`),
+`Account.jsx`, `UserAdmin.jsx` (uses `request()`'s PUT branch, already strips
+`effective_permission_count`/`id`/`created_at`/`updated_at` for `users` -- confirmed still
+correct), `StickyNotes.jsx`, `CalendarPage.jsx`'s reschedule. **Result: the Client entity was
+the only place a synthetic/joined field could leak into a write payload** -- every other form
+already builds an explicit, real-column-only payload (several already hardened during the
+2026-08-18 earlier sweeps this same day).
+
+**Live-verified against production Supabase**, not just code-reviewed: new `supabase/scripts/
+qa-verify-clientdetail-save-fix.mjs` (throwaway client+machine+service_record, fully cleaned up
+after) -- **8/8 checks pass**, including reproducing the exact PostgREST rejection with the OLD
+payload shape (`Could not find the 'machines' column of 'clients' in the schema cache`),
+confirming the FIX's payload shape succeeds and genuinely persists (re-fetched, not just the
+write response), and confirming the client->machine->service_record relationship/FK chain
+works end-to-end (the "make sure database relationships work" part of the ask) -- this bug
+never touched FK integrity, only the client's own column set.
+
+**Verification**: `npm run lint`/`typecheck` clean, `npm test` 71/71 pass (unchanged -- no
+pure-logic module touched), `npm run build` clean (fresh `dist/` artifacts). Committed
+(`02d16de`) -- not pushed/deployed this session (not requested). Found and deleted 3 more
+zero-byte junk files from this session's own Bash commands (`supabase/machine`,
+`supabase/service`, `{,+`) -- same recurring shell-fragment artifact pattern flagged repeatedly
+in memory; `git status`/`git diff --check` clean after.
+
+**Not done / out of scope for this pass**: no browser tool available this session, so this was
+verified via a live REST-contract script (matching this project's established pattern for
+unclicked frontend fixes) rather than an actual click-through in the deployed UI. The fix is
+low-risk and mechanical (removing 2 fields from 2 write paths), same risk class as prior
+code/script-verified-only fixes in this project.
+
+---
+
 ## 2026-08-18 (latest) — app-wide error-handling sweep + new global ErrorBoundary
 
 **Objective** (user, direct follow-up to the previous entry): "add more error handling across

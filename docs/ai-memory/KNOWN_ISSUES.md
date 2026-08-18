@@ -1,5 +1,29 @@
 # Known Issues
 
+## RESOLVED (2026-08-18, latest) — Edit Client save was 400ing on every save; full site-wide form/save sweep found no other instance
+
+- **User-reported**: another issue updating a client record. Root cause: `apiClient.entities.
+  Client.get()` stamps a synthetic `machines` array (this client's joined machine list) onto
+  every client record it returns -- not a real column on `public.clients`.
+  `ClientDetail.jsx`'s `EditClientForm` seeded its form state as `{ ...initial }`, so every
+  "Save Changes" on Edit Client sent `machines: [...]` straight through to the update payload --
+  PostgREST rejects an update outright on any unknown column, so editing a client's own
+  company name/contact/phone/email/address/notes was failing on every save. Same failure class
+  as the 2026-08-16/17 `UserAdmin.jsx` bugs.
+- **Fixed at two layers**: `EditClientForm` now seeds only real columns explicitly; `supabaseApiClient.js`'s
+  `clientEntity.update()` now also strips `machines` defensively (same pattern as `users`'
+  stripping), so this can't recur regardless of what a future caller does.
+- **Full app-wide sweep** of every other `entities.X.create()/update()` call site (per explicit
+  "apply to all forms globally" instruction) found this was the ONLY place a synthetic/joined
+  field could leak into a write payload -- every other form/page already builds an explicit,
+  real-column-only payload. See `SESSION_LOG.md`'s matching entry for the full file list swept.
+- **Live-verified against production Supabase**: `supabase/scripts/qa-verify-clientdetail-save-fix.mjs`,
+  8/8 checks pass, including reproducing the exact old PostgREST rejection, confirming the fix
+  persists, and confirming the client->machine->service_record relationship chain works
+  end-to-end. `npm run lint`/`typecheck`/`test`(71/71)/`build` all clean. Committed `02d16de`.
+- **Not live-clicked** (no browser tool this session) -- verified via a live REST-contract
+  script instead, matching this project's established pattern for unclicked frontend fixes.
+
 ## RESOLVED (2026-08-18, later still) — app-wide error-handling sweep: the "~15 other unguarded save handlers" gap disclosed in the previous entry is now closed, plus a new global ErrorBoundary
 
 - Follows directly from the entry immediately below. User asked to extend error handling

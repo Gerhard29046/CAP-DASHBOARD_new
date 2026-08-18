@@ -1,5 +1,33 @@
 # Project State
-_Last verified: 2026-08-18 — Android Service Certificate parity built, a real Android regression
+_Last verified: 2026-08-18 (latest) — full site-wide sweep of every form/edit-save flow, real
+bug found+fixed+live-verified: Edit Client (ClientDetail.jsx) was 400ing on every save.
+
+**User-reported**: "another issue updating a client record." Root cause: `apiClient.entities.
+Client.get()` stamps a synthetic `machines` array onto every client record (this client's
+joined machine list, used for the machines list elsewhere on the page) -- not a real column on
+`public.clients`. `EditClientForm` seeded its form state as `{ ...initial }`, so every "Save
+Changes" click on Edit Client sent `machines: [...]` straight through to the PostgREST update
+-- rejected outright (unknown column), same failure class as the 2026-08-16/17 UserAdmin.jsx
+bugs. Fixed at two layers: `EditClientForm` now seeds only real columns explicitly (matching
+every other form in the app); `clientEntity.update()` now also strips `machines` defensively
+(same pattern as the `users` table's stripping). Full app-wide sweep of every other entity
+create/update call site (`AddClient`/`MachineDetail`/`JobCardDetail`/`BookIn`/`LogServiceModal`/
+`Jobs`/`KnowledgeMachineForm`/`KnowledgeMachineDetail`/`ProductsServicesSettings`/
+`JobCardSettingsPanel`/`CompanySettingsPanel`/`ImportCustomers`/`Account`/`UserAdmin`/
+`StickyNotes`/`CalendarPage`) found this was the ONLY site where a synthetic/joined field could
+leak into a write payload -- every other form already builds an explicit, real-column-only
+payload. **Live-verified against production Supabase** (new `supabase/scripts/qa-verify-
+clientdetail-save-fix.mjs`, throwaway data, fully cleaned up): 8/8 checks pass, including
+reproducing the exact PostgREST rejection with the old payload shape, confirming the fix, and
+confirming the client->machine->service_record relationship chain works end-to-end.
+`npm run lint`/`typecheck`/`test` (71/71)/`build` all clean. Committed (`02d16de`), not pushed/
+deployed this session (not requested). 2 more zero-byte junk files from this session's own Bash
+commands found and deleted (`supabase/machine`, `supabase/service`, `{,+`) -- same recurring
+shell-fragment artifact pattern flagged repeatedly in memory.
+
+---
+
+_Last verified before that: 2026-08-18 — Android Service Certificate parity built, a real Android regression
 in Knowledge Base file display found+fixed, web forgot-password live-verified end-to-end. **All
 of this is uncommitted as of this entry** — no commit/push was requested this session. Full
 narrative in `SESSION_LOG.md`/`DECISIONS.md`'s matching 2026-08-18 entries; summary:
