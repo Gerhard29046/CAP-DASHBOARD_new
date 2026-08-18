@@ -1,5 +1,39 @@
 # Session Log
 
+## 2026-08-18 (later) — anon default-grant audit gap closed with live evidence; user confirmed certificate PDF + email deliverability working; job-number race explicitly deprioritized
+
+**Objective**: close out the remaining known-issues list — audit whether `0028`'s `anon`
+default-grant fix genuinely covers tables created after it (previously "scope not fully
+confirmed"), and record the user's direct confirmations for the Service Certificate PDF and email
+deliverability.
+
+**What was done**: `git pull` first (fast-forwarded `7ecb714..890ece0`, 49 files — the previously
+uncommitted Android Service Certificate/KB-fix work from the prior 2026-08-18 session was already
+committed by the time this session started). Then: `supabase/scripts/qa-anon-grants-sweep.mjs`'s
+hardcoded table list was missing `company_settings`/`service_certificates` (new in `0030`, which
+never explicitly revoked `anon` on either — relies entirely on `0028`'s default-privileges fix).
+Added both, ran the sweep live against production with the anon key: **all 22 known tables
+correctly return 401/403 for anonymous access**, including the two untested-until-now 0030 tables
+— real, live proof `0028`'s `alter default privileges ... revoke all on tables from anon` protects
+future tables, not just the 4 it explicitly named. No new migration needed.
+
+The user separately confirmed, directly, without an agent re-verifying: the Service Certificate
+PDF opens and looks right; the forgot-password email flow has worked, including as recently as
+2026-08-17 (the `localhost` link it initially produced was an expected symptom of the
+not-yet-built production reset-password page, now built and registered with Supabase). The
+Job Card `job_number` race condition was explicitly deprioritized by the user ("won't happen in
+the near future") — left unfixed by instruction, not an oversight.
+
+**Files changed**: `supabase/scripts/qa-anon-grants-sweep.mjs` (table list only),
+`docs/ai-memory/KNOWN_ISSUES.md`, this entry.
+
+**Verification**: live REST sweep against production Supabase (anon key, read-only, no writes) —
+22/22 tables blocked. No build/lint/test run (no application code touched).
+
+**Remaining work**: none of the previously-open items remain open except the explicitly
+deprioritized job-number race condition (tracked, not urgent). See `KNOWN_ISSUES.md`'s matching
+2026-08-18 RESOLVED entry.
+
 ## 2026-08-18 — Android Service Certificate parity; Android KB display regression found+fixed; web forgot-password live-verified end-to-end
 
 **Objective** (user, verbatim intent): build the Android Service Certificate feature now that

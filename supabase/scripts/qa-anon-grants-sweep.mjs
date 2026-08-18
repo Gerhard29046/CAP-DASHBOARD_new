@@ -29,11 +29,11 @@ if (!SUPABASE_URL || !ANON_KEY) { console.error("Missing SUPABASE_URL/SUPABASE_A
 
 // Table list extracted directly from `create table public.X` in supabase/migrations/*.sql.
 const TABLES = [
-  "audit_logs", "client_imports", "clients", "dashboard_notes", "job_card_lines",
-  "job_card_settings", "job_cards", "knowledge_documents", "knowledge_machines",
-  "knowledge_media", "knowledge_notes", "knowledge_service_codes", "machines",
-  "notifications", "permissions", "products_services", "role_permissions",
-  "service_records", "sites", "users",
+  "audit_logs", "client_imports", "clients", "company_settings", "dashboard_notes",
+  "job_card_lines", "job_card_settings", "job_cards", "knowledge_documents",
+  "knowledge_machines", "knowledge_media", "knowledge_notes", "knowledge_service_codes",
+  "machines", "notifications", "permissions", "products_services", "role_permissions",
+  "service_certificates", "service_records", "sites", "users",
 ];
 
 const results = [];

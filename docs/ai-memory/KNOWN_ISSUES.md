@@ -1,5 +1,27 @@
 # Known Issues
 
+## RESOLVED (2026-08-18) — `anon` default-grant audit gap closed with live evidence; Service Certificate PDF + email deliverability confirmed working by the user
+
+- **`anon` default-grant gap (previously "scope not fully confirmed")**: `qa-anon-grants-sweep.mjs`'s
+  hardcoded table list was missing the two newest tables from `0030_service_certificates.sql`
+  (`company_settings`, `service_certificates`) — added them and re-ran live against production.
+  **All 22 known `public` tables now correctly hard-block anonymous access (401/403)**, including
+  both new 0030 tables which were never given an explicit `revoke ... from anon` of their own —
+  this is real, live proof that `0028_anon_grant_hardening.sql`'s `alter default privileges in
+  schema public revoke all on tables from anon` genuinely protects tables created by *later*
+  migrations too, not just the 4 tables it explicitly named. No new migration needed — 0028
+  already closed this for good; this was a verification-tooling gap, not a live security gap.
+  Script committed with the updated table list for future re-use.
+- **Service Certificate PDF**: user confirmed opening and reviewed on a real device/browser —
+  visual-inspection gap closed by the user directly, not re-verified by an agent.
+- **Email deliverability**: user confirmed registration/password-reset email has worked, including
+  as recently as 2026-08-17 — the recovery link initially pointed at `localhost` (expected, since
+  no production reset-password page existed yet at send time); a real `/reset-password` page was
+  since built and its URL added to Supabase's Redirect URLs, closing the gap. No longer flagged as
+  untested.
+- **Job Card `job_number` race condition**: explicitly deprioritized by the user ("won't happen in
+  the near future") — left unfixed, not forgotten. Revisit if job-card volume/concurrency changes.
+
 ## RESOLVED (2026-08-18) — Android Service Certificate parity, KB 7-day-expiry Android regression, web forgot-password live-verified
 
 - **Android Service Certificate feature**: now real, build-verified (43/43 unit tests, 0 lint
