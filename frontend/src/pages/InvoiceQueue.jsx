@@ -3,6 +3,7 @@ import { apiClient } from "@/api/apiClient";
 import { Link } from "react-router-dom";
 import { FileText, CheckCircle2, ChevronRight, Receipt, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { reportError } from "@/lib/reportError";
 import moment from "moment";
 
 const STATUS_STYLES = {
@@ -101,9 +102,14 @@ export default function InvoiceQueue() {
 
   const markInvoiced = async (id) => {
     setMarkingId(id);
-    await apiClient.entities.JobCard.update(id, { status: "Collected" });
-    load();
-    setMarkingId(null);
+    try {
+      await apiClient.entities.JobCard.update(id, { status: "Collected" });
+      load();
+    } catch (e) {
+      reportError(e, "Couldn't mark this job as collected. Please try again.", "Failed to mark job collected:");
+    } finally {
+      setMarkingId(null);
+    }
   };
 
   const pending  = items.filter(i => i.status === "Completed" || i.status === "Ready to Invoice" || i.status === "Ready for Invoice");

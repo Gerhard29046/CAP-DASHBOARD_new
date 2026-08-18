@@ -7,6 +7,7 @@ import { Plus, X, StickyNote, Building2, Search } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
+import { reportError } from "@/lib/reportError";
 import moment from "moment";
 
 // Dashboard sticky notes -- GLOBAL (every signed-in user sees every note), explicit user
@@ -63,8 +64,13 @@ export default function StickyNotes() {
 
   const addNote = async ({ content, clientId }) => {
     const color = COLOR_KEYS[notes.length % COLOR_KEYS.length];
-    const created = await dashboardNotesClient.create({ content, color, client_id: clientId });
-    setNotes((prev) => [created, ...prev]);
+    try {
+      const created = await dashboardNotesClient.create({ content, color, client_id: clientId });
+      setNotes((prev) => [created, ...prev]);
+    } catch (e) {
+      reportError(e, "Couldn't add this note. Please try again.", "Failed to add note:");
+      throw e; // let the caller (dialog) know the save failed and keep it open
+    }
   };
 
   const updateNote = async (id, content) => {

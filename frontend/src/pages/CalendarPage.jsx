@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import PageHeader from "@/components/PageHeader";
+import { reportError } from "@/lib/reportError";
 
 // Google Calendar sync was removed 2026-08-12 (user decision: Cloud Functions/Google API
 // cost was not justified) -- this page now only ever shows the CAP Dashboard's own
@@ -151,6 +152,8 @@ function EventDetails({ event, canReschedule, close, refreshed }) {
         body: JSON.stringify({ next_service_due: date }),
       });
       refreshed();
+    } catch (e) {
+      reportError(e, "Couldn't reschedule this service. Please try again.", "Failed to reschedule service:");
     } finally {
       setBusy(false);
     }

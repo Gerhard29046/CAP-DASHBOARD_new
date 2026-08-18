@@ -34,6 +34,7 @@ import {
 import EmptyState from "@/components/EmptyState";
 import RecordPhotoGallery from "@/components/RecordPhotoGallery";
 import PhotoLightbox from "@/components/PhotoLightbox";
+import { reportError } from "@/lib/reportError";
 import moment from "moment";
 
 const LINE_TYPES = ["Labour", "Part / Product", "Diagnosis", "Other"];
@@ -320,19 +321,23 @@ export default function JobCardDetail() {
     const quantity = Number(form.quantity) || 1;
     const unitPrice = Number(form.unit_price) || 0;
 
-    await apiClient.entities.JobCardLine.create({
-      job_card_id: String(id),
-      line_type: form.line_type,
-      description: form.description,
-      quantity,
-      unit_price: unitPrice,
-      line_total: quantity * unitPrice,
-      catalog_item_id: form.catalog_item_id || null,
-    });
-
-    setSavingLine(false);
-    setShowAddLine(false);
-    load();
+    try {
+      await apiClient.entities.JobCardLine.create({
+        job_card_id: String(id),
+        line_type: form.line_type,
+        description: form.description,
+        quantity,
+        unit_price: unitPrice,
+        line_total: quantity * unitPrice,
+        catalog_item_id: form.catalog_item_id || null,
+      });
+      setShowAddLine(false);
+      load();
+    } catch (e) {
+      reportError(e, "Couldn't add this line item. Please try again.", "Failed to add job card line:");
+    } finally {
+      setSavingLine(false);
+    }
   };
 
   const handleEditLine = async (form) => {
@@ -359,22 +364,29 @@ export default function JobCardDetail() {
   };
 
   const handleDeleteLine = async (lineId) => {
-    await apiClient.entities.JobCardLine.delete(lineId);
-    load();
+    try {
+      await apiClient.entities.JobCardLine.delete(lineId);
+      load();
+    } catch (e) {
+      reportError(e, "Couldn't delete this line item. Please try again.", "Failed to delete job card line:");
+    }
   };
 
   const handleStatusChange = async (status) => {
     setUpdatingStatus(true);
-
-    await apiClient.entities.JobCard.update(id, {
-      status,
-      ...(status === "Completed"
-        ? { date_completed: new Date().toISOString().slice(0, 10) }
-        : {}),
-    });
-
-    setUpdatingStatus(false);
-    load();
+    try {
+      await apiClient.entities.JobCard.update(id, {
+        status,
+        ...(status === "Completed"
+          ? { date_completed: new Date().toISOString().slice(0, 10) }
+          : {}),
+      });
+      load();
+    } catch (e) {
+      reportError(e, "Couldn't update the status. Please try again.", "Failed to update job card status:");
+    } finally {
+      setUpdatingStatus(false);
+    }
   };
 
   const handlePrint = () => {
@@ -387,8 +399,12 @@ export default function JobCardDetail() {
   // real authorization gate -- matches ClientDetail.jsx's delete, which likewise shows the
   // button to any signed-in user and lets the server reject an unauthorized attempt.
   const handleDelete = async () => {
-    await apiClient.entities.JobCard.delete(id);
-    navigate("/jobs");
+    try {
+      await apiClient.entities.JobCard.delete(id);
+      navigate("/jobs");
+    } catch (e) {
+      reportError(e, "Couldn't delete this job card. Please try again.", "Failed to delete job card:");
+    }
   };
 
   const total = lines.reduce(

@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { uploadRecordPhoto, deleteRecordPhoto, RECORD_PHOTO_NAMESPACES } from "@/services/supabase/storage";
 import { useSignedPhotoUrls } from "@/hooks/useSignedPhotoUrls";
 import { SERVICE_WORK_ITEMS, joinWorkPerformed } from "@/lib/serviceWorkItems";
+import { reportError } from "@/lib/reportError";
 
 const STEPS = ["Select Client", "Select Machine", "Service Details"];
 
@@ -124,11 +125,16 @@ export default function LogServiceModal({ onClose, onDone }) {
   const handleSubmit = async () => {
     if (!selectedMachine || !form.service_date || !recordId) return;
     setSaving(true);
-    // Photos are already persisted incrementally (see handleUploadPhoto) -- finalize the
-    // remaining fields via update(), not a second create().
-    await apiClient.entities.ServiceRecord.update(recordId, { ...form });
-    setSaving(false);
-    onDone?.();
+    try {
+      // Photos are already persisted incrementally (see handleUploadPhoto) -- finalize the
+      // remaining fields via update(), not a second create().
+      await apiClient.entities.ServiceRecord.update(recordId, { ...form });
+      onDone?.();
+    } catch (e) {
+      reportError(e, "Couldn't save this service record. Please try again.", "Failed to save service record:");
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (

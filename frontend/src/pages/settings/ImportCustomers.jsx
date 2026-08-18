@@ -8,6 +8,7 @@ import {
 } from "@/components/ui/select";
 import { Upload, FileSpreadsheet, ArrowRight, CheckCircle2, AlertTriangle, History, RotateCcw, Download } from "lucide-react";
 import { APP_FIELDS, guessMapping, buildPreview, executeImportRows } from "@/lib/customerImport";
+import { reportError } from "@/lib/reportError";
 
 const RESULT_META = {
   success: { label: "Imported", className: "bg-emerald-500/15 text-emerald-500" },
@@ -150,57 +151,67 @@ export default function ImportCustomers() {
     // The actual per-row execution/failure-isolation/retry logic lives in
     // customerImport.js's executeImportRows() -- framework-free and unit tested there with
     // fake create/update implementations (see customerImport.test.js), not re-derived here.
-    const freshResults = await executeImportRows(
-      rowsToProcess,
-      decisionFor,
-      freshExistingClients,
-      { createClient: apiClient.entities.Client.create, updateClient: apiClient.entities.Client.update },
-      Boolean(indicesToRun)
-    );
-    const newResults = { ...rowResults, ...freshResults };
-    setRowResults(newResults);
-
-    const counts = Object.values(newResults).reduce(
-      (acc, r) => { acc[r.status] = (acc[r.status] || 0) + 1; return acc; },
-      { success: 0, updated: 0, skipped: 0, failed: 0 }
-    );
-    const duplicateSignals = preview.rows.filter(
-      (r) => r.status === "exact_match" || r.status === "possible_duplicate" || r.status === "duplicate_in_file"
-    ).length;
-
-    let summary = null;
+    // BUG FIX (2026-08-18): this whole block used to run with no try/catch of its own -- an
+    // unexpected throw from executeImportRows() itself (as opposed to a per-row failure, which
+    // it already isolates and reports) would skip setImporting(false) entirely and leave the
+    // UI stuck on "Importing..." forever with no message, the same "silent stuck state" bug
+    // class fixed elsewhere in this sweep.
     try {
-      summary = await apiClient.entities.ClientImport.create({
-        source_filename: fileName,
-        imported_by: user?.id || null,
-        row_count: preview.rows.length,
-        imported_count: counts.success,
-        updated_count: counts.updated,
-        duplicate_count: duplicateSignals,
-        skipped_count: counts.skipped,
-        column_mapping: mapping,
+      const freshResults = await executeImportRows(
+        rowsToProcess,
+        decisionFor,
+        freshExistingClients,
+        { createClient: apiClient.entities.Client.create, updateClient: apiClient.entities.Client.update },
+        Boolean(indicesToRun)
+      );
+      const newResults = { ...rowResults, ...freshResults };
+      setRowResults(newResults);
+
+      const counts = Object.values(newResults).reduce(
+        (acc, r) => { acc[r.status] = (acc[r.status] || 0) + 1; return acc; },
+        { success: 0, updated: 0, skipped: 0, failed: 0 }
+      );
+      const duplicateSignals = preview.rows.filter(
+        (r) => r.status === "exact_match" || r.status === "possible_duplicate" || r.status === "duplicate_in_file"
+      ).length;
+
+      let summary = null;
+      try {
+        summary = await apiClient.entities.ClientImport.create({
+          source_filename: fileName,
+          imported_by: user?.id || null,
+          row_count: preview.rows.length,
+          imported_count: counts.success,
+          updated_count: counts.updated,
+          duplicate_count: duplicateSignals,
+          skipped_count: counts.skipped,
+          column_mapping: mapping,
+        });
+      } catch (e) {
+        // The import itself already ran against public.clients -- a failure recording the
+        // history summary row must not make the actual, already-completed result disappear.
+        console.error("Failed to record import history row:", e);
+      }
+
+      const processed = counts.success + counts.updated + counts.skipped + counts.failed;
+      const successRate = processed > 0 ? Number((((counts.success + counts.updated) / processed) * 100).toFixed(1)) : 0;
+
+      setResult({
+        imported: counts.success,
+        updated: counts.updated,
+        skipped: counts.skipped,
+        failed: counts.failed,
+        duplicates: duplicateSignals,
+        processed,
+        successRate,
+        summary,
       });
+      setStep(3);
     } catch (e) {
-      // The import itself already ran against public.clients -- a failure recording the
-      // history summary row must not make the actual, already-completed result disappear.
-      console.error("Failed to record import history row:", e);
+      reportError(e, "The import could not complete. Please try again.", "Import run failed unexpectedly:");
+    } finally {
+      setImporting(false);
     }
-
-    const processed = counts.success + counts.updated + counts.skipped + counts.failed;
-    const successRate = processed > 0 ? Number((((counts.success + counts.updated) / processed) * 100).toFixed(1)) : 0;
-
-    setResult({
-      imported: counts.success,
-      updated: counts.updated,
-      skipped: counts.skipped,
-      failed: counts.failed,
-      duplicates: duplicateSignals,
-      processed,
-      successRate,
-      summary,
-    });
-    setStep(3);
-    setImporting(false);
   };
 
   const retryFailedRows = () => {

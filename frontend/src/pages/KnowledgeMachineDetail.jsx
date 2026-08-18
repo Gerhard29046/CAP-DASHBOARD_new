@@ -14,6 +14,7 @@ import {
   AlertDialogTitle, AlertDialogTrigger
 } from "@/components/ui/alert-dialog";
 import NoteRecord from "@/components/NoteRecord";
+import { reportError } from "@/lib/reportError";
 import { ArrowLeft, Pencil, Trash2, FileText, Image as ImageIcon, KeyRound, StickyNote, Eye, EyeOff, Upload } from "lucide-react";
 import moment from "moment";
 
@@ -48,14 +49,20 @@ export default function KnowledgeMachineDetail() {
       await apiClient.request(`/knowledge-machines/${id}/notes`, { method: "POST", body: JSON.stringify(note) });
       setNote({ title: "", note_type: "troubleshooting", content: "" });
       await load();
+    } catch (e) {
+      reportError(e, "Couldn't add this note. Please try again.", "Failed to add knowledge note:");
     } finally {
       setSavingNote(false);
     }
   };
 
   const reveal = async (code) => {
-    const result = await apiClient.request(`/knowledge-service-codes/${code.id}/reveal`, { method: "POST" });
-    setRevealed((current) => ({ ...current, [code.id]: result.service_code }));
+    try {
+      const result = await apiClient.request(`/knowledge-service-codes/${code.id}/reveal`, { method: "POST" });
+      setRevealed((current) => ({ ...current, [code.id]: result.service_code }));
+    } catch (e) {
+      reportError(e, "Couldn't reveal this service code. Please try again.", "Failed to reveal service code:");
+    }
   };
 
   // 2026-08-16, explicit user request: "delete... knowledge base". knowledge_notes/
@@ -66,8 +73,12 @@ export default function KnowledgeMachineDetail() {
   // same pre-existing gap already documented in KNOWN_ISSUES.md for this feature area, not
   // introduced by this change.
   const handleDelete = async () => {
-    await apiClient.request(`/knowledge-machines/${id}`, { method: "DELETE" });
-    navigate("/knowledge-base");
+    try {
+      await apiClient.request(`/knowledge-machines/${id}`, { method: "DELETE" });
+      navigate("/knowledge-base");
+    } catch (e) {
+      reportError(e, "Couldn't delete this machine. Please try again.", "Failed to delete knowledge machine:");
+    }
   };
 
   // FIX (2026-08-17): used to call apiClient.integrations.Core.UploadFile() and persist its
@@ -81,16 +92,24 @@ export default function KnowledgeMachineDetail() {
   // bug this same migration closes).
   const upload = async (event, type) => {
     const files = [...event.target.files];
-    for (const file of files) {
-      const file_url = type === "media"
-        ? await uploadKnowledgeMedia(id, file)
-        : await uploadKnowledgeDocument(id, file);
-      await apiClient.request(`/knowledge-machines/${id}/${type}`, {
-        method: "POST",
-        body: JSON.stringify({ file_url, original_filename: file.name, title: file.name }),
-      });
+    try {
+      for (const file of files) {
+        const file_url = type === "media"
+          ? await uploadKnowledgeMedia(id, file)
+          : await uploadKnowledgeDocument(id, file);
+        await apiClient.request(`/knowledge-machines/${id}/${type}`, {
+          method: "POST",
+          body: JSON.stringify({ file_url, original_filename: file.name, title: file.name }),
+        });
+      }
+      await load();
+    } catch (e) {
+      reportError(e, "Couldn't upload one or more files. Please try again.", "Failed to upload knowledge file:");
+    } finally {
+      // Always clear the file input so re-selecting the same file after a failure re-fires
+      // onChange (browsers don't fire change for an identical file list otherwise).
+      event.target.value = "";
     }
-    await load();
   };
 
   // file_url is now a permanent Storage object PATH, not a ready-to-use URL -- resolve a

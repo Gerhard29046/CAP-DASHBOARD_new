@@ -21,6 +21,7 @@ import MachineForm from "@/components/MachineForm";
 import RecordPhotoGallery from "@/components/RecordPhotoGallery";
 import PhotoLightbox from "@/components/PhotoLightbox";
 import ServiceForm from "@/components/ServiceForm";
+import { reportError } from "@/lib/reportError";
 import moment from "moment";
 
 function InfoRow({ icon: Icon, label, value, highlight }) {
@@ -74,36 +75,59 @@ export default function MachineDetail() {
 
   const handleEdit = async (form) => {
     setSaving(true);
-    await apiClient.entities.Machine.update(id, form);
-    setSaving(false);
-    setShowEdit(false);
-    load();
+    try {
+      await apiClient.entities.Machine.update(id, form);
+      setShowEdit(false);
+      load();
+    } catch (e) {
+      reportError(e, "Couldn't save this machine. Please try again.", "Failed to save machine:");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleDelete = async () => {
-    await apiClient.entities.Machine.delete(id);
-    navigate(`/clients/${machine.client_id}`);
+    try {
+      await apiClient.entities.Machine.delete(id);
+      navigate(`/clients/${machine.client_id}`);
+    } catch (e) {
+      reportError(e, "Couldn't delete this machine. Please try again.", "Failed to delete machine:");
+    }
   };
 
   const handleAddService = async (form) => {
     setSaving(true);
-    await apiClient.entities.ServiceRecord.create({ ...form, machine_id: id });
-    setSaving(false);
-    setShowAddService(false);
-    load();
+    try {
+      await apiClient.entities.ServiceRecord.create({ ...form, machine_id: id });
+      setShowAddService(false);
+      load();
+    } catch (e) {
+      reportError(e, "Couldn't save this service record. Please try again.", "Failed to add service record:");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleEditService = async (form) => {
     setSaving(true);
-    await apiClient.entities.ServiceRecord.update(editService.id, { ...form, machine_id: String(id) });
-    setSaving(false);
-    setEditService(null);
-    load();
+    try {
+      await apiClient.entities.ServiceRecord.update(editService.id, { ...form, machine_id: String(id) });
+      setEditService(null);
+      load();
+    } catch (e) {
+      reportError(e, "Couldn't save changes to this service record. Please try again.", "Failed to edit service record:");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleDeleteService = async (svcId) => {
-    await apiClient.entities.ServiceRecord.delete(svcId);
-    load();
+    try {
+      await apiClient.entities.ServiceRecord.delete(svcId);
+      load();
+    } catch (e) {
+      reportError(e, "Couldn't delete this service record. Please try again.", "Failed to delete service record:");
+    }
   };
 
   if (loading) {

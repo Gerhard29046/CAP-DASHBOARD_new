@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { reportError } from "@/lib/reportError";
 import { ArrowLeft } from "lucide-react";
 
 const FIELD_LABELS = {
@@ -58,6 +59,8 @@ export default function KnowledgeMachineForm() {
         body: JSON.stringify(body),
       });
       navigate(`/knowledge-base/${result.id || id}`);
+    } catch (e) {
+      reportError(e, "Couldn't save this machine. Please try again.", "Failed to save knowledge machine:");
     } finally {
       setSaving(false);
     }
