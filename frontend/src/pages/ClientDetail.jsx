@@ -24,7 +24,25 @@ import MachineForm from "@/components/MachineForm";
 import moment from "moment";
 
 function EditClientForm({ initial, onSubmit, onCancel, loading }) {
-  const [form, setForm] = useState({ ...initial });
+  // BUG FIX (2026-08-18): this used to seed state as `{ ...initial }` -- but `initial` here
+  // is the client record returned by apiClient.entities.Client.get(), which (see
+  // supabaseApiClient.js's clientEntity.get override) injects a synthetic `machines` array
+  // (this client's joined machine list, used elsewhere on this page) that is NOT a real
+  // column on public.clients (0001_initial_schema.sql: id/company_name/contact_person/
+  // email/phone/address/notes/is_active/created_at/updated_at only). Every "Save Changes" on
+  // Edit Client therefore sent `machines: [...]` straight through to the PUT payload --
+  // PostgREST rejects an update outright on any unknown column, so editing a client's details
+  // was failing in production on every save, not just a display bug. Same failure class as
+  // the 2026-08-16/17 UserAdmin.jsx bugs. Fixed by seeding only real, editable columns
+  // explicitly, matching every other form in this app (MachineForm/ServiceForm/AddClient).
+  const [form, setForm] = useState({
+    company_name: initial?.company_name || "",
+    contact_person: initial?.contact_person || "",
+    phone: initial?.phone || "",
+    email: initial?.email || "",
+    address: initial?.address || "",
+    notes: initial?.notes || "",
+  });
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
   return (
     <form onSubmit={e => { e.preventDefault(); onSubmit(form); }} className="space-y-4">

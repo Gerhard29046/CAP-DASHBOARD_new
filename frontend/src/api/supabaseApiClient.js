@@ -110,6 +110,17 @@ clientEntity.get = async (id) => {
   ]);
   return { ...withPermissionCount(client), machines };
 };
+// BUG FIX (2026-08-18): clientEntity.get() above stamps a synthetic `machines` array onto
+// every client record it returns (this client's joined machine list) -- not a real column on
+// public.clients. A caller that round-trips a fetched client record back through update()
+// (e.g. ClientDetail.jsx's Edit Client form, before its own matching fix) would send
+// `machines: [...]` straight through, and PostgREST rejects the whole update on any unknown
+// column. Defensive second layer, same pattern as the `users` table's stripping below --
+// strip it here so this can never break again regardless of what a future caller does.
+clientEntity.update = async (id, data) => {
+  const { machines: _machines, ...rest } = data || {};
+  return withPermissionCount(await updateRow("clients", id, rest));
+};
 
 function parseBody(options) {
   if (!options.body) return {};
