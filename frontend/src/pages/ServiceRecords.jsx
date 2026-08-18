@@ -146,7 +146,7 @@ export default function ServiceRecords() {
         <StatCard label="Next Due Set" value={stats.nextDue} icon={CheckCircle2} accent="warning" />
       </div>
 
-      <div className="grid grid-cols-1 2xl:grid-cols-[minmax(0,1fr)_420px] gap-5">
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_420px] gap-5">
         <div className="bg-card border border-border rounded-xl overflow-hidden">
           <div className="px-5 py-4 border-b border-border">
             <h2 className="font-heading font-semibold text-foreground text-sm">Completed Services</h2>
@@ -171,15 +171,12 @@ export default function ServiceRecords() {
                       <TableHead className="pl-5">Client</TableHead>
                       <TableHead>Machine</TableHead>
                       <TableHead>Service Date</TableHead>
-                      <TableHead>Technician</TableHead>
-                      <TableHead>Photos</TableHead>
                       <TableHead className="w-10" aria-label="Opens details" />
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {filteredRecords.map((record) => {
                       const client = getClient(record);
-                      const photos = getPhotos(record);
                       return (
                         <TableRow
                           key={record.id}
@@ -203,14 +200,6 @@ export default function ServiceRecords() {
                             {record.machine?.serial_number && <p className="text-xs text-muted-foreground mt-0.5">{record.machine.serial_number}</p>}
                           </TableCell>
                           <TableCell className="text-muted-foreground">{formatDate(record.service_date)}</TableCell>
-                          <TableCell className="text-muted-foreground">{record.technician_name || "Not recorded"}</TableCell>
-                          <TableCell>
-                            {photos.length > 0 ? (
-                              <Badge variant="info" className="gap-1"><Camera className="w-3 h-3" />{photos.length}</Badge>
-                            ) : (
-                              <span className="text-muted-foreground">—</span>
-                            )}
-                          </TableCell>
                           <TableCell>
                             {/* Decorative only -- the whole row (onClick above) is the
                                 click target, matching every other list in the app. */}
