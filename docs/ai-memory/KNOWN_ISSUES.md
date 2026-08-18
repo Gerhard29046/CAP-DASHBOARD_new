@@ -1,5 +1,45 @@
 # Known Issues
 
+## RESOLVED (2026-08-18, later) — leaving an optional form field blank could permanently break a save (root cause fixed for all entities); a narrower UI-error-handling gap remains, disclosed
+
+- **User-reported**: adding a machine to a client, leaving a field empty "crashes" the page.
+  **Root cause confirmed**: `MachineForm` (and most forms in this app) initialize optional
+  fields like `installation_date`/`warranty_expiry` to `""` when left blank. PostgREST/Postgres
+  rejects `""` outright for any non-text column (`invalid input syntax for type date`, 22007).
+  None of this project's ~30 save-handler call sites (`ClientDetail.jsx`'s `handleAddMachine`
+  and ~15 others across `MachineDetail.jsx`/`JobCardDetail.jsx`/`BookIn.jsx`/`Jobs.jsx`/
+  `LogServiceModal.jsx`/settings pages/etc.) wrapped their `await ....create()/update()` in
+  `try/catch`, so the thrown error was never caught — the "Saving…" button state got stuck
+  forever with no message. That's the "crash": a frozen dialog, not a white-screen React crash.
+- **Fixed at the single choke point every entity write passes through**, not per-form: new
+  `frontend/src/lib/sanitizeForWrite.js` (pure logic, no Supabase import, unit-tested — 5 new
+  tests, 71/71 total pass) converts top-level `""` values to `null` before any write.
+  `services/supabase/database.js`'s `createRow()`/`updateRow()` now sanitize automatically —
+  this covers **every** entity via `makeEntity()` (Client, Machine, ServiceRecord, JobCard,
+  JobCardLine, Site, User, ProductService, ClientImport). `supabaseApiClient.js`'s two
+  singleton settings APIs (`JobCardSettings`, `CompanySettings`), which bypass `database.js` via
+  raw `supabase.from()` calls, were sanitized there too. Confirmed safe: no `not null default
+  ''` text column exists anywhere in `supabase/migrations/*.sql`, so this never changes meaning
+  for any real column — it only prevents an invalid-syntax error for an optional date/numeric
+  field left blank.
+- **Also hardened, narrower scope**: `ClientDetail.jsx`'s `handleEdit`/`handleDelete`/
+  `handleAddMachine` (the exact reported page/flow) now have `try/catch` + a visible inline
+  error message, so even a genuinely unexpected future error un-sticks the dialog instead of
+  hanging silently.
+- **Disclosed, NOT done — a real, scoped follow-up if wanted**: the same missing-`try/catch`
+  pattern exists at ~15 other save-handler call sites across the app (`MachineDetail.jsx`,
+  `JobCardDetail.jsx`, `BookIn.jsx`, `Jobs.jsx`, `LogServiceModal.jsx`, `AddClient.jsx`,
+  `Account.jsx`, `InvoiceQueue.jsx`, settings pages). The root-cause data fix above closes the
+  *specific* bug reported (empty fields), but any *other* kind of write failure at those sites
+  (a genuine permission denial, a network blip, a not-yet-discovered schema mismatch) will still
+  hang the UI silently the same way, just without an error message. Not swept in this pass —
+  flagged rather than done partially/silently. Worth a dedicated pass adding a shared
+  try/catch-and-surface-error pattern to all of them.
+- Verified: `npm run lint`/`typecheck`/`build` all clean, `npm test` 71/71 (up from 66). Not
+  live-clicked (no browser tool this session) — the fix is a direct, low-risk mechanical
+  conversion (`"" → null`) at a single well-understood choke point, same risk class as prior
+  "code-verified, not live-clicked" fixes in this file.
+
 ## RESOLVED (2026-08-18) — `anon` default-grant audit gap closed with live evidence; Service Certificate PDF + email deliverability confirmed working by the user
 
 - **`anon` default-grant gap (previously "scope not fully confirmed")**: `qa-anon-grants-sweep.mjs`'s

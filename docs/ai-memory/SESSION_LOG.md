@@ -1,5 +1,58 @@
 # Session Log
 
+## 2026-08-18 (later still) — root-caused and fixed "leaving a field blank breaks the save" for all entities
+
+**Objective** (user): adding a machine to a client, leaving a field empty crashes the page — fix
+this for all record types, not just Machines.
+
+**Root cause, confirmed by reading the actual code**: `MachineForm` (and nearly every form in
+this app) defaults optional fields like `installation_date`/`warranty_expiry` to `""` when left
+blank. PostgREST/Postgres rejects `""` outright for any non-text column — a `date` column throws
+`invalid input syntax for type date` (22007), a 400 the UI never expected. None of this project's
+~30 save-handler call sites (`ClientDetail.jsx`'s `handleAddMachine`, plus ~15 more across
+`MachineDetail.jsx`/`JobCardDetail.jsx`/`BookIn.jsx`/`Jobs.jsx`/`LogServiceModal.jsx`/settings
+pages) wrap their `create()`/`update()` call in `try/catch`, so the error was never caught — the
+"Saving…" button state got stuck forever (`setSaving(false)` never ran), no message shown. That's
+the reported "crash": a frozen dialog, not an actual React render-time crash (confirmed no
+`ErrorBoundary` exists anywhere in the app either, for what that's worth).
+
+**Fix, scoped to the single choke point every entity write passes through** (not per-form, since
+the user explicitly asked for "all records"): new `frontend/src/lib/sanitizeForWrite.js` — pure
+logic, deliberately no Supabase import so it's unit-testable under plain `node --test` like this
+project's other pure-logic modules (`recordPhotoPath.js`/`serviceWorkItems.js`) — converts
+top-level `""` values to `null` before any write. Confirmed safe first: grepped
+`supabase/migrations/*.sql` for `not null default ''` — zero matches, so no column anywhere in
+the schema depends on `""` meaning something different from `null`.
+`services/supabase/database.js`'s `createRow()`/`updateRow()` now call it automatically —covers
+every entity via `makeEntity()` (Client, Machine, ServiceRecord, JobCard, JobCardLine, Site,
+User, ProductService, ClientImport). `supabaseApiClient.js`'s `JobCardSettings`/`CompanySettings`
+singleton APIs bypass `database.js` via raw `supabase.from()` — sanitized there too, both call
+sites.
+
+**Also hardened the exact reported flow**: `ClientDetail.jsx`'s `handleEdit`/`handleDelete`/
+`handleAddMachine` now have real `try/catch` + a visible inline error message (cleared when the
+dialog reopens), so the button always un-sticks and the user sees why, even for an error the
+data-fix above doesn't cover.
+
+**Disclosed, not done**: the same missing-`try/catch` pattern exists at ~15 other save-handler
+call sites app-wide. The data-level fix closes the *reported* bug (empty fields) everywhere, but
+any *other* write failure at those other sites will still hang the UI silently, just without a
+message — not swept this pass, flagged as a real scoped follow-up rather than rushed partially.
+
+**Verification**: `npm run lint` clean, `npm run typecheck` clean, `npm test` 71/71 (66 existing
++ 5 new for `sanitizeForWrite`), `npm run build` clean (real `dist/` output regenerated). Not
+live-clicked (no browser tool this session) — disclosed as code/build-verified only, same
+standard as this project's other unclicked frontend fixes.
+
+**Incidental**: caught and deleted 3 zero-byte junk files this session's own Bash commands
+created (`` frontend/`null` ``, `frontend/src/api/{,`, `frontend/src/api/{,-`) — the known
+shell-fragment artifact pattern from `.claude/agent-memory/queen-bee/technique_zero_byte_junk_file_source.md`.
+
+**Files changed**: `frontend/src/lib/sanitizeForWrite.js` (new), `frontend/tests/
+sanitizeForWrite.test.js` (new), `frontend/src/services/supabase/database.js`,
+`frontend/src/api/supabaseApiClient.js`, `frontend/src/pages/ClientDetail.jsx`. Committed as
+`9eafba3`. Not pushed/deployed this session — not requested.
+
 ## 2026-08-18 (later) — anon default-grant audit gap closed with live evidence; user confirmed certificate PDF + email deliverability working; job-number race explicitly deprioritized
 
 **Objective**: close out the remaining known-issues list — audit whether `0028`'s `anon`
