@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { uploadRecordPhoto, deleteRecordPhoto, RECORD_PHOTO_NAMESPACES } from "@/services/supabase/storage";
 import { useSignedPhotoUrls } from "@/hooks/useSignedPhotoUrls";
 import { SERVICE_WORK_ITEMS, joinWorkPerformed } from "@/lib/serviceWorkItems";
+import { addOneYear } from "@/lib/serviceDates";
 import { reportError } from "@/lib/reportError";
 
 const STEPS = ["Select Client", "Select Machine", "Service Details"];
@@ -20,13 +21,22 @@ export default function LogServiceModal({ onClose, onDone }) {
   const [clientSearch, setClientSearch] = useState("");
   const [selectedClient, setSelectedClient] = useState(null);
   const [selectedMachine, setSelectedMachine] = useState(null);
+  const todayIso = new Date().toISOString().split("T")[0];
   const [form, setForm] = useState({
-    service_date: new Date().toISOString().split("T")[0],
+    service_date: todayIso,
     technician_name: "",
     work_performed: "",
     notes: "",
-    next_service_due: "",
+    // Defaults to one year after the service date -- see
+    // supabase/migrations/0031_service_records_default_next_service_due.sql, which applies
+    // the same default at the database level regardless of client; this is just so the
+    // technician sees it before saving. This modal only ever creates new records, so there is
+    // no existing value to preserve (unlike ServiceForm.jsx's edit mode).
+    next_service_due: addOneYear(todayIso),
   });
+  // Tracks whether the technician manually edited Next Service Date -- once they have,
+  // changing Service Date stops silently recomputing it out from under them.
+  const [nextDueTouched, setNextDueTouched] = useState(false);
   // Phase 3 (permanent Storage paths, not signed URLs -- see docs/ai-memory/DECISIONS.md and
   // migration 0024_photos_bucket_record_scoped_rls.sql): `photos` holds Storage object PATHS,
   // never a URL. `recordId` is the service_records.id created as soon as a machine is picked
@@ -238,7 +248,20 @@ export default function LogServiceModal({ onClose, onDone }) {
 
               <div>
                 <Label>Service Date *</Label>
-                <Input type="date" value={form.service_date} onChange={e => setField("service_date", e.target.value)} className="mt-1 h-11 rounded-xl" required />
+                <Input
+                  type="date"
+                  value={form.service_date}
+                  onChange={e => {
+                    const value = e.target.value;
+                    setForm(prev => ({
+                      ...prev,
+                      service_date: value,
+                      next_service_due: nextDueTouched ? prev.next_service_due : addOneYear(value),
+                    }));
+                  }}
+                  className="mt-1 h-11 rounded-xl"
+                  required
+                />
               </div>
 
               <div>
@@ -268,7 +291,13 @@ export default function LogServiceModal({ onClose, onDone }) {
 
               <div>
                 <Label>Next Service Date</Label>
-                <Input type="date" value={form.next_service_due} onChange={e => setField("next_service_due", e.target.value)} className="mt-1 h-11 rounded-xl" />
+                <Input
+                  type="date"
+                  value={form.next_service_due}
+                  onChange={e => { setNextDueTouched(true); setField("next_service_due", e.target.value); }}
+                  className="mt-1 h-11 rounded-xl"
+                />
+                <p className="text-xs text-muted-foreground mt-1">Defaults to one year after the service date.</p>
               </div>
 
               {/* Photos */}

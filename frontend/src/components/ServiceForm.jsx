@@ -5,16 +5,28 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { SERVICE_WORK_ITEMS, joinWorkPerformed, parseWorkPerformed } from "@/lib/serviceWorkItems";
+import { addOneYear } from "@/lib/serviceDates";
 
 export default function ServiceForm({ initial, onSubmit, onCancel, loading }) {
+  const initialServiceDate = initial?.service_date || new Date().toISOString().split("T")[0];
   const [form, setForm] = useState({
-    service_date: initial?.service_date || new Date().toISOString().split("T")[0],
+    service_date: initialServiceDate,
     technician_name: initial?.technician_name || "",
     work_performed: initial?.work_performed || "",
     findings: initial?.findings || "",
     notes: initial?.notes || "",
-    next_service_due: initial?.next_service_due || "",
+    // Defaults to one year after the service date (see
+    // supabase/migrations/0031_service_records_default_next_service_due.sql -- the database
+    // applies this same default regardless of which client creates the row; this is just so
+    // the technician SEES it before saving instead of an empty-looking field). A record that
+    // already has its own next_service_due (editing an existing one) always keeps that value.
+    next_service_due: initial?.next_service_due || addOneYear(initialServiceDate),
   });
+  // Tracks whether the technician has manually edited Next Service Date -- once they have,
+  // changing Service Date stops silently recomputing it out from under them. Starts "already
+  // touched" when editing a record that already had its own value, so opening Edit never
+  // clobbers an intentionally different date.
+  const [nextDueTouched, setNextDueTouched] = useState(!!initial?.next_service_due);
   // Checklist selection state, separate from `form.work_performed` (which stays the plain
   // comma-joined string actually sent to the database -- see lib/serviceWorkItems.js). Seeded
   // from the existing value when editing a record this same checklist previously produced.
@@ -46,7 +58,14 @@ export default function ServiceForm({ initial, onSubmit, onCancel, loading }) {
           <Input
             type="date"
             value={form.service_date}
-            onChange={(e) => set("service_date", e.target.value)}
+            onChange={(e) => {
+              const value = e.target.value;
+              setForm((prev) => ({
+                ...prev,
+                service_date: value,
+                next_service_due: nextDueTouched ? prev.next_service_due : addOneYear(value),
+              }));
+            }}
             required
             className="mt-1"
           />
@@ -105,9 +124,13 @@ export default function ServiceForm({ initial, onSubmit, onCancel, loading }) {
         <Input
           type="date"
           value={form.next_service_due}
-          onChange={(e) => set("next_service_due", e.target.value)}
+          onChange={(e) => {
+            setNextDueTouched(true);
+            set("next_service_due", e.target.value);
+          }}
           className="mt-1"
         />
+        <p className="text-xs text-muted-foreground mt-1">Defaults to one year after the service date.</p>
       </div>
 
       <div className="flex gap-2 justify-end pt-2">
