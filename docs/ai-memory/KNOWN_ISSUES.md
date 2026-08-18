@@ -1,5 +1,44 @@
 # Known Issues
 
+## RESOLVED (2026-08-18, later still) — app-wide error-handling sweep: the "~15 other unguarded save handlers" gap disclosed in the previous entry is now closed, plus a new global ErrorBoundary
+
+- Follows directly from the entry immediately below. User asked to extend error handling
+  "across the whole website" — audited every file with an `await apiClient/
+  dashboardNotesClient....create/update/delete()` call (found via grep, then read each site
+  individually, not assumed from the pattern match alone).
+- **Most handlers already had proper try/catch** (`BookIn.jsx`, `Jobs.jsx`, `AddClient.jsx`,
+  `Account.jsx`, `ProductsServicesSettings.jsx`, `JobCardSettingsPanel.jsx`,
+  `CompanySettingsPanel.jsx`, `ServiceRecords.jsx`'s certificate generate/preview/download flow,
+  `UserAdmin.jsx`, `ForgotPassword.jsx`, `ResetPassword.jsx`, `Register.jsx`) — left untouched,
+  not rewritten for its own sake.
+- **Fixed the ones that didn't** (same "stuck loading state, no message" bug class as
+  `ClientDetail.jsx`'s original report): `StickyNotes.jsx` (`addNote`), `KnowledgeMachineForm.jsx`
+  (`submit`), `KnowledgeMachineDetail.jsx` (`addNote`/`reveal`/`handleDelete`/`upload`),
+  `MachineDetail.jsx` (`handleEdit`/`handleDelete`/`handleAddService`/`handleEditService`/
+  `handleDeleteService` — same page family as `ClientDetail.jsx`, same bug), `JobCardDetail.jsx`
+  (`handleAddLine`/`handleDeleteLine`/`handleStatusChange`/`handleDelete`),
+  `LogServiceModal.jsx` (`handleSubmit`), `InvoiceQueue.jsx` (`markInvoiced`), `CalendarPage.jsx`
+  (`reschedule` — had `try/finally` but silently swallowed the error, no message shown),
+  `ImportCustomers.jsx` (`runImport`'s outer block had NO try/catch at all — an unexpected throw
+  from `executeImportRows()` itself, distinct from a per-row failure which was already isolated
+  and tested, would leave the UI stuck on "Importing…" forever).
+- New `frontend/src/lib/reportError.js` centralizes the fix (console.error + a destructive toast
+  via this project's existing `use-toast.jsx`/`<Toaster />`, already used for success messages
+  e.g. `Register.jsx`) so every site got the same consistent UX instead of ad hoc per-file
+  patterns.
+- **Also added a genuine gap that had nothing to do with the reported bug**: no React
+  `ErrorBoundary` existed anywhere in this app. A render-time crash (as opposed to an async
+  handler error — a different failure class entirely) previously took the whole app down to a
+  blank white screen with no recovery path. New `ErrorBoundary.jsx` wraps the whole routed app
+  in `App.jsx` with a friendly "Something went wrong" + reload fallback.
+- Verified: `npm run lint`/`typecheck`/`build` all clean, `npm test` 71/71 (unchanged — this was
+  pure error-handling wiring, no pure-logic changes). Not live-clicked (no browser tool this
+  session) — disclosed as code/build-verified only, matching the standard used throughout this
+  file for unclicked frontend fixes.
+- Caught and deleted 2 more zero-byte junk files from this session's own Bash commands
+  (`frontend/src/components/ui/r.status`, `frontend/src/components/ui/{`) — same known
+  shell-fragment artifact pattern as the previous entry.
+
 ## RESOLVED (2026-08-18, later) — leaving an optional form field blank could permanently break a save (root cause fixed for all entities); a narrower UI-error-handling gap remains, disclosed
 
 - **User-reported**: adding a machine to a client, leaving a field empty "crashes" the page.

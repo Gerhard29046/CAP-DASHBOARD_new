@@ -1,5 +1,47 @@
 # Session Log
 
+## 2026-08-18 (latest) — app-wide error-handling sweep + new global ErrorBoundary
+
+**Objective** (user, direct follow-up to the previous entry): "add more error handling across
+the whole website."
+
+**Approach**: grepped every file with an `await apiClient/dashboardNotesClient....create/update/
+delete()` call, then read each site individually (not assumed fixed/broken from the grep pattern
+alone). Most already had proper try/catch from earlier fix passes (`BookIn.jsx`, `Jobs.jsx`,
+`AddClient.jsx`, `Account.jsx`, `ProductsServicesSettings.jsx`, `JobCardSettingsPanel.jsx`,
+`CompanySettingsPanel.jsx`, `ServiceRecords.jsx`, `UserAdmin.jsx`, `ForgotPassword.jsx`,
+`ResetPassword.jsx`, `Register.jsx`) — left untouched. Fixed the ones that didn't:
+`StickyNotes.jsx`, `KnowledgeMachineForm.jsx`, `KnowledgeMachineDetail.jsx`, `MachineDetail.jsx`
+(the direct sibling of `ClientDetail.jsx` — same bug family), `JobCardDetail.jsx`,
+`LogServiceModal.jsx`, `InvoiceQueue.jsx`, `CalendarPage.jsx`, `ImportCustomers.jsx` (this one
+had no outer try/catch at all around `executeImportRows()` — a real, previously-undiscovered
+instance of the stuck-loading-state bug, distinct from the already-tested per-row failure
+isolation inside that function).
+
+New `frontend/src/lib/reportError.js` — a shared helper (console.error + destructive toast via
+the existing `use-toast.jsx`/`<Toaster />`, already used for success messages) — so all ~10 fixed
+sites share one consistent pattern instead of each inventing its own.
+
+Also added something the user's report didn't directly ask for but is a real, adjacent gap: no
+React `ErrorBoundary` existed anywhere in the app. New `ErrorBoundary.jsx` wraps the whole routed
+app in `App.jsx`, catching genuine render-time crashes (a different failure class from the async
+handler errors above) with a friendly fallback instead of a blank white screen.
+
+**Verification**: `npm run lint`/`typecheck`/`build` clean, `npm test` 71/71 (unchanged — no
+pure-logic code was touched, this was error-handling wiring only). Not live-clicked (no browser
+tool this session).
+
+**Incidental**: caught and deleted 2 more zero-byte junk files this session's own Bash commands
+created (`frontend/src/components/ui/r.status`, `frontend/src/components/ui/{`) — same pattern
+as the previous entry, now happened twice in one session; worth being more careful with brace/
+special-character-containing Bash commands going forward.
+
+**Files changed**: `frontend/src/App.jsx`, `frontend/src/components/ErrorBoundary.jsx` (new),
+`frontend/src/lib/reportError.js` (new), `frontend/src/components/{LogServiceModal,
+StickyNotes}.jsx`, `frontend/src/pages/{CalendarPage,InvoiceQueue,JobCardDetail,
+KnowledgeMachineDetail,KnowledgeMachineForm,MachineDetail,settings/ImportCustomers}.jsx`.
+Committed as `1248d7b`. Not pushed/deployed — not requested this session.
+
 ## 2026-08-18 (later still) — root-caused and fixed "leaving a field blank breaks the save" for all entities
 
 **Objective** (user): adding a machine to a client, leaving a field empty crashes the page — fix
