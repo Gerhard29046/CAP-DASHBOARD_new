@@ -1,5 +1,38 @@
 # Known Issues
 
+## RESOLVED (2026-08-18) — Android Service Certificate parity, KB 7-day-expiry Android regression, web forgot-password live-verified
+
+- **Android Service Certificate feature**: now real, build-verified (43/43 unit tests, 0 lint
+  errors/28 warnings unchanged, real APK, no new Gradle dependency) — see DECISIONS.md's matching
+  entry for the full build. Closes ROADMAP.md's Batch C ("Android parity") for the certificate
+  generate/preview/download/regenerate flow and the Company Details settings screen. Batch B
+  (email/attach/history) is still not started on EITHER platform — blocked on the user's Resend
+  account, unchanged.
+- **KB photo/document 7-day-expiry bug**: the WEB side turned out to already be fully fixed and
+  live-verified before this session started (`supabase/scripts/qa-verify-kb-permanent-paths.mjs`,
+  12/12 pass against production, including cross-technician signed-URL access — the migration
+  0029 + web code that fixes this had already shipped, just never independently re-confirmed
+  live until now). What was genuinely still broken: **Android's Knowledge Base screen**, which
+  loaded `file_url` directly as a URL under a stale comment claiming it still was one — as of
+  0029 it's a permanent Storage PATH. Fixed this session (resolves a fresh signed URL at display
+  time, matching the existing `SignedPhotoStrip` pattern).
+- **Web forgot-password**: confirmed genuinely working end-to-end, live, via a new script
+  (`supabase/scripts/qa-verify-password-reset-flow.mjs`, 11/11 pass) that drives the real
+  Supabase recovery-link/session/password-update mechanism without needing a real inbox. No code
+  fix was needed on web. **Still genuinely untested**: real SMTP delivery to a real inbox (no
+  browser/email tool available in this environment) — this is the one part of "does forgot
+  password work" that remains unverifiable here.
+- **Android's total lack of a password-recovery UI** (previously flagged, "needs a decision") —
+  decided and built: a "Forgot password?" link on the Login screen opens the web
+  `/forgot-password` page in the device browser. Android still has no deep-link/App-Link capability
+  to receive a recovery email directly inside the app — unchanged, matches the originally-scoped
+  interim, not a full native flow.
+- **Still genuinely open**: no real Service Certificate PDF has been visually inspected by a human
+  on EITHER platform (web or Android) — both are code/build-verified only. This is the single
+  most important remaining gap before telling real staff to rely on this feature.
+- `git status` shows all of this uncommitted as of this entry (6 modified + 4 new files in
+  `mobile-android`/`supabase`) — no commit/push was requested this session.
+
 ## RESOLVED (2026-08-17, later night) — Job Card save was 400ing on every edit; real /auth/callback page added; deployed live
 
 - **Root cause, confirmed against every migration touching `job_cards`**: `JobCardDetail.jsx`'s
@@ -177,10 +210,10 @@ creating throwaway data. Run the full QA script if end-to-end behavior (permanen
 cross-user signed URL) needs re-confirming.
 
 **NEEDS THE USER — not something code alone can finish**:
-1. **Android has no password-recovery path at all** — no "Forgot password?" UI, no deep-link/
-   App-Link capability, so a Supabase recovery email can never open the app even if one existed.
-   A cheap interim (a link that opens the web `/forgot-password` page in a browser) is real,
-   scoped work, not yet built — needs a decision on whether it's wanted before building it.
+1. **RESOLVED 2026-08-18** — Android now has the previously-scoped interim: a "Forgot password?"
+   link on the Login screen opens the web `/forgot-password` page in the device browser (still no
+   deep-link/App-Link to receive a recovery email natively in-app, unchanged/disclosed). See the
+   dedicated 2026-08-18 RESOLVED entry near the top of this file.
 3. **Real email deliverability for registration/password-reset has never been tested with a
    real inbox** — this blocks confidently telling real staff to self-register at `/register`
    for their Android/web accounts. Needs the user to actually test one real address.
@@ -422,7 +455,15 @@ above is what actually happened once unblocked:**
   confirming the prediction below and not replicating web's now-removed `permission_overrides`
   pattern. See `ROADMAP.md`'s Phase 8 entry for full detail.
 
-## LIVE BUG, WEB — Knowledge Base photo/document uploads permanently break 7 days after upload (found 2026-08-15, during Android parity Phase 5, independently verified)
+## RESOLVED (web: shipped before 2026-08-18, confirmed live that day; Android: fixed 2026-08-18) — was: Knowledge Base photo/document uploads permanently break 7 days after upload (found 2026-08-15, during Android parity Phase 5)
+
+Web was already fixed and shipped (migration 0029 + `storage.js`/`KnowledgeMachineDetail.jsx`)
+by the time this was re-checked 2026-08-18 — live-reconfirmed then via
+`supabase/scripts/qa-verify-kb-permanent-paths.mjs`, 12/12 pass including cross-technician
+signed-URL access. Android's display code was still reading `file_url` as if it were a
+ready-to-use URL (true when this entry was first written, no longer true once 0029 shipped) —
+fixed the same day. See the dedicated 2026-08-18 RESOLVED entry near the top of this file and
+`DECISIONS.md`'s matching entry for full detail. Original finding preserved below for history:
 
 - `frontend/src/api/supabaseApiClient.js`'s `integrations.Core.UploadFile()` uploads to the
   `documents` Storage bucket, then persists a **7-day signed URL** as `file_url` — it never

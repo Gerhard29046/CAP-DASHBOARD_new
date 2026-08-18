@@ -1,5 +1,32 @@
 # Project State
-_Last verified: 2026-08-17 (night — pushed to GitHub and deployed live to Cloudflare, explicit
+_Last verified: 2026-08-18 — Android Service Certificate parity built, a real Android regression
+in Knowledge Base file display found+fixed, web forgot-password live-verified end-to-end. **All
+of this is uncommitted as of this entry** — no commit/push was requested this session. Full
+narrative in `SESSION_LOG.md`/`DECISIONS.md`'s matching 2026-08-18 entries; summary:
+
+- Migration `0030_service_certificates.sql` independently re-confirmed applied.
+- Android Service Certificate feature (generate/preview-or-download/regenerate, Settings >
+  Company Details) built by `supabase-android-bee` (data/storage layer) then `android-ui-bee`
+  (PDF builder via `android.graphics.pdf.PdfDocument` — zero new Gradle dependency — + UI),
+  every diff hand-reviewed by Queen Bee, then real-build-verified: **43/43 unit tests** (16
+  pre-existing + 27 new), **0 lint errors / 28 warnings** (unchanged baseline), real
+  21,815,976-byte APK — confirmed by Queen Bee directly from the raw test-result XML/lint-report/
+  APK on disk, not taken from `testing-bee`'s narrative alone.
+- Real regression found and fixed: Android's Knowledge Base screen was still loading
+  `knowledge_media`/`knowledge_documents.file_url` directly as a URL under a stale comment —
+  migration 0029 (already applied) changed that column's meaning to a permanent Storage path.
+  Fixed to resolve a fresh signed URL at display time.
+- Web forgot-password confirmed genuinely working end-to-end against production via a new
+  non-email-dependent script (`qa-verify-password-reset-flow.mjs`, 11/11 pass) — no code fix
+  needed. Real SMTP/inbox delivery remains untested (no browser/email tool here).
+- Android's Login screen now has a "Forgot password?" link (opens the web page in-browser — the
+  previously-scoped interim, since Android still has no deep-link capability of its own).
+- **Still genuinely open**: no real Service Certificate PDF has been visually inspected by a
+  human on either platform.
+
+---
+
+_Last verified before that: 2026-08-17 (night — pushed to GitHub and deployed live to Cloudflare, explicit
 user instruction "push to github and build live cloudflare"). Commits `7ecb714..c8001e0`
 pushed to `origin/main` (4 commits: docs/memory catch-up, the Register.jsx self-service-
 registration fix + UserAdmin "open in new tab" change, the Dashboard redesign + Dashboard

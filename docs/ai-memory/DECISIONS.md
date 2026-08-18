@@ -1,5 +1,62 @@
 # Decisions
 
+## 2026-08-18 — Android Service Certificate parity built; KB 7-day-expiry fix's Android half found broken and fixed; web forgot-password live-verified end-to-end
+
+- User instruction: "make the android certificate and then 0030 has been migrated on supabase.
+  fix the forgot password. if it is still not working. try to get the 7 days photo document
+  upload to work." Four real outcomes, each independently verified, not self-reported:
+  1. **Migration 0030 re-confirmed applied** (`qa-check-0030-applied.mjs`) — corrected its
+     stale "NOT YET APPLIED" header comment.
+  2. **Android Service Certificate feature built and shipped**, mirroring
+     `frontend/src/lib/serviceCertificatePdf.js`/`ServiceRecords.jsx`'s `CertificateSection`
+     exactly (same RPC, same table, same Storage bucket/path convention). Split
+     `supabase-android-bee` (data layer: `SupabaseDataRepository.rpc()`/`fetchOne()`,
+     `SupabaseCertificateRepository`, `SupabaseKnowledgeFileRepository`) then `android-ui-bee`
+     (UI layer: `CertificatePdfBuilder.kt` — `android.graphics.pdf.PdfDocument`, zero new Gradle
+     dependency — `CertificateSection` composable, Settings > Company Details screen) then
+     `testing-bee` (build verification). Queen Bee hand-reviewed every diff from both
+     implementation bees before build verification, not just the build result. Real deviation
+     from the original brief, kept: `company_settings` gated on `dashboard.view` in
+     `permittedCollections`, not `settings.access` as originally briefed — `android-ui-bee`
+     correctly reasoned a technician with `services.edit` but not `settings.access` still needs
+     to read it to generate a certificate; RLS already permits any active profile to `SELECT` it,
+     write stays `settings.access`-only.
+  3. **Real regression found and fixed**: migration 0029 (Knowledge Base permanent file paths)
+     plus its already-shipped web fix changed the *meaning* of `knowledge_media.file_url`/
+     `knowledge_documents.file_url` from "ready-to-use signed URL" to "permanent Storage path" —
+     Android's KB detail screen still loaded that value directly as a URL (a now-stale code
+     comment said so explicitly), which would have started failing the moment 0029 went live.
+     Fixed by resolving a fresh signed URL at display time via the new
+     `SupabaseKnowledgeFileRepository`, matching `SignedPhotoStrip`'s existing
+     resolve-in-memory-never-persist discipline.
+  4. **Web forgot-password confirmed genuinely working end-to-end, live, without code changes** —
+     a new script (`supabase/scripts/qa-verify-password-reset-flow.mjs`) drives the real
+     `admin.generateLink(type: "recovery")` → follows the actual verify redirect → establishes
+     the real recovery session → calls `updateUser({password})` → confirms the old password is
+     rejected and the new one signs in. 11/11 pass against production, including confirming the
+     redirect target is the real production URL (not localhost), i.e. Supabase's Site
+     URL/Redirect config is correct. Only real SMTP/inbox delivery remains untested (no
+     browser/email tool in this environment) — disclosed, not fixed, not fixable here.
+  5. **Android's total absence of any password-recovery UI (a real, separate, pre-existing gap)
+     addressed with the previously-scoped interim**: a "Forgot password?" link on `LoginScreen`
+     opening the web `/forgot-password` page via `LocalUriHandler` — Android still has no
+     deep-link/App-Link capability to receive a recovery email directly, unchanged, disclosed.
+- Verification: Queen Bee independently re-read every changed file (not just the two
+  implementation bees' self-reports) and independently confirmed the build evidence from raw
+  artifacts on disk (`app/build/test-results/testDebugUnitTest/*.xml`,
+  `app/build/reports/lint-results-debug.xml`, the actual APK file), not `testing-bee`'s
+  narrative alone: **43/43 unit tests** (16 pre-existing + 22 `CertificatePdfContentTest` + 5
+  `ServiceCertificatePathTest`), **0 lint errors / 28 warnings** (byte-identical to the prior
+  baseline — no new lint debt), real 21,815,976-byte APK, `build.gradle.kts`/
+  `libs.versions.toml` confirmed untouched (no new Gradle dependency, as required).
+- **Genuinely still open, disclosed**: no real certificate PDF has been visually inspected by a
+  human on either platform. `git status` shows all of this uncommitted as of this entry — the
+  user did not ask for a commit/push this session, so none was made (matches "commit only when
+  asked").
+- Affected files: `mobile-android/app/src/main/java/za/co/connoisseurauto/capmobile/{SupabaseData,SupabaseStorage,MainActivity,CertificatePdfBuilder}.kt`,
+  `.../ui/navigation/CapNavRoutes.kt`, two new test files, `supabase/migrations/{0029,0030}_*.sql`
+  (comment-only correction), `supabase/scripts/qa-verify-password-reset-flow.mjs` (new).
+
 ## 2026-08-17 (later night) — Supabase Auth Redirect URL configuration recommended to the user
 
 - Decision/recommendation (not applied by Queen Bee -- Supabase project config is outside this

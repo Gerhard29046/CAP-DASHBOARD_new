@@ -48,3 +48,17 @@ already produced (Book In's 5 missing fields, Notes' zero-consumer status, the r
 footprint being just the `users` collection, `CapStatCard` having no `onClick`) are the model to
 keep following — the user has shown they check these claims, so precision over confident-sounding
 summaries.
+
+**Reconfirmed 2026-08-18 (Android Service Certificate parity)**: reading web's implementation
+first (`serviceCertificatePdf.js`/`ServiceRecords.jsx`'s `CertificateSection`) directly surfaced a
+real, live regression neither implementation bee would otherwise have known to look for — a web
+migration (0029) had silently changed the *meaning* of a column (`file_url`: signed URL →
+permanent path) that Android's own, unrelated Knowledge Base display code still depended on the
+old meaning of. Following step 8 ("fix concrete bugs found in the same flow") caught and closed
+this before it shipped as a second, separate regression. Also reconfirmed: splitting a
+cross-platform feature into `supabase-android-bee` (data/storage) → hand-review → `android-ui-bee`
+(UI/wiring) → hand-review → `testing-bee` (build verification), strictly sequential with Queen Bee
+reading the real diff between each stage rather than delegating both halves in parallel or
+trusting either bee's self-report, produced zero rework and caught one deliberate, correctly-
+reasoned deviation from the brief (`company_settings`'s permission gate) that was right to keep,
+not revert.

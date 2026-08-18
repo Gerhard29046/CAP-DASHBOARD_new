@@ -63,6 +63,13 @@ sealed class CapNavRoute(val route: String, val label: String) {
     data object SettingsCatalogue : CapNavRoute("settings_products_services", "Products and Services")
 
     /**
+     * Settings > Company Details — CAP's own name/address/contact/VAT (`public.company_settings`,
+     * migration 0030). The Android counterpart of the web's `CompanySettingsPanel.jsx`; its values
+     * are what the Service Certificate PDF prints in its header and footer.
+     */
+    data object SettingsCompany : CapNavRoute("settings_company", "Company Details")
+
+    /**
      * Device-level app settings, deliberately NOT part of the [Settings] family above and
      * deliberately NOT gated on `settings.access`: this screen configures how CAP Mobile behaves
      * on *this handset* (appearance, and deep links into Android's own per-app notification and
@@ -111,7 +118,7 @@ sealed class CapNavRoute(val route: String, val label: String) {
         val topLevel: List<CapNavRoute> = listOf(
             Home, Clients, Machines, Services, Jobs, Calendar, KnowledgeBase,
             Invoices, Users, Status, More, Account, LogNewService, BookIn,
-            Settings, SettingsJobCards, SettingsCatalogue, AppSettings
+            Settings, SettingsJobCards, SettingsCatalogue, SettingsCompany, AppSettings
         )
 
         /** Detail destinations, addressed by record id rather than by label. */

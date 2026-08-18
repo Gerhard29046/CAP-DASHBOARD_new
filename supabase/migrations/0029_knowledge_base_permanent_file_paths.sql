@@ -47,8 +47,11 @@
 --   documents/knowledge-media/{knowledge_machine_id}/{uuid}-{filename}.webp
 --   documents/knowledge-documents/{knowledge_machine_id}/{uuid}-{filename}.pdf
 --
--- NOT YET APPLIED -- prepared for review only, per this project's standing migration-approval
--- process (SQL Editor, run manually once authorized).
+-- APPLIED -- confirmed live 2026-08-17 (evening, existence check via can_access_knowledge_media/
+-- can_access_knowledge_document RPC callability) and again 2026-08-17/18 with a full live
+-- write/cross-user-read/cleanup pass (supabase/scripts/qa-verify-kb-permanent-paths.mjs,
+-- 12/12 pass). This comment previously said "NOT YET APPLIED"; corrected once independently
+-- reverified, not left stale.
 
 drop policy if exists documents_owner_or_admin on storage.objects;
 

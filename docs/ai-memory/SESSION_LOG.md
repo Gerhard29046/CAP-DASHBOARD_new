@@ -1,5 +1,83 @@
 # Session Log
 
+## 2026-08-18 — Android Service Certificate parity; Android KB display regression found+fixed; web forgot-password live-verified end-to-end
+
+**Objective** (user, verbatim intent): build the Android Service Certificate feature now that
+migration 0030 is applied on Supabase; fix forgot-password if it's still not working; then try to
+get the 7-day photo/document upload issue actually working.
+
+**What was found before any code was written** (investigation first, per this project's standing
+process):
+- Migration 0030 independently re-confirmed applied (`qa-check-0030-applied.mjs`) — matches the
+  user's report, not just trusted.
+- Migration 0029 (Knowledge Base permanent file paths) was ALSO already applied, and its matching
+  web-side code fix (`storage.js`'s `uploadKnowledgeMedia`/`uploadKnowledgeDocument`/
+  `getKnowledgeFileSignedUrl`, `KnowledgeMachineDetail.jsx`) had ALREADY shipped — live-reconfirmed
+  with a fresh run of `qa-verify-kb-permanent-paths.mjs`, 12/12 pass including cross-technician
+  signed-URL access. This meant the web half of the "7-day photo upload" task needed no new code.
+- Reading Android's own Knowledge Base screen, found it was still loading `file_url` directly as a
+  URL under a comment explicitly (and, as of 0029, incorrectly) claiming it still was one — a real,
+  live regression created by the web-side fix landing without a matching Android change. Added to
+  scope.
+- Wrote and ran a new live end-to-end script, `supabase/scripts/qa-verify-password-reset-flow.mjs`
+  (uses `admin.generateLink(type: "recovery")`, follows the real verify redirect, establishes the
+  real recovery session, calls `updateUser`, then proves the old password is rejected and the new
+  one works) — 11/11 pass against production, confirming the web forgot-password mechanism
+  genuinely works end-to-end, including that the redirect lands on the real production URL. No web
+  code fix was needed. Real email/SMTP delivery to a real inbox remains untested (no browser/email
+  tool in this environment) — disclosed, not resolved.
+
+**Delegation** (sequential, non-overlapping file scopes, each diff hand-reviewed by Queen Bee
+before moving to the next stage — not just accepted on the implementer's self-report):
+1. `supabase-android-bee`: `SupabaseDataRepository.rpc()`/`fetchOne()` (new generic primitives —
+   RPC-calling and single-row-by-filter fetch, neither existed before), `SupabaseCertificateRepository`
+   (`service-certificates` bucket upload/sign, `x-upsert: true` for stable-path regeneration),
+   `SupabaseKnowledgeFileRepository` (sign-only, `documents` bucket, for the KB fix above). Added
+   `company_settings` to `TABLES_WITHOUT_CREATED_AT`. New unit tests: `ServiceCertificatePathTest.kt`
+   (5). Scope respected exactly — did not touch MainActivity.kt/Core.kt.
+2. `android-ui-bee`: `CertificatePdfBuilder.kt` (new file, `android.graphics.pdf.PdfDocument`, zero
+   new Gradle dependency, mirrors `serviceCertificatePdf.js`'s sections/field-omission rules/
+   certification wording; pure content helpers split out for real unit testing since
+   `Paint`/`Canvas` are JVM-unit-test stubs) — new `CertificatePdfContentTest.kt` (22 tests).
+   `CertificateSection` composable wired into `ServiceRecordDetailScreen`. New Settings > Company
+   Details screen + full nav-route registration (`CapNavRoutes.kt` + 5 registration points in
+   MainActivity.kt). Fixed the KB display regression (resolves a fresh signed URL at display time,
+   matching `SignedPhotoStrip`'s existing discipline; fixed the stale comment). Added a "Forgot
+   password?" link to `LoginScreen` (opens the web `/forgot-password` page via `LocalUriHandler` —
+   the previously-scoped interim, since Android still has no deep-link capability). One notable,
+   correct deviation from the brief: registered `company_settings` under `dashboard.view` in
+   `permittedCollections` rather than `settings.access` as originally briefed, reasoning that a
+   technician with `services.edit` but not `settings.access` still needs to read it to generate a
+   certificate (RLS already permits any active profile to `SELECT` it; write stays
+   `settings.access`-gated). Left `SupabaseData.kt`/`SupabaseStorage.kt`/`Core.kt` untouched, as
+   scoped.
+3. `testing-bee`: first attempt hit an unrelated session/usage limit before producing output
+   (working tree was untouched, clean, no partial edits) — retried with a fresh agent instance.
+   Real, independently-reconfirmed results (Queen Bee read the raw
+   `app/build/test-results/testDebugUnitTest/*.xml`, `app/build/reports/lint-results-debug.xml`,
+   and the actual APK file directly, not just the subagent's summary): **43/43 unit tests pass**
+   (16 pre-existing + 22 `CertificatePdfContentTest` + 5 `ServiceCertificatePathTest`), **0 lint
+   errors / 28 warnings** (byte-identical to the prior baseline), real 21,815,976-byte
+   `app-debug.apk`, `build.gradle.kts`/`libs.versions.toml` confirmed untouched (no new Gradle
+   dependency, as required).
+
+**Cleanup**: found and deleted 7 zero-byte shell-quoting-accident junk files left in
+`mobile-android/` by an earlier subagent Bash command (matches this project's known recurring
+pattern — see `.claude/agent-memory/queen-bee/technique_zero_byte_junk_file_source.md`) before
+handing off to `android-ui-bee`, so its diff review wasn't cluttered by them.
+
+**Files changed**: `mobile-android/app/src/main/java/za/co/connoisseurauto/capmobile/{SupabaseData,SupabaseStorage,MainActivity}.kt`
+(modified), `CertificatePdfBuilder.kt` (new), `ui/navigation/CapNavRoutes.kt` (modified),
+`app/src/test/.../{ServiceCertificatePathTest,CertificatePdfContentTest}.kt` (new),
+`supabase/migrations/{0029,0030}_*.sql` (comment-only, corrected stale "NOT YET APPLIED" headers),
+`supabase/scripts/qa-verify-password-reset-flow.mjs` (new).
+
+**Remaining/open**: no real Service Certificate PDF has been visually inspected by a human on
+either platform (web or Android) — the one thing left before trusting this for a real client
+document. Batch B (email/attach/history) not started on either platform. Real SMTP/inbox delivery
+for forgot-password untested. **Nothing committed or pushed this session** — user did not ask for
+it; `git status` still shows everything above as uncommitted/untracked.
+
 ## 2026-08-17 (late night, cont.) — Login page missing "Forgot password?" link fixed; Work Performed changed from free text to a checklist (web + Android)
 - User asked where to reset their password; when told to use "Forgot password?" on the login page,
   correctly pushed back that it doesn't exist. Verified by reading `Login.jsx` directly -- true,

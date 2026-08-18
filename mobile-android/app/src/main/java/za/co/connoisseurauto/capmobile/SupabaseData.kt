@@ -76,10 +76,17 @@ class SupabaseDataRepository @Inject constructor(
          * keyed on a boolean primary key with only `updated_at`/`updated_by`, so ordering it is
          * meaningless as well as invalid.
          *
+         * `company_settings` (0030_service_certificates.sql) is the same singleton shape for the
+         * same reason -- `id boolean primary key default true`, columns company_name/address/
+         * phone/email/vat_number/updated_at/updated_by, no `created_at`. Confirmed by reading that
+         * migration's `create table`, not inferred from a failing query. Its `service_certificates`
+         * sibling table in the same migration DOES declare `created_at`, so it deliberately is not
+         * listed here.
+         *
          * Add a table here only after confirming in the migrations that the column really is
          * absent -- this is a schema fact, not a workaround for a failing query.
          */
-        private val TABLES_WITHOUT_CREATED_AT = setOf("job_card_settings")
+        private val TABLES_WITHOUT_CREATED_AT = setOf("job_card_settings", "company_settings")
     }
 
     /**
@@ -271,6 +278,88 @@ class SupabaseDataRepository @Inject constructor(
         return if (rowStillExists) denied
         else "This record is no longer available -- it may have been deleted by someone else. Please refresh."
     }
+
+    /**
+     * Calls a Postgres function through PostgREST's RPC endpoint
+     * (`POST /rest/v1/rpc/{functionName}`, JSON body = the named arguments).
+     *
+     * Added for `generate_service_certificate(p_service_record_id uuid, p_include_photos boolean)`
+     * (`supabase/migrations/0030_service_certificates.sql`), which is the ONLY way a
+     * `public.service_certificates` row can be created -- that table has no client-facing INSERT
+     * policy or grant at all, deliberately, so a client cannot insert a row with a spoofed
+     * `certificate_number`. The function is security-definer and runs its own
+     * `has_permission('services.edit')` check first; that check, not anything in this file, is the
+     * authorization boundary. Mirrors the web client's `serviceCertificatesApi.generate()`
+     * (`frontend/src/api/supabaseApiClient.js`) exactly, including its idempotency: calling it
+     * twice for the same service record updates and returns the existing row, reusing the original
+     * certificate number, rather than erroring or minting a second one.
+     *
+     * SHAPE ASSUMPTION, and the reason this returns a single [CapRecord] rather than a list: a
+     * function whose `returns` is a single composite type (`returns public.service_certificates`)
+     * answers with a single JSON object. A `returns setof`/table-valued function answers with a
+     * JSON array instead, which this method does NOT handle -- it would fail the parse below and
+     * surface as the malformed-response error. Add a separate list-returning variant if such a
+     * function is ever needed; do not loosen this one into "object or array", which would make the
+     * caller's contract ambiguous.
+     *
+     * ACCEPTED SIMPLIFICATION, disclosed rather than hidden: a `RAISE EXCEPTION` raised inside the
+     * function (e.g. 'Not permitted to generate a service certificate.', 'Service record not
+     * found.') arrives as a non-2xx whose Postgres message is NOT threaded through to the user --
+     * [request] maps it onto its existing fixed message set, exactly as an RLS denial anywhere else
+     * in this file already collapses to "You do not have permission to do that.". That is this
+     * codebase's established behavior, not a defect introduced here; changing it would mean
+     * reworking [request]'s error contract for every caller.
+     *
+     * Emits no [refreshSignals] entry: this is a generic primitive with no way to know which table
+     * a given function touched, and nothing currently observes `service_certificates` as a
+     * collection anyway. A caller that needs a list to refresh should re-read it explicitly.
+     */
+    suspend fun rpc(functionName: String, params: Map<String, Any?>): CapRecord = withContext(Dispatchers.IO) {
+        val response = withAuth { token ->
+            request(
+                "$baseUrl/rest/v1/rpc/$functionName",
+                "POST",
+                token,
+                params.toJsonObject().toString()
+            )
+        }
+        try {
+            JSONObject(response).toCapRecord()
+        } catch (_: JSONException) {
+            // 2xx whose body is not the single composite row this contract expects. Reported as an
+            // unknown outcome rather than silently turned into an empty record -- the caller must
+            // not be told a certificate exists when the response cannot be read.
+            throw ApiException("The service returned an unexpected response. Please try again.")
+        }
+    }
+
+    /**
+     * Single row matched by one equality filter, or `null` when there genuinely is no such row.
+     *
+     * Exists for `service_certificates.getForServiceRecord(serviceRecordId)` -- the web client's
+     * `.eq("service_record_id", ...).maybeSingle()` (`frontend/src/api/supabaseApiClient.js`),
+     * whose "no certificate generated yet" answer is a legitimate empty result the caller uses to
+     * choose between "Generate" and "Regenerate/Download", NOT an error. Generalized to any
+     * table/column rather than written certificate-specific, since single-row-by-foreign-key is an
+     * obvious future need, but deliberately kept to exactly one equality filter -- anything richer
+     * belongs in a purpose-built method, not in a creeping generic query builder.
+     *
+     * `null` here means "the query succeeded and matched nothing". Every failure mode (auth,
+     * permission, network, malformed response) still throws, exactly as elsewhere in this class --
+     * an error is never collapsed into a null/empty result.
+     */
+    suspend fun fetchOne(table: String, filterColumn: String, filterValue: String): CapRecord? =
+        withContext(Dispatchers.IO) {
+            val body = withAuth { token ->
+                request("$baseUrl/rest/v1/$table?$filterColumn=eq.$filterValue&select=*", "GET", token, null)
+            }
+            val array = try {
+                JSONArray(body)
+            } catch (_: JSONException) {
+                throw ApiException("The service returned an unexpected response. Please try again.")
+            }
+            if (array.length() == 0) null else array.getJSONObject(0).toCapRecord()
+        }
 
     /** Row count for the Status screen's "sync" feature -- uses PostgREST's exact-count
      *  header rather than fetching every row just to count them. */

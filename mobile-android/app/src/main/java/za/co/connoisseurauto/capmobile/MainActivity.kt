@@ -128,7 +128,13 @@ class MainViewModel @Inject constructor(
     private val statusRepo: StatusRepository,
     private val recordsRepository: RecordsRepository,
     private val storageRepository: SupabaseStorageRepository,
-    private val avatarRepository: SupabaseAvatarRepository
+    private val avatarRepository: SupabaseAvatarRepository,
+    // Injected directly, exactly like storageRepository/avatarRepository above: these are
+    // storage/data-layer classes with no generic-collection semantics for RecordsRepository to
+    // wrap, and every method below is a one-line pass-through rather than new behaviour.
+    private val supabaseData: SupabaseDataRepository,
+    private val certificateRepository: SupabaseCertificateRepository,
+    private val knowledgeFileRepository: SupabaseKnowledgeFileRepository
 ) : ViewModel() {
     var state by mutableStateOf(AuthState())
         private set
@@ -196,7 +202,22 @@ class MainViewModel @Inject constructor(
             // combine()) take every other screen's data down with it. Fixed by supabase-android-bee
             // (SupabaseData.kt's TABLES_WITHOUT_CREATED_AT), independently confirmed by Queen Bee
             // by reading the applied diff before adding this line.
-            Triple("job_card_settings", "settings.access", true)
+            Triple("job_card_settings", "settings.access", true),
+            // The company_settings singleton row (migration 0030). Same no-created_at shape as
+            // job_card_settings above, and already handled by SupabaseData.kt's
+            // TABLES_WITHOUT_CREATED_AT.
+            //
+            // Gated on "dashboard.view", NOT on "settings.access", and deliberately so: this row
+            // has TWO consumers, only one of which is a Settings screen. The other is the Service
+            // Certificate generator on every service record, which prints these values in the PDF
+            // header/footer -- and a technician typically holds services.edit WITHOUT
+            // settings.access. Registering it under settings.access would have handed exactly those
+            // users certificates with the company block silently missing. RLS already grants SELECT
+            // on this table to any active profile (0030's company_settings_select), so
+            // "dashboard.view" is used here for the same reason dashboard_notes above uses it: it
+            // is this list's established stand-in for "no gate beyond being signed in". Writing is
+            // still settings.access-only, enforced by RLS, and the editor screen is still gated.
+            Triple("company_settings", "dashboard.view", true)
         ).filter { (_, permission) -> user.hasPermission(permission) }.map { it.first }
         recordsJob?.cancel()
         recordsJob = viewModelScope.launch {
@@ -307,6 +328,48 @@ class MainViewModel @Inject constructor(
      *  `public.users.photo_path` via [save] regardless of whether this succeeds. */
     suspend fun deleteAvatar(path: String) = avatarRepository.deleteAvatar(path)
 
+    // --- Service Certificates (migration 0030) -------------------------------------------------
+    // Suspending, exception-propagating wrappers in the style of the photo/avatar helpers above --
+    // deliberately NOT routed through [save]/[actionMessage], so the certificate section owns its
+    // own generating/error state instead of firing stray snackbars mid-flow.
+
+    /** The certificate row for a service record, or null when none has ever been generated. A null
+     *  here is a legitimate answer the UI acts on ("Generate"), not a swallowed failure -- every
+     *  real failure still throws. */
+    suspend fun getCertificateForServiceRecord(serviceRecordId: String): CapRecord? =
+        supabaseData.fetchOne("service_certificates", "service_record_id", serviceRecordId)
+
+    /** Creates (or re-stamps) the certificate row server-side. The certificate NUMBER is assigned
+     *  once by `generate_service_certificate()` and never changes on regeneration -- nothing
+     *  client-side may invent or alter it. */
+    suspend fun generateServiceCertificate(serviceRecordId: String, includePhotos: Boolean): CapRecord =
+        supabaseData.rpc(
+            "generate_service_certificate",
+            mapOf(
+                "p_service_record_id" to serviceRecordId,
+                "p_include_photos" to includePhotos
+            )
+        )
+
+    /** Uploads the rendered PDF and returns its PERMANENT Storage path. The caller must persist
+     *  that path into `service_certificates.pdf_path` via [updateRecordNow] -- never persist the
+     *  result of [createCertificateSignedUrl]. */
+    suspend fun uploadServiceCertificatePdf(
+        serviceRecordId: String,
+        certificateNumber: String,
+        pdfBytes: ByteArray
+    ): String = certificateRepository.uploadCertificate(serviceRecordId, certificateNumber, pdfBytes)
+
+    /** Fresh signed URL for opening an already-stored certificate. It expires; `pdf_path` does not. */
+    suspend fun createCertificateSignedUrl(path: String): String =
+        certificateRepository.createSignedUrl(path)
+
+    /** Fresh signed URL for a Knowledge Base photo/document. `knowledge_media.file_url` and
+     *  `knowledge_documents.file_url` hold a permanent Storage object PATH (migration 0029), not a
+     *  ready-to-use URL -- resolve it here at display time and never persist the result. */
+    suspend fun createKnowledgeFileSignedUrl(path: String): String =
+        knowledgeFileRepository.createSignedUrl(path)
+
     /**
      * Saves the signed-in user's own editable profile fields (`full_name`/`photo_path`) and
      * replaces [state]'s in-memory [CapUser] with the row the server actually returned -- so the
@@ -385,6 +448,7 @@ fun LoginScreen(error: String?, loading: Boolean, login: (String, String) -> Uni
     var email by remember { mutableStateOf(BuildConfig.DEFAULT_LOGIN_EMAIL) }
     var password by remember { mutableStateOf("") }
     val focusManager = LocalFocusManager.current
+    val uriHandler = LocalUriHandler.current
     val canSubmit = !loading && email.isNotBlank() && password.isNotBlank()
     // Clearing focus also dismisses the keyboard, so the button-press and the keyboard's own
     // "Done" action both leave the screen in the same state while the request is in flight.
@@ -437,6 +501,21 @@ fun LoginScreen(error: String?, loading: Boolean, login: (String, String) -> Uni
                         enabled = email.isNotBlank() && password.isNotBlank(),
                         loading = loading
                     )
+                    // Password recovery happens on the website, not in the app: Supabase's
+                    // recovery email links to a web URL, and this app has no deep link / App Link
+                    // set up to receive one, so a native "forgot password" form here would send
+                    // the user an email it could not then handle. Handing the browser the web
+                    // app's own /forgot-password page is the honest path -- same
+                    // BuildConfig.WEB_APP_URL the Status screen already opens, never a hardcoded
+                    // URL. (trimEnd('/') because that value carries a trailing slash.)
+                    TextButton(
+                        onClick = {
+                            uriHandler.openUri(BuildConfig.WEB_APP_URL.trimEnd('/') + "/forgot-password")
+                        },
+                        enabled = !loading
+                    ) {
+                        Text("Forgot password?", style = MaterialTheme.typography.bodySmall)
+                    }
                     Text(
                         "Version ${BuildConfig.VERSION_NAME}",
                         style = MaterialTheme.typography.labelSmall,
@@ -654,6 +733,7 @@ private fun routeIdForLabel(label: String): String = when (label) {
     "Settings" -> CapNavRoute.Settings.route
     CapNavRoute.SettingsJobCards.label -> CapNavRoute.SettingsJobCards.route
     CapNavRoute.SettingsCatalogue.label -> CapNavRoute.SettingsCatalogue.route
+    CapNavRoute.SettingsCompany.label -> CapNavRoute.SettingsCompany.route
     CapNavRoute.AppSettings.label -> CapNavRoute.AppSettings.route
     else -> CapNavRoute.Home.route
 }
@@ -684,6 +764,7 @@ private fun labelForRouteId(routeId: String?): String = when (routeId) {
     CapNavRoute.Settings.route -> "Settings"
     CapNavRoute.SettingsJobCards.route -> CapNavRoute.SettingsJobCards.label
     CapNavRoute.SettingsCatalogue.route -> CapNavRoute.SettingsCatalogue.label
+    CapNavRoute.SettingsCompany.route -> CapNavRoute.SettingsCompany.label
     CapNavRoute.AppSettings.route -> CapNavRoute.AppSettings.label
     else -> "Dashboard"
 }
@@ -732,6 +813,7 @@ fun AdaptiveShell(vm: MainViewModel) {
         // The route labels are spelled out for uniqueness; the top bar only needs the section.
         CapNavRoute.SettingsJobCards.label -> "Job Cards"
         CapNavRoute.SettingsCatalogue.label -> "Products & Services"
+        CapNavRoute.SettingsCompany.label -> "Company Details"
         CapNavRoute.ClientDetail.label -> "Client"
         CapNavRoute.MachineDetail.label -> "Machine"
         CapNavRoute.JobDetail.label -> "Job Card"
@@ -816,6 +898,9 @@ fun AdaptiveShell(vm: MainViewModel) {
                 composable(CapNavRoute.SettingsCatalogue.route) {
                     ScreenContent(CapNavRoute.SettingsCatalogue.label, vm, user, navigate, openRoute)
                 }
+                composable(CapNavRoute.SettingsCompany.route) {
+                    ScreenContent(CapNavRoute.SettingsCompany.label, vm, user, navigate, openRoute)
+                }
                 composable(CapNavRoute.AppSettings.route) {
                     ScreenContent(CapNavRoute.AppSettings.label, vm, user, navigate, openRoute)
                 }
@@ -895,6 +980,9 @@ private fun ScreenContent(
         }
         CapNavRoute.SettingsCatalogue.label -> RequireSettingsAccess(user) {
             ProductsServicesScreen(data.collection("products_services"), vm::save)
+        }
+        CapNavRoute.SettingsCompany.label -> RequireSettingsAccess(user) {
+            CompanySettingsScreen(data.collection("company_settings").firstOrNull(), vm::save)
         }
         // CapNavRoute.AppSettings is handled above, before the loading/error gate — and
         // deliberately NOT wrapped in RequireSettingsAccess: it holds per-device preferences and
@@ -990,6 +1078,10 @@ private fun DetailContent(
                 service = record,
                 machine = machine,
                 client = client,
+                // CAP's own details, for the Service Certificate header/footer. Null only if the
+                // singleton row hasn't loaded yet — the certificate still generates, omitting the
+                // company block rather than inventing one.
+                company = data.collection("company_settings").firstOrNull(),
                 user = user,
                 vm = vm,
                 onOpen = onOpen,
@@ -1010,6 +1102,7 @@ private fun DetailContent(
             documents = relatedRecords(data.collection("knowledge_documents"), "knowledge_machine_id", record.id),
             serviceCodes = relatedRecords(data.collection("knowledge_service_codes"), "knowledge_machine_id", record.id),
             user = user,
+            vm = vm,
             save = vm::save,
             onDelete = { vm.deleteThenRun("knowledge_machines", record.id, "Knowledge base entry", onBack) }
         )
@@ -2498,6 +2591,7 @@ private fun ServiceRecordDetailScreen(
     service: CapRecord,
     machine: CapRecord?,
     client: CapRecord?,
+    company: CapRecord?,
     user: CapUser,
     vm: MainViewModel,
     onOpen: (String) -> Unit,
@@ -2563,6 +2657,20 @@ private fun ServiceRecordDetailScreen(
                             }
                         }
                     }
+                    CapCard {
+                        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                            CapSectionHeader("Service Certificate")
+                            CertificateSection(
+                                service = service,
+                                machine = machine,
+                                client = client,
+                                company = company,
+                                photos = photos,
+                                user = user,
+                                vm = vm
+                            )
+                        }
+                    }
                     Column(
                         Modifier.fillMaxWidth().padding(top = Spacing.sm),
                         verticalArrangement = Arrangement.spacedBy(Spacing.sm)
@@ -2581,6 +2689,223 @@ private fun ServiceRecordDetailScreen(
             }
         }
     }
+}
+
+/**
+ * Service Certificate panel on a service record — the Android counterpart of `ServiceRecords.jsx`'s
+ * `CertificateSection`, over the same `service_certificates` table, the same
+ * `generate_service_certificate()` RPC, and the same `service-certificates` Storage bucket
+ * (migration 0030).
+ *
+ * Permission gating mirrors the web exactly: `services.view` to see the panel at all,
+ * `services.edit` to generate or regenerate. Both are presentation only — the real boundary is the
+ * RPC's own `has_permission('services.edit')` check and the table/bucket RLS, which reject the
+ * write regardless of what this screen shows.
+ *
+ * Every record on this screen is by definition an already-completed service (`service_records` has
+ * no draft state anywhere in the data model — same reasoning recorded on the web component), so
+ * there is no incomplete state to exclude the action for.
+ *
+ * ONE DELIBERATE DIVERGENCE from the web: a single "Open certificate PDF" action instead of
+ * separate Preview and Download buttons. On Android both would resolve the same signed URL and
+ * hand it to the same system viewer via [LocalUriHandler] — two buttons doing the identical thing
+ * would be a fake distinction. Saving/sharing is then offered by whichever viewer or browser
+ * handles the PDF. No custom in-app PDF renderer is built here.
+ */
+@Composable
+private fun CertificateSection(
+    service: CapRecord,
+    machine: CapRecord?,
+    client: CapRecord?,
+    company: CapRecord?,
+    photos: List<String>,
+    user: CapUser,
+    vm: MainViewModel
+) {
+    if (!user.hasPermission("services.view")) {
+        Text(
+            "You do not have permission to view service certificates.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        return
+    }
+    val canGenerate = user.hasPermission("services.edit")
+    val scope = rememberCoroutineScope()
+    val uriHandler = LocalUriHandler.current
+
+    var certificate by remember(service.id) { mutableStateOf<CapRecord?>(null) }
+    var loading by remember(service.id) { mutableStateOf(true) }
+    var includePhotos by remember(service.id) { mutableStateOf(photos.isNotEmpty()) }
+    var generating by remember(service.id) { mutableStateOf(false) }
+    var opening by remember(service.id) { mutableStateOf(false) }
+    var error by remember(service.id) { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(service.id) {
+        loading = true
+        error = null
+        try {
+            certificate = vm.getCertificateForServiceRecord(service.id)
+        } catch (failure: Exception) {
+            // A null certificate is a legitimate "none yet" answer; a FAILED lookup is not, and is
+            // reported rather than quietly presented as "none yet".
+            certificate = null
+            error = failure.message ?: "Could not check whether a certificate exists."
+        }
+        loading = false
+    }
+
+    fun generate() {
+        scope.launch {
+            generating = true
+            error = null
+            try {
+                val row = vm.generateServiceCertificate(service.id, includePhotos)
+                val number = row.text("certificate_number")
+                // Signed URLs purely so the PDF builder can fetch the images; never persisted.
+                // One photo failing to sign simply drops out — the builder draws "Photo
+                // unavailable" for anything it cannot load.
+                val photoUrls = if (includePhotos) {
+                    photos.mapNotNull { path -> runCatching { vm.createPhotoSignedUrl(path) }.getOrNull() }
+                } else {
+                    emptyList()
+                }
+                val pdfBytes = buildServiceCertificatePdf(
+                    certificateNumber = number,
+                    serviceRecord = service,
+                    machine = machine,
+                    client = client,
+                    company = company,
+                    photoUrls = photoUrls,
+                    includePhotos = includePhotos,
+                    generatedAt = row.text("generated_at").ifBlank { null }
+                )
+                val path = vm.uploadServiceCertificatePdf(service.id, number, pdfBytes)
+                vm.updateRecordNow("service_certificates", row.id, mapOf("pdf_path" to path))
+                // Reflect the just-saved path locally: `service_certificates` is not one of the
+                // observed collections, so nothing else will refresh this panel.
+                certificate = CapRecord(row.id, row.fields + ("pdf_path" to path))
+            } catch (failure: Exception) {
+                error = failure.message ?: "Could not generate the certificate."
+            }
+            generating = false
+        }
+    }
+
+    fun openCertificate(path: String) {
+        scope.launch {
+            opening = true
+            error = null
+            try {
+                uriHandler.openUri(vm.createCertificateSignedUrl(path))
+            } catch (failure: Exception) {
+                error = failure.message ?: "Could not open the certificate."
+            }
+            opening = false
+        }
+    }
+
+    if (loading) {
+        Row(
+            Modifier.fillMaxWidth().padding(vertical = Spacing.sm),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+        ) {
+            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+            Text(
+                "Checking for a certificate…",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        return
+    }
+
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+        error?.let { CapInlineError(it) }
+
+        val existing = certificate
+        if (existing != null) {
+            val pdfPath = existing.text("pdf_path")
+            CapDetailField("Certificate number", existing.text("certificate_number").ifBlank { "Unknown" })
+            formatCertificateDateTime(existing.text("generated_at").ifBlank { null })?.let {
+                CapDetailField("Generated", it)
+            }
+            if (pdfPath.isBlank()) {
+                Text(
+                    "The PDF for this certificate hasn't been stored yet. Regenerate it to create one.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            CapSecondaryButton(
+                text = "Open certificate PDF",
+                onClick = { openCertificate(pdfPath) },
+                enabled = pdfPath.isNotBlank() && !opening && !generating,
+                loading = opening
+            )
+            if (canGenerate) {
+                CapOutlinedButton(
+                    text = "Regenerate certificate",
+                    onClick = { generate() },
+                    enabled = !generating && !opening,
+                    loading = generating
+                )
+            }
+            if (generating) CertificateProgressNote()
+        } else {
+            Text(
+                "No certificate has been generated for this service yet.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            if (canGenerate) {
+                if (photos.isNotEmpty()) {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(MaterialTheme.shapes.medium)
+                            .toggleable(
+                                value = includePhotos,
+                                role = Role.Checkbox,
+                                enabled = !generating,
+                                onValueChange = { includePhotos = it }
+                            )
+                            .defaultMinSize(minHeight = 48.dp)
+                            .padding(vertical = Spacing.xs),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+                    ) {
+                        Checkbox(checked = includePhotos, onCheckedChange = null, enabled = !generating)
+                        Text(
+                            "Include service photos (${photos.size})",
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+                CapPrimaryButton(
+                    text = "Generate Service Certificate",
+                    onClick = { generate() },
+                    enabled = !generating,
+                    loading = generating
+                )
+                if (generating) CertificateProgressNote()
+            }
+        }
+    }
+}
+
+/** Explains the wait while a certificate is being built — the Cap buttons replace their label with
+ *  a bare spinner while `loading`, and rendering a PDF (photos included) is long enough that a
+ *  spinner alone reads as a hang. */
+@Composable
+private fun CertificateProgressNote() {
+    Text(
+        "Building the certificate PDF… this can take a moment when photos are included.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
 }
 
 /**
@@ -3924,10 +4249,12 @@ private fun KnowledgeBaseDetailScreen(
     documents: List<CapRecord>,
     serviceCodes: List<CapRecord>,
     user: CapUser,
+    vm: MainViewModel,
     save: (String, String?, Map<String, Any?>, String) -> Unit,
     onDelete: () -> Unit
 ) {
     val uriHandler = LocalUriHandler.current
+    val scope = rememberCoroutineScope()
     val canManage = user.role != "accountant"
     var viewerUrl by remember(machine.id) { mutableStateOf<String?>(null) }
     var noteTitle by remember(machine.id) { mutableStateOf("") }
@@ -3938,6 +4265,28 @@ private fun KnowledgeBaseDetailScreen(
     val refrigerants = stringList(machine.fields["supported_refrigerants"])
     val specifications = stringMap(machine.fields["technical_specifications"])
     val functions = stringList(machine.fields["main_functions"])
+
+    // knowledge_media.file_url / knowledge_documents.file_url hold a PERMANENT Storage object path
+    // ("knowledge-media/{knowledge_machine_id}/{uuid}-{filename}"), NOT a ready-to-use URL —
+    // migration 0029 plus the matching web-uploader fix changed that, and this screen previously
+    // handed the stored value straight to AsyncImage/openUri, which cannot work. Signed URLs are
+    // resolved here at display time, held only in memory, and never written back to the record:
+    // the exact discipline [SignedPhotoStrip] already applies to service/job photos.
+    val mediaPaths = media.map { it.text("file_url") }.filter { it.isNotBlank() }
+    var mediaUrls by remember(machine.id) { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var resolvingMedia by remember(machine.id) { mutableStateOf(mediaPaths.isNotEmpty()) }
+    var openingDocumentId by remember(machine.id) { mutableStateOf<String?>(null) }
+    var documentError by remember(machine.id) { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(mediaPaths) {
+        resolvingMedia = mediaPaths.isNotEmpty()
+        val resolved = mutableMapOf<String, String>()
+        mediaPaths.forEach { path ->
+            runCatching { vm.createKnowledgeFileSignedUrl(path) }.getOrNull()?.let { resolved[path] = it }
+        }
+        mediaUrls = resolved
+        resolvingMedia = false
+    }
 
     Box(Modifier.fillMaxSize()) {
         LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(Spacing.md), contentPadding = PaddingValues(bottom = 84.dp)) {
@@ -4055,18 +4404,16 @@ private fun KnowledgeBaseDetailScreen(
                         CapEmptyState("No photos yet.", modifier = Modifier.fillMaxWidth().wrapContentHeight())
                     } else {
                         // Reuses the app's existing PhotoThumbnail + CapPhotoViewerDialog pair
-                        // (same as SignedPhotoStrip) rather than a second photo pattern. Unlike
-                        // service/job photos, knowledge_media.file_url is stored as a complete
-                        // signed URL by the web uploader (frontend/src/api/supabaseApiClient.js's
-                        // integrations.Core.UploadFile), not a Storage path -- so it is loaded
-                        // directly and there is nothing here to sign. An expired URL simply fails
-                        // to load and PhotoThumbnail shows its "unavailable" state.
+                        // (same as SignedPhotoStrip) rather than a second photo pattern. The URL
+                        // each thumbnail shows is a freshly signed one resolved above from the
+                        // stored path -- a path that fails to sign stays null, and PhotoThumbnail
+                        // shows its "unavailable" state rather than a blank tile.
                         Row(
                             Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                             horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
                         ) {
                             media.forEachIndexed { index, photo ->
-                                val fileUrl = photo.text("file_url").ifBlank { null }
+                                val fileUrl = mediaUrls[photo.text("file_url")]
                                 val label = photo.text("caption")
                                     .ifBlank { photo.text("original_filename") }
                                     .ifBlank { "Photo ${index + 1}" }
@@ -4076,7 +4423,7 @@ private fun KnowledgeBaseDetailScreen(
                                 ) {
                                     PhotoThumbnail(
                                         url = fileUrl,
-                                        resolving = false,
+                                        resolving = resolvingMedia,
                                         contentDescription = "$label. Photo ${index + 1} of ${media.size}. Tap to view full screen.",
                                         onClick = { fileUrl?.let { viewerUrl = it } }
                                     )
@@ -4124,14 +4471,37 @@ private fun KnowledgeBaseDetailScreen(
                     } else {
                         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
                             documents.forEach { doc ->
-                                val fileUrl = doc.text("file_url")
+                                // Same 0029 change as the photos above: file_url is a stored path,
+                                // so a fresh signed URL is resolved on tap and handed to the
+                                // device's PDF/document viewer. Only the tapped row shows a
+                                // spinner -- the rest of the screen stays usable while it resolves.
+                                val filePath = doc.text("file_url")
+                                val openingThis = openingDocumentId == doc.id
                                 CapListItem(
                                     title = doc.text("title").ifBlank { doc.text("original_filename").ifBlank { "Document" } },
                                     subtitle = doc.text("original_filename").ifBlank { null },
-                                    showNavArrow = fileUrl.isNotBlank(),
-                                    onClick = if (fileUrl.isNotBlank()) ({ uriHandler.openUri(fileUrl) }) else null
+                                    trailing = {
+                                        if (openingThis) {
+                                            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                                        }
+                                    },
+                                    showNavArrow = filePath.isNotBlank() && !openingThis,
+                                    onClick = if (filePath.isNotBlank() && openingDocumentId == null) ({
+                                        documentError = null
+                                        openingDocumentId = doc.id
+                                        scope.launch {
+                                            try {
+                                                uriHandler.openUri(vm.createKnowledgeFileSignedUrl(filePath))
+                                            } catch (failure: Exception) {
+                                                documentError = failure.message
+                                                    ?: "Could not open that document. Please try again."
+                                            }
+                                            openingDocumentId = null
+                                        }
+                                    }) else null
                                 )
                             }
+                            documentError?.let { CapInlineError(it) }
                         }
                     }
                 }
@@ -4696,6 +5066,13 @@ private fun SettingsScreen(user: CapUser, onNavigate: (String) -> Unit) {
                     showNavArrow = true,
                     onClick = { onNavigate(CapNavRoute.SettingsCatalogue.label) }
                 )
+                CapListItem(
+                    "Company Details",
+                    subtitle = "Name, address, and contact details shown on Service Certificates",
+                    leading = { Icon(Icons.Outlined.Business, null) },
+                    showNavArrow = true,
+                    onClick = { onNavigate(CapNavRoute.SettingsCompany.label) }
+                )
                 // Link-out rather than a duplicate editor, exactly like the web tab's link to
                 // /admin/users. Hidden without users.view, since the destination itself is gated.
                 if (user.hasPermission(permissionFor("Users"))) {
@@ -5018,6 +5395,160 @@ private fun JobCardSettingsScreen(
                                         "line_types" to lineTypes
                                     ),
                                     "Job Card settings"
+                                )
+                            },
+                            enabled = valid && dirty
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Settings > Company Details — the Android counterpart of `CompanySettingsPanel.jsx`, over the same
+ * `public.company_settings` singleton row (migration 0030).
+ *
+ * Every field here is read by the Service Certificate PDF header/footer
+ * ([buildServiceCertificatePdf]) and by nothing else, so none of it is decorative. A field left
+ * blank is OMITTED from the certificate entirely — the PDF never prints a placeholder, and this
+ * screen never seeds a fake address/phone/VAT to make the form look complete.
+ *
+ * [settings] is null only when the row genuinely hasn't loaded yet; that is stated plainly rather
+ * than papered over with empty fields that would silently save blanks over real values.
+ */
+@Composable
+private fun CompanySettingsScreen(
+    settings: CapRecord?,
+    save: (String, String?, Map<String, Any?>, String) -> Unit
+) {
+    if (settings == null) {
+        CapEmptyState(
+            "Company details haven't loaded yet. Check your connection and reopen this screen " +
+                "— they can also be changed on the website under Settings > Company Details.",
+            icon = Icons.Outlined.Business
+        )
+        return
+    }
+
+    val savedName = settings.text("company_name")
+    val savedAddress = settings.text("address")
+    val savedPhone = settings.text("phone")
+    val savedEmail = settings.text("email")
+    val savedVat = settings.text("vat_number")
+
+    // Keyed on the record itself for the same reason JobCardSettingsScreen is: the id is the
+    // literal `true` of the singleton row and never changes, so keying on it would never pick up a
+    // saved value, while an unchanged poll produces an equal CapRecord and never interrupts typing.
+    var name by remember(settings) { mutableStateOf(savedName) }
+    var address by remember(settings) { mutableStateOf(savedAddress) }
+    var phone by remember(settings) { mutableStateOf(savedPhone) }
+    var email by remember(settings) { mutableStateOf(savedEmail) }
+    var vat by remember(settings) { mutableStateOf(savedVat) }
+
+    val valid = name.trim().isNotBlank()
+    val dirty = name != savedName ||
+        address != savedAddress ||
+        phone != savedPhone ||
+        email != savedEmail ||
+        vat != savedVat
+
+    LazyColumn(
+        Modifier.fillMaxSize().imePadding(),
+        verticalArrangement = Arrangement.spacedBy(Spacing.md),
+        contentPadding = PaddingValues(bottom = 84.dp)
+    ) {
+        item {
+            CapScreenHeader(
+                title = "Company Details",
+                subtitle = "Shown in the header and footer of every Service Certificate. " +
+                    "Leave a field blank to leave it off the certificate entirely."
+            )
+        }
+
+        item {
+            CapSectionCard(title = "Business") {
+                CapTextField(
+                    label = "Company name",
+                    value = name,
+                    onValueChange = { name = it },
+                    required = true,
+                    errorMessage = if (name.isBlank()) "A company name is required." else null
+                )
+                CapTextField(
+                    label = "Address",
+                    value = address,
+                    onValueChange = { address = it },
+                    singleLine = false
+                )
+                CapTextField(
+                    label = "VAT / Tax number",
+                    value = vat,
+                    onValueChange = { vat = it }
+                )
+            }
+        }
+
+        item {
+            CapSectionCard(title = "Contact") {
+                CapTextField(
+                    label = "Phone",
+                    value = phone,
+                    onValueChange = { phone = it },
+                    keyboardType = KeyboardType.Phone
+                )
+                CapTextField(
+                    label = "Email",
+                    value = email,
+                    onValueChange = { email = it },
+                    keyboardType = KeyboardType.Email
+                )
+            }
+        }
+
+        item {
+            CapCard {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                    Box(Modifier.weight(1f)) {
+                        CapSecondaryButton(
+                            text = "Discard",
+                            onClick = {
+                                name = savedName
+                                address = savedAddress
+                                phone = savedPhone
+                                email = savedEmail
+                                vat = savedVat
+                            },
+                            enabled = dirty
+                        )
+                    }
+                    Box(Modifier.weight(1f)) {
+                        CapPrimaryButton(
+                            text = "Save changes",
+                            onClick = {
+                                // settings.id is the singleton row's boolean primary key rendered
+                                // as text ("true"), so the generic update builds `?id=eq.true` —
+                                // exactly what JobCardSettingsScreen already does against the
+                                // identically shaped job_card_settings row, and what the web
+                                // client targets with `.eq("id", true)`.
+                                //
+                                // Blank optional fields are written as real NULLs rather than empty
+                                // strings, so "cleared here" and "never filled in" are the same
+                                // state on both clients and the certificate omits the line either
+                                // way. company_name is NOT NULL in 0030, so it is always sent as
+                                // text and the Save button is disabled while it is blank.
+                                save(
+                                    "company_settings",
+                                    settings.id,
+                                    mapOf(
+                                        "company_name" to name.trim(),
+                                        "address" to address.trim().ifBlank { null },
+                                        "phone" to phone.trim().ifBlank { null },
+                                        "email" to email.trim().ifBlank { null },
+                                        "vat_number" to vat.trim().ifBlank { null }
+                                    ),
+                                    "Company details"
                                 )
                             },
                             enabled = valid && dirty

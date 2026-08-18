@@ -7,9 +7,9 @@ Split into 3 batches (see `SESSION_LOG.md`'s matching entry + `DECISIONS.md` for
 
 | Batch | Scope | Status |
 |---|---|---|
-| A | PDF certificate generation, numbering, storage, web UI (Generate/Preview/Download/Regenerate), Company Settings panel | **Code complete, NOT live-verified.** Migration `0030_service_certificates.sql` not yet applied. Build/lint/typecheck clean; no real PDF has been visually inspected yet. |
+| A | PDF certificate generation, numbering, storage, web UI (Generate/Preview/Download/Regenerate), Company Settings panel | **Migration `0030_service_certificates.sql` APPLIED (2026-08-17/18, independently re-confirmed via `qa-check-0030-applied.mjs`).** Build/lint/typecheck clean. No real PDF has been visually inspected by a human yet on either platform — still the one genuinely open item. |
 | B | Email sending (Resend, user-approved provider — needs the user's actual Resend account + API key as a Supabase Edge Function secret), attachments (reusing the existing `attachments` bucket), email history, Settings > Email | **NOT started** — blocked on the user creating the Resend account/key. |
-| C | Android parity (certificate generate/preview/email/attach/history, native UX) | **NOT started** — deferred until Batch A is proven out on web. |
+| C | Android parity (certificate generate/preview/download/regenerate, native UX, Settings > Company Details) | **DONE, real-build-verified (2026-08-18)** — `supabase-android-bee` (RPC/storage primitives) then `android-ui-bee` (PDF builder via `android.graphics.pdf.PdfDocument`, no new Gradle dependency; `CertificateSection` on the Service Record detail screen; Settings > Company Details screen) then `testing-bee` (43/43 unit tests incl. 27 new, 0 lint errors/28 warnings unchanged, real 21.8MB APK). Email/attach/history still N/A on Android too (Batch B not started on either platform). No real PDF visually inspected on-device yet — same open item as web. |
 
 ## In progress — CAP cross-platform product parity initiative (started 2026-08-15)
 

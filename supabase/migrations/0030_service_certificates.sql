@@ -20,8 +20,10 @@
 --     job_card_settings (0018): id boolean primary key default true, single seeded row,
 --     select any active profile / update settings.access only.
 --
--- NOT YET APPLIED -- prepared for review only, per this project's standing migration-approval
--- process (SQL Editor, run manually once authorized).
+-- APPLIED 2026-08-17/18 -- confirmed live via supabase/scripts/qa-check-0030-applied.mjs
+-- (public.service_certificates / public.company_settings / generate_service_certificate() all
+-- present). This comment previously said "NOT YET APPLIED"; corrected once independently
+-- reverified, not left stale.
 
 -- ---------------------------------------------------------------------------
 -- company_settings: singleton row of CAP's own details for the certificate header/footer.
