@@ -1,6 +1,47 @@
 # Session Log
 
-## 2026-08-19 (latest) — Pushed + deployed live (Phases 1-2 of mobile-first UI/UX pass, plus prior unpushed sessions)
+## 2026-08-19 (latest) — Mobile-first UI/UX transformation Phase 3 (modals → bottom sheets) done
+
+**Objective**: continue directly from the Phase 1/2 deploy (same day, user: "deploy this so long
+then continue with phase 3"). Same primitive-first strategy that worked for Phase 2: fix the
+shared `Dialog`/`AlertDialog` components once instead of touching every call site.
+
+**Shipped**, `bace0dc`:
+- `Dialog` (`components/ui/dialog.jsx`): below the `sm:` breakpoint, every `DialogContent` now
+  renders as a bottom sheet (anchored to the bottom edge, rounded top corners only, slides up,
+  `env(safe-area-inset-bottom)`-aware padding, a small drag-handle affordance) instead of a
+  small centered desktop-style card. Unchanged centered-card behavior at `sm:`+ — desktop
+  untouched. Used `max-sm:` (Tailwind 3.4+) rather than a mobile-first-then-`sm:override`
+  approach after reasoning through a real risk: two `data-[state=...]` slide-animation utilities
+  targeting the same CSS custom property at the same specificity would have raced depending on
+  Tailwind's internal stylesheet-layer ordering, not source order in the class string. Also
+  added a built-in `max-h`/`overflow-y-auto` safety net at every breakpoint (not just mobile).
+- **Real bug fixed as a side effect of that safety net**: `ProductsServicesSettings.jsx`'s
+  product/service dialog had no `max-h`/`overflow-y-auto` override of its own — a tall version
+  of that form could previously render taller than the viewport with no way to scroll down to
+  its own Save/Cancel buttons. No call-site change needed; the primitive fix covers it.
+- `AlertDialog` (confirmations — delete client/machine/service/job-card-line etc.): deliberately
+  kept as a centered card, not converted to a sheet — always short, 1-2 buttons, and the spec's
+  own wording treats sheet-conversion as "where appropriate" for these, not mandatory. Still
+  improved: small edge margin on phone widths (was flush to the screen edges), consistently
+  rounded at every size (was desktop-only rounding, a real small inconsistency), and the same
+  overflow safety net.
+- `PhotoLightbox.jsx` (the in-app full-screen photo viewer, added 2026-08-18): explicitly opted
+  back out of the new bottom-sheet default via its own `max-sm:` overrides — a full-screen photo
+  viewer should fill the screen, not become a partial-height rounded sheet.
+- **Confirmed no drawers/side-panels exist to convert** (spec section 13): grepped the whole
+  `src/` tree for `Sheet`/`Drawer` primitive usage — only Phase 1's own `MobileBottomNav` and an
+  unrelated, unused shadcn `sidebar.jsx` file use `Sheet`; the app's detail views (`ClientDetail`/
+  `MachineDetail`/`JobCardDetail`) are full pages, not slide-over panels, so there was nothing
+  here to do.
+
+**Verified**: `npm run lint`/`typecheck` clean, `npm test` 76/76, `npm run build` clean (fresh
+`dist/` artifacts). Not live-clicked. One real, disclosed gap: `StickyNotes.jsx`'s "Add note"
+dialog has an internal `ClientPicker` list with its own scroll region nested inside the dialog's
+new outer scroll region — reasoned through as fine (independent scroll containers, same pattern
+used elsewhere already) but not specifically device-tested for a nested-scroll conflict.
+
+## 2026-08-19 (same day, earlier) — Pushed + deployed live (Phases 1-2 of mobile-first UI/UX pass, plus prior unpushed sessions)
 
 User: "deploy this so long then continue with phase 3." Pushed `origin/main` (`9269eb4..de68f25`,
 6 commits — Phases 1-2 plus the 2026-08-18 Service Records/Next-Service-Due work that had been

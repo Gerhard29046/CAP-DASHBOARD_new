@@ -1,7 +1,19 @@
 # Project State
-_Last verified: 2026-08-19 (latest) — Mobile-first UI/UX transformation kicked off (web only,
-presentation layer only, no routes/business-logic/Supabase changes). **Phase 1 (mobile
-navigation) and Phase 2 (forms) done and verified.** Phase 1: fixed bottom nav
+_Last verified: 2026-08-19 (latest) — Mobile-first UI/UX transformation Phase 3 (modals) done and
+verified: `Dialog` now renders as a bottom sheet on phone widths (bottom-anchored, rounded top,
+safe-area-aware, built-in overflow safety net), unchanged centered card at `sm:`+/desktop.
+Fixed a real side-effect bug (`ProductsServicesSettings.jsx`'s dialog had no `max-h`/scroll of
+its own — could render off-screen). `AlertDialog`/`PhotoLightbox.jsx` deliberately kept/opted
+out of the sheet treatment (short confirmations; full-screen photo viewer), each for a reasoned,
+disclosed reason. Committed `bace0dc`. `npm run lint`/`typecheck` clean, `npm test` 76/76,
+`npm run build` clean. **Not yet pushed/deployed this pass** (Phases 1-2 were; Phase 3 is local-
+only as of this entry, pending the next explicit deploy instruction). Phases 1-2 recap below,
+unchanged from before, both already live in production.
+
+---
+
+_Last verified before that: 2026-08-19 (same day, earlier) — Mobile-first UI/UX transformation
+Phases 1-2 done, pushed, and deployed live. Phase 1: fixed bottom nav
 (`MobileBottomNav.jsx`, Dashboard/Clients/Jobs/Book In + a "More" bottom sheet for everything
 else + Account/Logout) replaces the old hamburger drawer; safe-area support (`viewport-fit=
 cover`, `env(safe-area-inset-*)`) added; mobile header simplified. Committed `7794d9d`. Phase 2:
