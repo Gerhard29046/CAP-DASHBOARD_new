@@ -1,6 +1,44 @@
 # Session Log
 
-## 2026-08-19 (latest) — Mobile-first UI/UX transformation Phase 4 (tables/lists) done
+## 2026-08-19 (latest) — Pushed/deployed Phases 3-4 live, then Detail pages phase done
+
+**Objective**: user asked to push+deploy the previous session's unpushed Phases 3-4, then
+continue the mobile-first UI/UX transformation with the next phase.
+
+**Push/deploy**: `origin/main` updated `1227051..3d49de9` (Phases 3-4). Full verification first
+(lint/typecheck/test 76/76/build all clean). `wrangler deploy` hit the previously-documented
+transient stale-asset flap again (edge kept serving an older `index.html`/bundle hash,
+`CF-Cache-Status: HIT` despite `Cache-Control: no-cache` on the request) — a second
+`wrangler deploy` (no new assets to upload, just a fresh version/routing activation) cleared it.
+Live-verified: HTTP 200, live JS bundle byte-identical (`cmp`) to local `dist/`. Final live
+version `ef0e2d15-9e8c-46ee-9381-f97a873e0e61`.
+
+**Detail pages phase** (`db46d7c`, next NOT STARTED item per `ROADMAP.md`'s process order):
+audited `ClientDetail.jsx`/`MachineDetail.jsx`/`JobCardDetail.jsx` (Service Records has no
+dedicated detail page). All three already reflow well from the 2026-08-13 redesign — found and
+fixed 5 real, narrow bugs, each confirmed via grep to be an isolated occurrence, not systemic:
+- `MachineDetail.jsx`: per-service-record Edit/Delete icon buttons hardcoded `h-8 w-8`, which
+  (via tailwind-merge) overrode Phase 2's 44px mobile touch-target Button default at every
+  breakpoint, not just desktop as presumably intended.
+- `JobCardDetail.jsx`: per-line-item Edit/Delete were raw `<button className="...p-1">`, not the
+  `Button` primitive at all (~24px hit area) — applied the existing `.tap-target` CSS helper.
+- `JobCardDetail.jsx`: header action row (Back/Print/Delete/Edit) was a bare `flex
+  items-center justify-between` with no wrap/stack fallback, unlike every other page's
+  `PageHeader` (`flex-col sm:flex-row`) — real overflow risk with 3 buttons + back link at
+  320-375px. Fixed to stack/wrap.
+- `JobCardDetail.jsx`: status quick-select chips were `py-1.5` (~28px) — bumped to `py-2.5`
+  mobile / `md:py-1.5` desktop.
+- `ClientDetail.jsx` + `StickyNotes.jsx` (same root-cause bug, found while auditing
+  `ClientDetail`'s Team Notes delete button, fixed alongside as the identical class of bug, not
+  new scope): delete-note buttons used `opacity-0 group-hover:opacity-100` — **completely
+  unreachable on touch devices** (no hover state exists). Now always visible below `md:`,
+  hover-reveal kept only at `md:`+ desktop, plus `.tap-target`.
+
+**Verified**: `npm run lint`/`typecheck` clean, `npm test` 76/76 (unchanged — pure UI), `npm run
+build` clean. Not live-clicked. **Committed locally only (`db46d7c`) — not yet
+pushed/deployed.**
+
+## 2026-08-19 — Mobile-first UI/UX transformation Phase 4 (tables/lists) done
 
 **Objective**: continue directly from Phase 3 (user: "continue with phase 4"). Audited every
 page using the shared `Table` component or a raw `<table>` before changing anything.
