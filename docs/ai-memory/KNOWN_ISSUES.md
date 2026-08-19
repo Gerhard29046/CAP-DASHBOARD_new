@@ -1,6 +1,20 @@
 # Known Issues
 
-## OPEN (2026-08-18, latest) — Migration 0031 (Next Service Due auto-populate) prepared but NOT applied
+## RESOLVED (2026-08-19) — Migration 0031 (Next Service Due auto-populate) confirmed APPLIED and working live
+
+Corrects the entry below, which was stale and got relayed as current status without
+re-checking first — the user had already applied it via the SQL Editor; Queen Bee should have
+verified before saying otherwise.
+
+**Live-verified, not just assumed**: new `supabase/scripts/qa-check-0031-applied.mjs` inserted
+one real throwaway `service_records` row (`service_date: 2026-08-19`, `next_service_due: null`)
+against a real existing machine, and confirmed the trigger populated `next_service_due` to
+exactly `2027-08-19` (+1 year) — then deleted the row and independently re-confirmed it's gone.
+The DB-level trigger genuinely works in production for both clients (web and Android, since
+both write `service_records` through the same Postgres table/RLS).
+
+**Original entry, preserved for history — status was correct at the time it was written, just
+not re-checked before being repeated later:**
 
 `supabase/migrations/0031_service_records_default_next_service_due.sql` adds a DB trigger so a
 logged service's `next_service_due` defaults to one year later when left blank (drives Dashboard's
