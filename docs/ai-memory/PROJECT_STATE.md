@@ -1,5 +1,47 @@
 # Project State
-_Last verified: 2026-08-19 (latest, now pushed + deployed live). Commits `f84e322`/`9665845`
+_Last verified: 2026-08-19 (latest — real regression, user-reported, fixed, pushed + deployed
+live). User reported: "this page and might be any page cant scroll" on
+`/service-records?id=...` (and, unprompted, Clients) — a real regression introduced by this
+session's earlier dialog scroll-lock fix.
+
+**Root cause**: the scroll-lock hook lived inside `DialogContent`, keyed to ITS OWN mount/
+unmount. `DialogContent` mounts as a plain React component the instant it appears in a
+PARENT's JSX (e.g. `<Dialog open={Boolean(url)}><DialogContent>`), regardless of `open` —
+only Radix's internal Presence decides whether to actually render/portal it. `ServiceRecords.
+jsx` always renders `PhotoLightbox` (which always renders `<Dialog><DialogContent>`), and
+`Clients.jsx` always renders its filter sheet's `<Dialog><DialogContent>` — both pages locked
+`document.body` in place on first render and never unlocked, since `DialogContent` never
+actually unmounts on either page. Confirmed live before the fix: `body` had `position: fixed`
+stuck with **zero dialogs actually open**.
+
+**Fix**: moved the lock into a thin wrapper around `DialogPrimitive.Root` (`frontend/src/
+components/ui/dialog.jsx`) that drives it directly off the real `open` prop every call site
+already passes — locks only while actually open, reliably unlocks the instant `open` goes
+false, independent of `DialogContent`'s own mount lifecycle. Also fixed a false-positive in
+the existing filter-sheet scroll-preservation Playwright test (scrolling 400px pushed the
+non-sticky Filters button off-screen, so Playwright's own actionability auto-scroll — same as
+a real user would have to do — reset the page before the click landed, making the old
+assertion compare 0 to 0 and pass vacuously); reduced to a scroll amount that keeps the
+trigger visible, plus a real "did this actually scroll" precondition check. New **permanent
+regression test** in `mobile-ux.spec.js`: loads every page known to always-render a Dialog
+(plus controls that don't) and asserts `body` is never left scroll-locked with no dialog open.
+
+**Verified**: `npm run lint`/`typecheck` clean, `npm test` 76/76, `npm run build` clean,
+**16/16 Playwright checks pass** across 4 mobile device profiles AND a separate 1440×900
+desktop-viewport check (matching the user's explicit "fix both desktop and mobile" ask).
+Live-reverified against production on the user's exact reported URL after deploy (both iPhone
+12 and Pixel 5 emulation): `body` style clean, `scrollTo(200)` genuinely lands at 200.
+
+**Pushed and deployed live**: commit `54556e3` pushed to `origin/main` (`518a0af..54556e3`).
+Hit the same transient stale-asset flap documented repeatedly before — resolved with the
+established re-deploy + poll technique, 10 consecutive `Cache-Control: no-cache` requests
+agreed, byte-identical to local `dist/`, zero "firebase" strings. Final live version
+`50de990f-ef97-40d7-a121-1a79c791849f`. Two throwaway QA accounts used across this fix, both
+deleted and confirmed gone.
+
+---
+
+_Last verified before that: 2026-08-19 (pushed + deployed live). Commits `f84e322`/`9665845`
 pushed to `origin/main` (`7883863..9665845`). `wrangler whoami` reconfirmed the correct account
 first. `wrangler deploy` succeeded with no stale-asset flap this time — 8 consecutive
 `Cache-Control: no-cache` requests agreed immediately. **Verified live, byte-identical**
