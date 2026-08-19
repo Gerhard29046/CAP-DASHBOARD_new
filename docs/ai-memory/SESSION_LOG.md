@@ -1,6 +1,33 @@
 # Session Log
 
-## 2026-08-19 (latest) — Pushed/deployed Phases 3-4 live, then Detail pages phase done
+## 2026-08-19 (latest, later) — Dashboard/Clients mobile UX fix, user-reported, pushed+deployed
+
+**Objective**: user reported they weren't happy with the mobile UI/UX on Dashboard and asked
+for the Clients page to be redesigned to "feel more mobile," then asked to deploy and push.
+
+**Changes** (Queen Bee directly — `frontend/` React work has no dedicated worker bee):
+- `Dashboard.jsx`: stat cards become a horizontally-scrollable snap strip on phones instead of a
+  cramped `grid-cols-2`; header CTA full-width on mobile.
+- `Clients.jsx`: 5 always-stacked per-field filter inputs moved behind a "Filters" bottom sheet
+  (reusing the existing `Dialog` primitive, already a bottom sheet below `sm:`) on phones;
+  desktop/tablet inline filter bar unchanged.
+- `index.css`: new `.no-scrollbar` utility.
+
+**Verification**: `npm run lint`/`typecheck` clean, `npm test` 76/76, `npm run build` clean.
+
+**Push/deploy**: committed `a94223f`, pushed `6fce836..a94223f` to `origin/main`. `wrangler
+whoami` reconfirmed correct account first. Deploy hit the transient stale-asset flap a third
+time (a never-locally-built third asset-hash combination served briefly, confirmed via
+byte-level diff, not just hash mismatch) — resolved with the established re-deploy + poll
+technique, 10 consecutive `Cache-Control: no-cache` requests agreeing, byte-identical to local
+`dist/`. Final live version `1712424c-46ab-4ed4-affd-c24ce017c83d`.
+
+**Not done**: no browser tool this session — new interactions not physically clicked through,
+live or locally. Full detail: `PROJECT_STATE.md`'s matching entry.
+
+---
+
+## 2026-08-19 (earlier) — Pushed/deployed Phases 3-4 live, then Detail pages phase done
 
 **Objective**: user asked to push+deploy the previous session's unpushed Phases 3-4, then
 continue the mobile-first UI/UX transformation with the next phase.

@@ -1,5 +1,50 @@
 # Project State
-_Last verified: 2026-08-19 (latest) — Mobile-first UI/UX transformation Phase 4 (tables/lists)
+_Last verified: 2026-08-19 (latest, later — user-reported Dashboard/Clients mobile UX fix,
+pushed + deployed live). User explicit feedback: "not happy with the mobile ui ux design on
+the dashboard, clients page needs to be redesigned... make it feel more mobile." Real, targeted
+changes (Queen Bee directly — no frontend worker bee exists in this repo):
+
+- `Dashboard.jsx`: the 4 stat cards (Clients/Machines/Services/Active jobs) were a cramped
+  static `grid-cols-2` on phones; now a horizontally-scrollable, snap-aligned strip (each card
+  ~38% width so the next one visibly peeks) below `sm:`, reverting to the original 4-up grid at
+  `sm:`+ unchanged. Header CTA ("Log New Service") now full-width on mobile instead of a small
+  self-aligned button.
+- `Clients.jsx`: the real complaint candidate — 5 full-width per-field filter inputs were
+  *always* stacked on screen on every viewport, pushing the actual client list below the fold on
+  phones. Moved behind a "Filters" icon button (active-count badge) that opens a bottom sheet,
+  reusing the existing `Dialog` primitive (already renders as a bottom sheet below `sm:` from an
+  earlier mobile-first phase — not a new UI pattern). Desktop/tablet (`md:`+) keeps the original
+  always-visible inline filter bar, byte-for-byte unchanged behavior.
+- `index.css`: added `.no-scrollbar` utility for the new stat-card strip.
+
+**Verified**: `npm run lint`/`typecheck` clean, `npm test` 76/76 (unchanged — no UI/component
+test layer exists yet, so the new interactions themselves are not test-covered, only the
+existing pure-logic suite), `npm run build` clean (fresh `dist/` timestamps confirmed).
+
+**Pushed and deployed live, explicit user instruction ("deploy and push")**. Commit `a94223f`
+pushed to `origin/main` (`6fce836..a94223f`). `wrangler whoami` reconfirmed the correct account
+before deploying (`gerhardvanwijk@gmail.com` / `3f30316d2958f170287083b0b7d680b5`, matches
+`wrangler.jsonc`). **Hit the same transient stale-asset flap documented 2026-08-16/17 a third
+time** — first deploy's asset upload succeeded, but the live site briefly served a *third*,
+never-locally-built asset-hash combination (`index-CF1_n8ud.js`, differing from the local build
+by exactly one embedded reference — the `optimaoutline` SVG's content hash — confirmed via a
+byte-level `cmp` + manual diff around the differing offset, not just a hash-string mismatch).
+Resolved with the established technique: re-ran `wrangler deploy` (reported "No updated asset
+files to upload," confirming the correct build was already the registered asset set), then
+polled with `Cache-Control: no-cache` — **10 consecutive requests** agreed on
+`assets/index-DJ8nWPKE.js`/`index-_qm-vGVW.css`, byte-identical (`cmp`, zero diff) to the local
+`dist/` build, `HTTP 200`, zero "firebase" occurrences. Final live version
+`1712424c-46ab-4ed4-affd-c24ce017c83d`, 100% traffic.
+
+**Not done**: no browser tool available this session, so the new bottom-sheet filter/scroll-strip
+interactions were never physically clicked through, live or locally — verification is
+build/lint/test/byte-level-deploy only, consistent with this project's established pattern for
+UI-only changes. If the redesign doesn't match what the user pictured, expect a follow-up
+iteration.
+
+---
+
+_Last verified before that: 2026-08-19 (earlier) — Mobile-first UI/UX transformation Phase 4 (tables/lists)
 done and verified. Audit found the app's main tables (`Clients.jsx`/`Jobs.jsx`/
 `ServiceRecords.jsx`) already dual-render desktop table + mobile card list from the 2026-08-13
 redesign — nothing to change. `InvoiceQueue.jsx`/`ImportCustomers.jsx`'s remaining raw tables
