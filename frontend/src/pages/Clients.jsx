@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Plus, Search, Users, ChevronRight, ChevronUp, ChevronDown, Phone, Mail, Building2, X, Copy, ArrowLeft } from "lucide-react";
+import { Plus, Search, Users, ChevronRight, ChevronUp, ChevronDown, Phone, Mail, Building2, X, Copy, ArrowLeft, SlidersHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import PageHeader from "@/components/PageHeader";
 import EmptyState from "@/components/EmptyState";
 import { apiClient } from "@/api/apiClient";
@@ -30,6 +31,12 @@ export default function Clients() {
   const [fieldFilters, setFieldFilters] = useState(emptyFilters);
   const [sort, setSort] = useState({ key: "company_name", dir: "asc" });
   const [showDuplicates, setShowDuplicates] = useState(false);
+  // Per-field filters live inline on desktop (unchanged) but move behind a "Filters" sheet on
+  // phones -- 5 stacked full-width inputs permanently on screen was the biggest "doesn't feel
+  // mobile" complaint on this page (explicit user feedback, 2026-08-19). Reuses the existing
+  // Dialog primitive, which already renders as a bottom sheet below `sm:` (Phase 3 of the
+  // mobile-first pass), so this is one new piece of state, not a new UI pattern.
+  const [showFilterSheet, setShowFilterSheet] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -122,20 +129,39 @@ export default function Clients() {
         }
       />
 
-      <div className="relative mb-3 max-w-sm">
-        <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
-        <Input
-          placeholder="Search all fields…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="pl-10 h-10"
-        />
+      <div className="flex items-center gap-2 mb-3">
+        <div className="relative flex-1 max-w-sm">
+          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+          <Input
+            placeholder="Search all fields…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-10 h-10"
+          />
+        </div>
+        {/* Phones/tablets: filters live behind a sheet, not permanently stacked on screen. */}
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          onClick={() => setShowFilterSheet(true)}
+          className="relative shrink-0 md:hidden"
+          aria-label={`Filters${activeFieldFilters.length ? ` (${activeFieldFilters.length} active)` : ""}`}
+        >
+          <SlidersHorizontal className="w-4 h-4" />
+          {activeFieldFilters.length > 0 && (
+            <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-primary text-primary-foreground text-[10px] font-semibold flex items-center justify-center">
+              {activeFieldFilters.length}
+            </span>
+          )}
+        </Button>
       </div>
 
-      {/* Per-field filter bar -- combinable, matches the header columns exactly. */}
-      <div className="flex flex-wrap gap-2 mb-3">
+      {/* Desktop/tablet: per-field filter bar stays inline and always visible (unchanged
+          behavior, plenty of horizontal room). */}
+      <div className="hidden md:flex flex-wrap gap-2 mb-3">
         {FIELD_META.map((f) => (
-          <div key={f.key} className="relative w-full sm:w-44">
+          <div key={f.key} className="relative w-44">
             <Input
               placeholder={f.placeholder}
               value={fieldFilters[f.key]}
@@ -155,6 +181,51 @@ export default function Clients() {
           </div>
         ))}
       </div>
+
+      {/* Phones/tablets: same per-field filters, presented as a bottom sheet opened via the
+          Filters button above. */}
+      <Dialog open={showFilterSheet} onOpenChange={setShowFilterSheet}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Filter clients</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            {FIELD_META.map((f) => (
+              <div key={f.key}>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">{f.label}</label>
+                <div className="relative">
+                  <Input
+                    placeholder={f.placeholder}
+                    value={fieldFilters[f.key]}
+                    onChange={(e) => setFieldFilters((prev) => ({ ...prev, [f.key]: e.target.value }))}
+                    className="pr-8"
+                  />
+                  {fieldFilters[f.key] && (
+                    <button
+                      type="button"
+                      onClick={() => clearFieldFilter(f.key)}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      aria-label={`Clear ${f.label} filter`}
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+          <DialogFooter className="gap-2">
+            {activeFieldFilters.length > 0 && (
+              <Button type="button" variant="outline" onClick={() => setFieldFilters(emptyFilters)}>
+                Clear filters
+              </Button>
+            )}
+            <Button type="button" onClick={() => setShowFilterSheet(false)}>
+              Show {sorted.length} result{sorted.length !== 1 ? "s" : ""}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Active-filter summary + clear-all -- "make it obvious which filters are currently
           active" / "provide a simple way to clear filters" (explicit spec). */}

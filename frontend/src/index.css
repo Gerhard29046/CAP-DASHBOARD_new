@@ -264,3 +264,15 @@
     padding-bottom: 2rem;
   }
 }
+
+/* Hides the scrollbar on horizontally-scrollable "native app" strips (Dashboard's stat-card
+   row, filter chip rows) while keeping the element genuinely scrollable -- the scroll-snap
+   affordance itself (partial next card visible) is the discoverability cue, not a visible
+   scrollbar, matching how these patterns look in real mobile apps. */
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}

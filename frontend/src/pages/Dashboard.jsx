@@ -148,31 +148,47 @@ export default function Dashboard() {
         />
       )}
 
-      {/* Welcome / context header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8 animate-fade-in">
-        <div>
-          <h1 className="text-2xl md:text-3xl font-heading font-bold text-foreground">
-            {greetingWord}{firstName ? `, ${firstName}` : ""}
-          </h1>
-          <p className="text-xs text-muted-foreground mt-1">{formattedDateTime}</p>
-          <p className="text-sm text-muted-foreground mt-1">
-            {weekServices.length > 0
-              ? `${weekServices.length} service${weekServices.length === 1 ? "" : "s"} due this week.`
-              : "Here's what needs attention today."}
-          </p>
+      {/* Welcome / context header -- compact single-column stack on phones (title, meta line,
+          then a full-width primary action) rather than a shrunken desktop header; mirrors the
+          "greeting card" pattern common to native mobile dashboards. */}
+      <div className="mb-6 sm:mb-8 animate-fade-in">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div className="min-w-0">
+            <h1 className="text-xl sm:text-2xl md:text-3xl font-heading font-bold text-foreground truncate">
+              {greetingWord}{firstName ? `, ${firstName}` : ""}
+            </h1>
+            <p className="text-xs text-muted-foreground mt-1">{formattedDateTime}</p>
+            <p className="text-sm text-muted-foreground mt-1">
+              {weekServices.length > 0
+                ? `${weekServices.length} service${weekServices.length === 1 ? "" : "s"} due this week.`
+                : "Here's what needs attention today."}
+            </p>
+          </div>
+          <Button onClick={() => setShowLogService(true)} className="gap-2 shrink-0 w-full sm:w-auto">
+            <Plus className="w-4 h-4" />
+            Log New Service
+          </Button>
         </div>
-        <Button onClick={() => setShowLogService(true)} className="gap-2 shrink-0 self-start sm:self-auto">
-          <Plus className="w-4 h-4" />
-          Log New Service
-        </Button>
       </div>
 
-      {/* Key operational stats -- each links into the relevant list page */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-8 stagger-in">
-        <Link to={STAT_LINKS.clients} className="block"><StatCard icon={Users} label="Clients" value={stats.clients} accent="primary" /></Link>
-        <Link to={STAT_LINKS.machines} className="block"><StatCard icon={Cpu} label="Machines" value={stats.machines} accent="warning" /></Link>
-        <Link to={STAT_LINKS.services} className="block"><StatCard icon={Wrench} label="Services logged" value={stats.services} accent="info" /></Link>
-        <Link to={STAT_LINKS.activeJobs} className="block"><StatCard icon={ClipboardList} label="Active jobs" value={stats.activeJobs} accent="success" /></Link>
+      {/* Key operational stats -- each links into the relevant list page. On phones this is a
+          horizontally-scrollable, snap-aligned strip (each tile a fixed peekable width, so the
+          user can see the next card is there) instead of a cramped static 2-column grid -- a
+          deliberately "native app" pattern rather than a shrunken desktop layout. Reverts to the
+          original static grid at sm:+ where there's room for all 4 without scrolling. */}
+      <div className="flex overflow-x-auto snap-x snap-mandatory gap-3 -mx-4 px-4 pb-1 mb-8 stagger-in sm:grid sm:grid-cols-4 sm:gap-4 sm:overflow-visible sm:mx-0 sm:px-0 sm:pb-0 no-scrollbar">
+        <Link to={STAT_LINKS.clients} className="block shrink-0 w-[38%] snap-start sm:w-auto">
+          <StatCard icon={Users} label="Clients" value={stats.clients} accent="primary" />
+        </Link>
+        <Link to={STAT_LINKS.machines} className="block shrink-0 w-[38%] snap-start sm:w-auto">
+          <StatCard icon={Cpu} label="Machines" value={stats.machines} accent="warning" />
+        </Link>
+        <Link to={STAT_LINKS.services} className="block shrink-0 w-[38%] snap-start sm:w-auto">
+          <StatCard icon={Wrench} label="Services logged" value={stats.services} accent="info" />
+        </Link>
+        <Link to={STAT_LINKS.activeJobs} className="block shrink-0 w-[38%] snap-start sm:w-auto">
+          <StatCard icon={ClipboardList} label="Active jobs" value={stats.activeJobs} accent="success" />
+        </Link>
       </div>
 
       {/* Primary + secondary panels */}
