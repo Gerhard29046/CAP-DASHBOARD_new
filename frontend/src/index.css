@@ -234,6 +234,18 @@
   padding-bottom: var(--safe-bottom);
 }
 
+/* WARNING, learned the hard way (2026-08-19, found via automated Playwright viewport testing):
+   this rule is a plain, non-@layer CSS class, so it compiles AFTER every Tailwind utility
+   (including `px-*`/`md:px-*`) in the final stylesheet. At identical specificity, later wins --
+   combining `safe-area-x` with any `px-*`/`pl-*`/`pr-*` utility on the SAME element silently
+   overrides that utility's padding down to whatever `--safe-left`/`--safe-right` currently are
+   (0px on virtually every device without a real notch), not the sum of the two. That's exactly
+   what happened to AppLayout.jsx's mobile header and main content wrapper -- both had their
+   real 16px/32px horizontal padding collapsed to 0 sitewide, undetected until a real browser
+   ran against it. Only combine `safe-area-x` with an element that has NO other horizontal
+   padding of its own (see MobileBottomNav.jsx, correct as-is). Anywhere you need BOTH a base
+   padding AND the safe-area inset, use `pl-[max(<base>,var(--safe-left))]
+   pr-[max(<base>,var(--safe-right))]` directly instead of this class -- see AppLayout.jsx. */
 .safe-area-x {
   padding-left: var(--safe-left);
   padding-right: var(--safe-right);

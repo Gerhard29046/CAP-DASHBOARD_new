@@ -36,7 +36,40 @@ DialogOverlay.displayName = DialogPrimitive.Overlay.displayName
 // buttons (spec section 30); call sites that already set their own max-h/overflow (e.g.
 // `max-h-[90vh] overflow-y-auto` on the edit-client/edit-machine dialogs) simply override this
 // default via `cn()`, so nothing double-applies.
-const DialogContent = React.forwardRef(({ className, children, ...props }, ref) => (
+// REAL BUG FIX (found via automated Playwright testing, 2026-08-19): with every Dialog now
+// capable of being a `position: fixed` bottom sheet on phones, opening ANY dialog in the app
+// (not just the new Clients filter sheet) silently reset `window.scrollY` to 0 -- confirmed via
+// instrumented tracing to come from Radix's internal focus-guard bootstrapping, which happens
+// before Radix's own public `onOpenAutoFocus` callback even fires, so intercepting/preventing
+// that specific event is structurally too late to matter. The robust fix doesn't chase Radix's
+// internal timing at all: freeze `body` in place (`position: fixed`, offset by the current
+// scroll) for as long as the dialog is mounted, so nothing CAN scroll the real document while
+// it's open, then restore the exact original scroll position the instant it unmounts. This is
+// the same technique most production apps use for modal scroll-locking.
+function useDialogScrollLock() {
+  React.useEffect(() => {
+    const scrollY = window.scrollY;
+    const body = document.body;
+    const prev = { position: body.style.position, top: body.style.top, left: body.style.left, right: body.style.right, width: body.style.width };
+    body.style.position = "fixed";
+    body.style.top = `-${scrollY}px`;
+    body.style.left = "0";
+    body.style.right = "0";
+    body.style.width = "100%";
+    return () => {
+      body.style.position = prev.position;
+      body.style.top = prev.top;
+      body.style.left = prev.left;
+      body.style.right = prev.right;
+      body.style.width = prev.width;
+      window.scrollTo(0, scrollY);
+    };
+  }, []);
+}
+
+const DialogContent = React.forwardRef(({ className, children, ...props }, ref) => {
+  useDialogScrollLock();
+  return (
   <DialogPortal>
     <DialogOverlay />
     <DialogPrimitive.Content
@@ -62,7 +95,8 @@ const DialogContent = React.forwardRef(({ className, children, ...props }, ref) 
       </DialogPrimitive.Close>
     </DialogPrimitive.Content>
   </DialogPortal>
-))
+  );
+})
 DialogContent.displayName = DialogPrimitive.Content.displayName
 
 const DialogHeader = ({

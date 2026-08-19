@@ -336,7 +336,7 @@ export default function Clients() {
               <Link
                 key={c.id}
                 to={`/clients/${c.id}`}
-                className="block bg-card border border-border rounded-xl p-4 active:scale-[0.99] transition-transform duration-150"
+                className="block bg-card border border-border rounded-2xl p-4 shadow-sm active:scale-[0.98] transition-transform duration-150"
               >
                 <div className="flex items-start gap-3">
                   <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">

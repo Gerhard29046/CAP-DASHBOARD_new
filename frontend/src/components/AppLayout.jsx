@@ -77,7 +77,16 @@ export default function AppLayout() {
           redundant clutter (spec section 6: "avoid putting five or six
           controls into one row"). Keeps just brand identity + a one-tap
           link to the signed-in user's own account. */}
-      <header className="sticky top-0 z-30 flex items-center justify-between px-4 bg-card/80 backdrop-blur-xl border-b border-border md:hidden safe-area-top safe-area-x" style={{ height: "var(--mobile-header-height)" }}>
+      {/* REAL BUG FIX (found via automated Playwright viewport testing, 2026-08-19): `px-4` and
+          `safe-area-x` (a plain, non-@layer CSS rule -- see index.css) have identical
+          specificity, and `.safe-area-x` compiles later in the stylesheet, so it was silently
+          winning the cascade and collapsing this header's horizontal padding to 0 on every
+          device without a real notch (i.e. almost every phone) -- not a cosmetic issue, a
+          genuine sitewide layout bug that predates today's session. `pl-/pr-[max(...)]` fixes
+          it at the source: the effective padding is always whichever is larger, the intended
+          base spacing or the real safe-area inset, so it's correct on both notched and
+          non-notched devices without depending on cascade order. */}
+      <header className="sticky top-0 z-30 flex items-center justify-between pl-[max(1rem,var(--safe-left))] pr-[max(1rem,var(--safe-right))] bg-card/80 backdrop-blur-xl border-b border-border md:hidden safe-area-top" style={{ height: "var(--mobile-header-height)" }}>
         <div className="flex items-center gap-2 min-w-0">
           <img src={capLogo} alt="" className="w-7 h-7 rounded-md object-cover shrink-0" />
           <span className="font-heading font-bold text-lg text-foreground truncate">
@@ -144,8 +153,20 @@ export default function AppLayout() {
           </div>
         </aside>
 
-        <main className="flex-1 min-h-screen">
-          <div className="w-full px-4 py-6 md:px-8 md:py-8 safe-area-x mobile-content-bottom-padding">
+        {/* min-w-0 is load-bearing, not decorative: `main` is a flex item of the row above.
+            Flex items default to `min-width: auto` (their unconstrained content's min-content
+            width), so any unbreakable string anywhere on any page (a long name/email with no
+            spaces, e.g.) could silently force this entire row -- and therefore the whole
+            document -- wider than the viewport, producing real horizontal overflow on phones.
+            Found via automated Playwright viewport testing (2026-08-19), not visually --
+            `Dashboard.jsx`'s new `truncate` on the greeting couldn't actually clip anything
+            without this fix, no matter how correct that class looked in isolation. */}
+        <main className="flex-1 min-h-screen min-w-0">
+          {/* Same `.safe-area-x`-vs-`px-*` cascade bug as the header above -- this was the
+              actual root cause of every page's content sitting flush against the phone's
+              screen edges (0 horizontal padding, not the intended 16px/32px), found via
+              automated Playwright viewport testing. `max()` fix, same reasoning. */}
+          <div className="w-full pl-[max(1rem,var(--safe-left))] pr-[max(1rem,var(--safe-right))] py-6 md:pl-[max(2rem,var(--safe-left))] md:pr-[max(2rem,var(--safe-right))] md:py-8 mobile-content-bottom-padding">
             <Outlet />
           </div>
         </main>

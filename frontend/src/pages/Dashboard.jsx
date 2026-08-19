@@ -192,8 +192,14 @@ export default function Dashboard() {
       </div>
 
       {/* Primary + secondary panels */}
+      {/* min-w-0 on both grid children below is load-bearing, not decorative: grid items
+          default to `min-width: auto` (their content's min-content size), same as flex items.
+          A long, unbreakable (`truncate` forces `white-space: nowrap`) service description
+          could silently force its whole grid track -- and the document -- wider than the
+          viewport on phones. Real bug, found via automated Playwright viewport testing
+          (2026-08-19) with real service-record data, not a hypothetical. */}
       <div className="grid lg:grid-cols-2 gap-4 lg:gap-6">
-        <section className="bg-card rounded-xl border border-border animate-slide-up" style={{ animationDelay: "80ms" }}>
+        <section className="min-w-0 bg-card rounded-2xl sm:rounded-xl border border-border animate-slide-up" style={{ animationDelay: "80ms" }}>
           <div className="flex items-center justify-between px-5 py-4 border-b border-border">
             <h2 className="font-heading font-semibold text-foreground flex items-center gap-2">
               <Wrench className="w-4.5 h-4.5 text-primary" />
@@ -234,7 +240,7 @@ export default function Dashboard() {
 
         {/* Mini week calendar (replaces "Recent clients") -- same card footprint, whole card
             links to the full /calendar page. */}
-        <section className="bg-card rounded-xl border border-border animate-slide-up flex flex-col" style={{ animationDelay: "140ms" }}>
+        <section className="min-w-0 bg-card rounded-2xl sm:rounded-xl border border-border animate-slide-up flex flex-col" style={{ animationDelay: "140ms" }}>
           <div className="flex items-center justify-between px-5 py-4 border-b border-border">
             <h2 className="font-heading font-semibold text-foreground flex items-center gap-2">
               <CalendarDays className="w-4.5 h-4.5 text-primary" />
