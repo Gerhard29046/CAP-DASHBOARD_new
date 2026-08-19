@@ -176,9 +176,14 @@ today regardless, since it's plain client JS already deployed.
   `/forgot-password` page in the device browser. Android still has no deep-link/App-Link capability
   to receive a recovery email directly inside the app — unchanged, matches the originally-scoped
   interim, not a full native flow.
-- **Still genuinely open**: no real Service Certificate PDF has been visually inspected by a human
+- **RESOLVED 2026-08-19**: user confirmed the Service Certificate PDF is "working 100% fine."
+  Stated without scoping to one platform — treated as covering both web and Android since both
+  share the same generation logic (`serviceCertificatePdf.js` on web; the Android build described
+  above). This closes the "no real PDF has been visually inspected" gap for good; no longer an
+  open item. (Superseded text below, kept for history only.)
+- ~~Still genuinely open: no real Service Certificate PDF has been visually inspected by a human
   on EITHER platform (web or Android) — both are code/build-verified only. This is the single
-  most important remaining gap before telling real staff to rely on this feature.
+  most important remaining gap before telling real staff to rely on this feature.~~
 - `git status` shows all of this uncommitted as of this entry (6 modified + 4 new files in
   `mobile-android`/`supabase`) — no commit/push was requested this session.
 
@@ -207,8 +212,8 @@ today regardless, since it's plain client JS already deployed.
   Certificate Batch A) is now confirmed **applied** to production (new read-only
   `supabase/scripts/qa-check-0030-applied.mjs`) -- corrects the prior "NOT yet applied" status
   recorded elsewhere in this file/`PROJECT_STATE.md`. The certificate generate/preview/download
-  UI (`CertificateSection` in `ServiceRecords.jsx`, per service record's detail panel) should
-  now be fully live -- still no real PDF has been visually inspected by a human.
+  UI (`CertificateSection` in `ServiceRecords.jsx`, per service record's detail panel) is fully
+  live -- **RESOLVED 2026-08-19**: user confirmed the PDF itself is working 100% fine.
 - **Found mid-session, not caused by this work, reviewed and left as-is**: two commits
   (`72db6d4`, `bd1b103`) appeared directly on `main` from the user's own git identity while this
   session was in progress -- not made through this session's delegation. Reviewed in full before
@@ -216,16 +221,10 @@ today regardless, since it's plain client JS already deployed.
   `SupabaseAuth.kt` fix for corrupted `EncryptedSharedPreferences` recovery (sound, matches this
   project's "never log a token" rule), the already-reviewed Android More-screen rework getting
   swept into the same commit, and a new sequential Job Card numbering feature in `BookIn.jsx`
-  (JOB-0001, JOB-0002...). **The numbering feature has a real, disclosed, NOT-yet-fixed race
-  condition**: `job_cards.job_number` has no database-level unique constraint, so the new
-  client-side "list all job cards, find the max matching number, retry once if the insert errors
-  as a duplicate" logic can never actually detect or prevent a real collision -- a duplicate
-  `job_number` insert simply succeeds silently (no DB error to retry on). Two Book-Ins
-  overlapping in time could receive the same job number. Not fixed this session (out of the
-  scope the user asked for) -- flagged here for a future dedicated fix (a Postgres sequence or a
-  `SELECT ... FOR UPDATE`-guarded RPC would close this properly; the current client-side
-  read-then-write has an inherent TOCTOU gap no amount of retry logic on the client side alone
-  can close without a real database constraint).
+  (JOB-0001, JOB-0002...). `job_cards.job_number` has no database-level unique constraint, so the
+  client-side "list all job cards, find the max matching number, retry once" logic can't truly
+  detect/prevent a real collision -- **explicitly deprioritized by the user as a non-issue**
+  ("won't happen in the near future," reaffirmed 2026-08-19) -- not a bug to keep tracking here.
 - **Verification**: `npm run lint` / `typecheck` / `test` (58/58) / `build` all clean. Pushed
   (`36dcb71`) and deployed live via `wrangler deploy`. Hit a mild version of the known transient
   multi-deploy-race pattern (a second, independent deploy from the same account landed 55s after
@@ -363,9 +362,8 @@ cross-user signed URL) needs re-confirming.
    link on the Login screen opens the web `/forgot-password` page in the device browser (still no
    deep-link/App-Link to receive a recovery email natively in-app, unchanged/disclosed). See the
    dedicated 2026-08-18 RESOLVED entry near the top of this file.
-3. **Real email deliverability for registration/password-reset has never been tested with a
-   real inbox** — this blocks confidently telling real staff to self-register at `/register`
-   for their Android/web accounts. Needs the user to actually test one real address.
+3. **RESOLVED 2026-08-18, reaffirmed 2026-08-19** — real email deliverability for registration/
+   password-reset confirmed working by the user with a real inbox. No longer a gap.
 4. **RESOLVED 2026-08-17 (night)** — Deploy to Cloudflare: pushed to GitHub (`7ecb714..c8001e0`)
    and deployed live via `wrangler deploy`, independently byte-verified against the live site
    (see the dedicated RESOLVED entry above). Confirmed no CI/CD auto-deploys this repo (plain
