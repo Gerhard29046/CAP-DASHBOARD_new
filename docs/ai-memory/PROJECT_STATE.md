@@ -1,5 +1,20 @@
 # Project State
-_Last verified: 2026-08-18 (latest) — full site-wide sweep of every form/edit-save flow, real
+_Last verified: 2026-08-19 (latest) — Mobile-first UI/UX transformation kicked off (web only,
+presentation layer only, no routes/business-logic/Supabase changes). **Phase 1 (mobile
+navigation) done and verified**: fixed bottom nav (`MobileBottomNav.jsx`, Dashboard/Clients/
+Jobs/Book In + a "More" bottom sheet for everything else + Account/Logout) replaces the old
+hamburger drawer; safe-area support (`viewport-fit=cover`, `env(safe-area-inset-*)`) added;
+mobile header simplified. `npm run lint`/`typecheck` clean, `npm test` 76/76, `npm run build`
+clean. Committed `7794d9d`, not pushed/deployed (not requested). **This is a large, explicitly
+multi-phase initiative — only Phase 1 of ~8 is done.** Remaining: mobile-first form audit,
+modal/drawer→bottom-sheet conversion, table→card transformation, detail-page redesign,
+dashboard mobile pass, full per-page responsive sweep (320–1024px), desktop regression re-check
+after each phase. Full plan: `ROADMAP.md`'s new entry. Not live-clicked (no browser tool this
+session).
+
+---
+
+_Last verified before that: 2026-08-18 (latest) — full site-wide sweep of every form/edit-save flow, real
 bug found+fixed+live-verified: Edit Client (ClientDetail.jsx) was 400ing on every save.
 
 **User-reported**: "another issue updating a client record." Root cause: `apiClient.entities.

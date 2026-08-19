@@ -1,5 +1,27 @@
 # Roadmap
 
+## In progress — Mobile-first UI/UX transformation (web, started 2026-08-19)
+
+Explicit 46-section user objective: make `frontend/` feel like a native iOS/Android app on
+phone widths while leaving desktop, routes, business logic, and Supabase behavior untouched
+(UI/UX presentation layer only — see `DECISIONS.md`'s matching entry for the full brief
+summary). No dedicated frontend worker bee exists (only Android-scoped bees are defined under
+`.claude/agents/`), so this is Queen Bee's own direct implementation work, per this project's
+established pattern for prior UX redesign passes. Working through the spec's own process order
+(inspect → primitives → navigation → headers → forms → modals → tables → detail pages →
+dashboard → per-page sweep → desktop regression), one reviewable/verified commit per phase.
+
+| Phase | Item | Status |
+|---|---|---|
+| Nav | Fixed mobile bottom navigation (Home/Clients/Jobs/Book In + "More" bottom sheet for the rest + Account + Logout), safe-area support (`viewport-fit=cover`, `env(safe-area-inset-*)`), compact mobile header (hamburger/drawer removed as redundant) | **DONE** — `7794d9d`, `npm run lint`/`typecheck` clean, `npm test` 76/76, `npm run build` clean. Not live-clicked (no browser tool this session). |
+| Forms | Mobile-first audit of every form (one-column layout, labels, large touch targets, keyboard behavior) | NOT STARTED |
+| Modals/drawers | Convert appropriate desktop modals/drawers to bottom sheets / full-screen sheets on mobile | NOT STARTED |
+| Tables | Transform desktop tables into mobile card/list rows where appropriate | NOT STARTED |
+| Detail pages | Mobile-first redesign of client/machine/job-card/service-record detail screens | NOT STARTED |
+| Dashboard | Mobile presentation pass (existing functionality only) | NOT STARTED |
+| Per-page sweep | Every route audited at 320/375/390/430/768/1024px | NOT STARTED |
+| Desktop regression | Full desktop re-check after each phase | Done for Nav phase only so far |
+
 ## In progress — Service Certificate / branded PDF / client email workflow (started 2026-08-17)
 
 Explicit 22-phase user objective, separate from the cross-platform parity initiative below.

@@ -1,5 +1,44 @@
 # Session Log
 
+## 2026-08-19 (latest) — Mobile-first UI/UX transformation kicked off; Phase 1 (mobile navigation) done
+
+**Objective** (user): large, explicit 46-section brief to make the existing `frontend/` web
+app feel like a polished native iOS/Android app on phone widths, without changing routes,
+business logic, Supabase behavior, or desktop presentation. Queen Bee inspected the existing
+design system first (`index.css`'s existing HSL token set + motion primitives from the
+2026-08-13 redesign, `AppLayout.jsx`'s existing hamburger-drawer mobile nav, shadcn/ui
+component library already in use) before changing anything, per the brief's own "inspect
+everything first" instruction — confirmed this is a real, already-mature design system, not a
+blank slate, so the work extends it rather than replacing it.
+
+**Phase 1 (mobile navigation) shipped this session**, `7794d9d`:
+- New `frontend/src/components/MobileBottomNav.jsx`: fixed bottom nav bar (phone widths only,
+  `md:hidden`), 4 curated primary destinations (Dashboard/Clients/Jobs/Book In, permission-
+  filtered) + a "More" button opening a bottom sheet (reuses the existing shadcn `Sheet`
+  primitive, `side="bottom"`) listing every other permitted nav item plus Account and Logout.
+- `AppLayout.jsx`: mobile header simplified to brand mark + a single Account link (the old
+  full-screen hamburger drawer was removed as redundant — every destination it held is now one
+  tap away via the bottom nav's More sheet); desktop sidebar/layout untouched.
+- `index.html`/`index.css`: `viewport-fit=cover` + `env(safe-area-inset-*)`-based utility
+  classes (`.safe-area-top/bottom/x`, `.mobile-content-bottom-padding`) so the new bottom nav
+  and header respect the iOS home indicator / Android gesture-nav area instead of just
+  guessing a fixed pixel value; a `.tap-target` helper expands small icon buttons' hit area to
+  ~44px without changing their visual size.
+- No route, permission, or business-logic change — verified by the diff itself (only
+  `AppLayout.jsx`/`MobileBottomNav.jsx`/`index.html`/`index.css` touched).
+
+**Verified**: `npm run lint`/`typecheck` clean, `npm test` 76/76 (unchanged — pure UI), `npm run
+build` clean (fresh `dist/` artifact timestamps/hashes, consistent with this project's
+established pattern for Vite's empty-log-on-Windows quirk). **Not live-clicked** — no browser
+tool available this session, matching this project's standard disclosure for unclicked UI work.
+
+**Remaining phases explicitly NOT started this session** (tracked in `ROADMAP.md`'s new
+entry, not silently dropped): mobile-first form audit (every form in the app), modal/drawer →
+bottom-sheet conversion, table → card/list transformation, detail-page redesign, dashboard
+mobile pass, and the full per-page/per-form checklist sweep at 320–1024px the brief calls for.
+This is a large, explicitly multi-session initiative — Phase 1 was scoped and committed on its
+own rather than attempting all 46 sections in one unreviewed pass.
+
 ## 2026-08-18 (latest) — Service Records layout side-by-side; Next Service Due auto-populates 1 year out (DB trigger, NOT yet applied)
 
 **Objective** (user): make the Service Records list/detail panels sit side-by-side (they were
