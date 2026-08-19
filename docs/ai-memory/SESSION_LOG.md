@@ -1,6 +1,20 @@
 # Session Log
 
-## 2026-08-19 (latest) — Mobile-first UI/UX transformation Phase 2 (forms) done
+## 2026-08-19 (latest) — Pushed + deployed live (Phases 1-2 of mobile-first UI/UX pass, plus prior unpushed sessions)
+
+User: "deploy this so long then continue with phase 3." Pushed `origin/main` (`9269eb4..de68f25`,
+6 commits — Phases 1-2 plus the 2026-08-18 Service Records/Next-Service-Due work that had been
+sitting locally, unpushed, across several sessions). Confirmed correct Cloudflare account first
+(`wrangler whoami` → `gerhardvanwijk@gmail.com`/`3f30316d2958f170287083b0b7d680b5`, matches
+`wrangler.jsonc`), then `npm run build` + `wrangler deploy` from `frontend/`. Version
+`f24d9e7d-35a5-4974-8b70-cc64de7bdcb4`. **Live-verified, not just CLI-trusted**: 4 consecutive
+`Cache-Control: no-cache` fetches all agreed on the same asset hashes, `cmp` confirmed the live
+JS bundle is byte-identical to the local `dist/` build, HTTP 200 — no repeat of the previously-
+documented transient stale-asset flap. Note: `supabase/migrations/0031_...` (Next Service Due
+trigger) remains NOT applied — deploying the frontend doesn't apply migrations; unaffected by
+this deploy either way since the frontend's own client-side default already works regardless.
+
+## 2026-08-19 (same day, earlier) — Mobile-first UI/UX transformation Phase 2 (forms) done
 
 **Objective**: continue directly from Phase 1 (same day, user: "continue with the phase 2").
 Audited every form-related shadcn primitive (`Input`/`Textarea`/`Select`/`Button`/`Checkbox`/

@@ -9,8 +9,17 @@ global ~44px touch-target fix across `Input`/`Select`/`Button`/`Checkbox`/`Switc
 (mobile only, desktop density unchanged at `md:`); 2 real bugs found+fixed (a bare-`grid-cols-2`
 dialog row in `ProductsServicesSettings.jsx`, missing `type="tel"` on 2 phone inputs). Committed
 `a8f665d`. Both phases: `npm run lint`/`typecheck` clean, `npm test` 76/76, `npm run build`
-clean. Not pushed/deployed (not requested). **This is a large, explicitly multi-phase
-initiative — Phases 1–2 of ~8 are done.** Remaining: modal/drawer→bottom-sheet conversion,
+clean. **Pushed to `origin/main` and deployed live to Cloudflare this session** (explicit user
+instruction, "deploy this so long"): pushed `9269eb4..de68f25` (6 commits, includes the
+2026-08-18 Service Records/Next-Service-Due work alongside Phases 1-2 — all of it had been
+sitting unpushed across several sessions). `wrangler deploy` from `frontend/` (account
+independently confirmed correct beforehand via `wrangler whoami` — `gerhardvanwijk@gmail.com`/
+`3f30316d2958f170287083b0b7d680b5`, matches `wrangler.jsonc`). Version
+`f24d9e7d-35a5-4974-8b70-cc64de7bdcb4`. **Verified live, not just CLI-trusted**: 4 consecutive
+no-cache fetches all agreed on `assets/index-CCkTK--p.js`/`index-vkI2gxDG.css`, byte-identical
+(`cmp`, zero diff) to the local `dist/` build, HTTP 200 — no repeat of the previously-documented
+transient stale-asset flap this time. **This is a large, explicitly multi-phase initiative —
+Phases 1–2 of ~8 are done and now live.** Remaining: modal/drawer→bottom-sheet conversion,
 table→card transformation, detail-page redesign, dashboard mobile pass, full per-page
 responsive sweep (320–1024px), desktop regression re-check after each phase. Full plan:
 `ROADMAP.md`'s matching entry. Not live-clicked (no browser tool this session).
