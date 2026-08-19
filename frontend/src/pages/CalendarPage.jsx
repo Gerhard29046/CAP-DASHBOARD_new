@@ -4,13 +4,14 @@ import dayGridPlugin from "@fullcalendar/daygrid";
 import timeGridPlugin from "@fullcalendar/timegrid";
 import listPlugin from "@fullcalendar/list";
 import interactionPlugin from "@fullcalendar/interaction";
-import { RefreshCw, X, Building2, Wrench, User2, Droplets, StickyNote, Calendar as CalendarIcon } from "lucide-react";
+import { RefreshCw, Building2, Wrench, User2, Droplets, StickyNote, Calendar as CalendarIcon } from "lucide-react";
 import { apiClient } from "@/api/apiClient";
 import { useAuth } from "@/lib/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import PageHeader from "@/components/PageHeader";
 import { reportError } from "@/lib/reportError";
 
@@ -114,14 +115,12 @@ export default function CalendarPage() {
         />
       </div>
 
-      {selected && (
-        <EventDetails
-          event={selected}
-          canReschedule={hasPermission("upcoming_services.update")}
-          close={() => setSelected(null)}
-          refreshed={() => { setSelected(null); load(); }}
-        />
-      )}
+      <EventDetails
+        event={selected}
+        canReschedule={hasPermission("upcoming_services.update")}
+        close={() => setSelected(null)}
+        refreshed={() => { setSelected(null); load(); }}
+      />
     </div>
   );
 }
@@ -139,10 +138,20 @@ function DetailRow({ icon: Icon, label, value }) {
   );
 }
 
+// BUG FIX (Dashboard/per-page mobile sweep): this used to be a bespoke fixed-inset overlay
+// (no bottom-sheet-on-mobile, no Escape-key/focus handling, no safe-area awareness) instead of
+// the shared Dialog component every other modal in the app already uses since Phase 3 -- same
+// bug class as ServiceRecords.jsx's photo overlay, fixed the same way (swap in the shared
+// primitive rather than re-implementing overlay behavior here).
 function EventDetails({ event, canReschedule, close, refreshed }) {
-  const p = event.extendedProps;
-  const [date, setDate] = useState(event.startStr?.slice(0, 10) || "");
+  const open = !!event;
+  const p = event?.extendedProps || {};
+  const [date, setDate] = useState(event?.startStr?.slice(0, 10) || "");
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    setDate(event?.startStr?.slice(0, 10) || "");
+  }, [event]);
 
   const reschedule = async () => {
     setBusy(true);
@@ -160,48 +169,44 @@ function EventDetails({ event, canReschedule, close, refreshed }) {
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4 animate-fade-in" onClick={close}>
-      <div
-        className="w-full max-w-lg rounded-xl border border-border bg-card p-5 sm:p-6 shadow-2xl animate-slide-up"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-start justify-between gap-3 mb-4">
-          <div>
-            <h2 className="text-lg font-heading font-bold text-foreground">{event.title}</h2>
-            {p.status && <Badge variant="neutral" className="mt-2">{p.status}</Badge>}
-          </div>
-          <button onClick={close} className="text-muted-foreground hover:text-foreground transition-colors">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
+    <Dialog open={open} onOpenChange={(v) => { if (!v) close(); }}>
+      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+        {event && (
+          <>
+            <DialogHeader>
+              <DialogTitle>{event.title}</DialogTitle>
+              {p.status && <Badge variant="neutral" className="mt-1 w-fit">{p.status}</Badge>}
+            </DialogHeader>
 
-        <div className="border-t border-border">
-          <DetailRow icon={Building2} label="Client" value={p.clientName} />
-          <DetailRow icon={Wrench} label="Machine" value={[p.machineBrand, p.machineModel].filter(Boolean).join(" ") || null} />
-          <DetailRow icon={CalendarIcon} label="Serial Number" value={p.serialNumber} />
-          <DetailRow icon={Droplets} label="Refrigerant" value={p.refrigerantType} />
-          <DetailRow icon={User2} label="Technician" value={p.technician} />
-          <DetailRow icon={StickyNote} label="Notes" value={p.notes} />
-        </div>
-
-        <div className="mt-5 flex flex-wrap gap-2">
-          <Button asChild variant="outline" size="sm"><a href={`/clients/${p.clientId}`}>View Client</a></Button>
-          <Button asChild variant="outline" size="sm"><a href={`/machines/${p.machineId}`}>View Machine</a></Button>
-          <Button asChild variant="outline" size="sm"><a href={`/service-records?record=${p.serviceRecordId}`}>View Service Record</a></Button>
-        </div>
-
-        {canReschedule && (
-          <div className="mt-5 pt-4 border-t border-border">
-            <Label className="text-xs text-muted-foreground">Reschedule</Label>
-            <div className="flex gap-2 mt-1.5">
-              <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="h-10" />
-              <Button onClick={reschedule} disabled={busy || !date} className="shrink-0">
-                {busy ? "Saving…" : "Reschedule"}
-              </Button>
+            <div className="border-t border-border">
+              <DetailRow icon={Building2} label="Client" value={p.clientName} />
+              <DetailRow icon={Wrench} label="Machine" value={[p.machineBrand, p.machineModel].filter(Boolean).join(" ") || null} />
+              <DetailRow icon={CalendarIcon} label="Serial Number" value={p.serialNumber} />
+              <DetailRow icon={Droplets} label="Refrigerant" value={p.refrigerantType} />
+              <DetailRow icon={User2} label="Technician" value={p.technician} />
+              <DetailRow icon={StickyNote} label="Notes" value={p.notes} />
             </div>
-          </div>
+
+            <div className="mt-2 flex flex-wrap gap-2">
+              <Button asChild variant="outline" size="sm"><a href={`/clients/${p.clientId}`}>View Client</a></Button>
+              <Button asChild variant="outline" size="sm"><a href={`/machines/${p.machineId}`}>View Machine</a></Button>
+              <Button asChild variant="outline" size="sm"><a href={`/service-records?record=${p.serviceRecordId}`}>View Service Record</a></Button>
+            </div>
+
+            {canReschedule && (
+              <div className="mt-2 pt-4 border-t border-border">
+                <Label className="text-xs text-muted-foreground">Reschedule</Label>
+                <div className="flex gap-2 mt-1.5">
+                  <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="h-10" />
+                  <Button onClick={reschedule} disabled={busy || !date} className="shrink-0">
+                    {busy ? "Saving…" : "Reschedule"}
+                  </Button>
+                </div>
+              </div>
+            )}
+          </>
         )}
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

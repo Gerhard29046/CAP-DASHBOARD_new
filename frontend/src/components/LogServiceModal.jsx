@@ -155,11 +155,11 @@ export default function LogServiceModal({ onClose, onDone }) {
         <div className="flex items-center justify-between p-4 border-b border-border shrink-0">
           <div className="flex items-center gap-3">
             {step > 0 ? (
-              <button onClick={() => setStep(step - 1)} className="p-1.5 rounded-lg hover:bg-secondary">
+              <button onClick={() => setStep(step - 1)} className="tap-target p-1.5 rounded-lg hover:bg-secondary">
                 <ArrowLeft className="w-5 h-5 text-muted-foreground" />
               </button>
             ) : (
-              <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-secondary">
+              <button onClick={onClose} className="tap-target p-1.5 rounded-lg hover:bg-secondary">
                 <X className="w-5 h-5 text-muted-foreground" />
               </button>
             )}

@@ -228,21 +228,25 @@ export default function Dashboard() {
               Open calendar
             </Link>
           </div>
-          <Link to="/calendar" className="flex-1 flex flex-col p-4 hover:bg-secondary/30 transition-colors duration-150">
-            <div className="grid grid-cols-7 gap-1.5">
+          {/* BUG FIX (Dashboard mobile pass): p-4 outer padding + gap-1.5 left only ~31px per
+              cell at a 320px viewport for a fixed 7-column grid -- too tight for a 2-digit date
+              + 3-letter day label to render comfortably. Tighter padding/gap below sm: reclaims
+              enough width; unchanged at sm:+ where there's room to spare. */}
+          <Link to="/calendar" className="flex-1 flex flex-col p-2 sm:p-4 hover:bg-secondary/30 transition-colors duration-150">
+            <div className="grid grid-cols-7 gap-1 sm:gap-1.5">
               {weekDays.map(d => (
                 <div
                   key={d.key}
-                  className={`rounded-lg border p-2 text-center flex flex-col items-center justify-center gap-1 min-h-[72px] ${
+                  className={`rounded-lg border p-1 sm:p-2 text-center flex flex-col items-center justify-center gap-1 min-h-[60px] sm:min-h-[72px] ${
                     d.isToday ? "border-primary bg-primary/10" : "border-border"
                   }`}
                 >
-                  <span className="text-[10px] font-medium uppercase text-muted-foreground">{d.date.format("ddd")}</span>
-                  <span className={`text-base font-heading font-bold ${d.isToday ? "text-primary" : "text-foreground"}`}>
+                  <span className="text-[9px] sm:text-[10px] font-medium uppercase text-muted-foreground">{d.date.format("ddd")}</span>
+                  <span className={`text-sm sm:text-base font-heading font-bold ${d.isToday ? "text-primary" : "text-foreground"}`}>
                     {d.date.format("D")}
                   </span>
                   {d.dueCount > 0 && (
-                    <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-primary text-primary-foreground text-[10px] font-semibold flex items-center justify-center">
+                    <span className="min-w-[16px] h-[16px] sm:min-w-[18px] sm:h-[18px] px-1 rounded-full bg-primary text-primary-foreground text-[9px] sm:text-[10px] font-semibold flex items-center justify-center">
                       {d.dueCount}
                     </span>
                   )}

@@ -180,7 +180,7 @@ export default function Jobs() {
                 <button
                   key={tab}
                   onClick={() => setActiveTab(tab)}
-                  className={`px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-colors duration-150 ${
+                  className={`px-3 py-2.5 md:py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-colors duration-150 ${
                     active ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-secondary hover:text-foreground"
                   }`}
                 >
