@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
-  Search, ClipboardCheck, Calendar, Building2, Wrench, Camera, X, CheckCircle2, ChevronRight,
+  Search, ClipboardCheck, Calendar, Building2, Wrench, Camera, CheckCircle2, ChevronRight,
   Award, Loader2, Eye, Download, RefreshCw,
 } from "lucide-react";
 import { apiClient } from "@/api/apiClient";
@@ -16,6 +16,7 @@ import PageHeader from "@/components/PageHeader";
 import EmptyState from "@/components/EmptyState";
 import StatCard from "@/components/StatCard";
 import RecordPhotoGallery from "@/components/RecordPhotoGallery";
+import PhotoLightbox from "@/components/PhotoLightbox";
 import { buildServiceCertificatePdf } from "@/lib/serviceCertificatePdf";
 import { getRecordPhotoSignedUrl, uploadServiceCertificate, getServiceCertificateSignedUrl } from "@/services/supabase/storage";
 
@@ -246,17 +247,11 @@ export default function ServiceRecords() {
         <ServiceDetailPanel record={selectedRecord} onPhotoClick={setSelectedPhoto} />
       </div>
 
-      {selectedPhoto && (
-        <div
-          className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-6 animate-fade-in"
-          onClick={() => setSelectedPhoto(null)}
-        >
-          <button className="absolute top-5 right-5 text-white">
-            <X className="w-7 h-7" />
-          </button>
-          <img src={selectedPhoto} alt="" className="max-w-full max-h-full rounded-xl shadow-2xl" />
-        </div>
-      )}
+      {/* Mobile-first pass (2026-08-19), Phase 4: was a bespoke fixed-overlay lightbox with no
+          focus trap / Escape-key handling / safe-area awareness -- replaced with the shared
+          PhotoLightbox component MachineDetail.jsx/JobCardDetail.jsx already use, so photo
+          viewing behaves identically everywhere in the app. */}
+      <PhotoLightbox url={selectedPhoto} onClose={() => setSelectedPhoto(null)} />
     </div>
   );
 }
