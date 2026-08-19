@@ -1,6 +1,42 @@
 # Session Log
 
-## 2026-08-19 (latest) — Mobile-first UI/UX transformation kicked off; Phase 1 (mobile navigation) done
+## 2026-08-19 (latest) — Mobile-first UI/UX transformation Phase 2 (forms) done
+
+**Objective**: continue directly from Phase 1 (same day, user: "continue with the phase 2").
+Audited every form-related shadcn primitive (`Input`/`Textarea`/`Select`/`Button`/`Checkbox`/
+`Switch`) and every form page's grid layout / input `type` before editing, per the brief's own
+"inspect before changing" instruction.
+
+**Shipped this pass**, `a8f665d`:
+- **Global primitive fix** (one change instead of auditing/editing every individual form call
+  site): `Input`/`Select` trigger/`Button` all step up to a ~44px minimum touch target on phone
+  widths (`h-11`, was `h-9`/`h-8`/`h-10`), stepping back down to the original desktop density at
+  `md:`. `Select`'s dropdown list items got the same treatment. `Textarea` gets slightly more
+  mobile padding. `Checkbox`/`Switch` keep their correct small visual size but gained an
+  invisible ~44px hit area via Phase 1's `.tap-target` CSS helper.
+- **2 real, narrow bugs found and fixed** (not part of the primitive sweep):
+  `ProductsServicesSettings.jsx`'s product/service dialog had a Type+SKU row still on bare
+  `grid-cols-2` inside a `max-w-md` dialog — same 375px-cramped-dialog bug class already fixed
+  one row below it on 2026-08-13, just missed on this row then. Phone inputs in
+  `ClientDetail.jsx`'s Edit Client form and Settings > Company Details had no `type="tel"`, so
+  mobile browsers showed the default keyboard instead of a phone keypad (`AddClient.jsx` already
+  had this right — matched it; email inputs everywhere were already correctly `type="email"`).
+- **Audited and left unchanged, confirmed already correct**: `MachineForm.jsx`/`ServiceForm.jsx`/
+  `ClientForm.jsx` (the last one turned out to be dead code — not imported anywhere, `ClientDetail.
+  jsx` has its own local `EditClientForm` instead; left as-is, out of scope for a UI-only pass to
+  remove), `BookIn.jsx`'s existing section-header structure (already grouped: Customer/Machine/
+  Service/etc., matches spec section 11 without changes needed), and the large majority of
+  `grid-cols-2/3` uses found app-wide (stat cards, label:value display rows, Qty/Price pairs) —
+  same "legitimately fine, not a bug" call already established in the 2026-08-13 audit.
+
+**Verified**: `npm run lint`/`typecheck` clean, `npm test` 76/76 (unchanged — pure UI/CSS), `npm
+run build` clean (fresh `dist/` artifacts). Not live-clicked — no browser tool this session.
+
+**Not started this pass** (per `ROADMAP.md`'s table): modal/drawer → bottom-sheet conversion,
+table → card/list transformation, detail-page redesign, dashboard mobile pass, full per-page
+320–1024px sweep.
+
+## 2026-08-19 (same day, earlier) — Mobile-first UI/UX transformation kicked off; Phase 1 (mobile navigation) done
 
 **Objective** (user): large, explicit 46-section brief to make the existing `frontend/` web
 app feel like a polished native iOS/Android app on phone widths, without changing routes,

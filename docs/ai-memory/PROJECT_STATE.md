@@ -1,16 +1,19 @@
 # Project State
 _Last verified: 2026-08-19 (latest) — Mobile-first UI/UX transformation kicked off (web only,
 presentation layer only, no routes/business-logic/Supabase changes). **Phase 1 (mobile
-navigation) done and verified**: fixed bottom nav (`MobileBottomNav.jsx`, Dashboard/Clients/
-Jobs/Book In + a "More" bottom sheet for everything else + Account/Logout) replaces the old
-hamburger drawer; safe-area support (`viewport-fit=cover`, `env(safe-area-inset-*)`) added;
-mobile header simplified. `npm run lint`/`typecheck` clean, `npm test` 76/76, `npm run build`
-clean. Committed `7794d9d`, not pushed/deployed (not requested). **This is a large, explicitly
-multi-phase initiative — only Phase 1 of ~8 is done.** Remaining: mobile-first form audit,
-modal/drawer→bottom-sheet conversion, table→card transformation, detail-page redesign,
-dashboard mobile pass, full per-page responsive sweep (320–1024px), desktop regression re-check
-after each phase. Full plan: `ROADMAP.md`'s new entry. Not live-clicked (no browser tool this
-session).
+navigation) and Phase 2 (forms) done and verified.** Phase 1: fixed bottom nav
+(`MobileBottomNav.jsx`, Dashboard/Clients/Jobs/Book In + a "More" bottom sheet for everything
+else + Account/Logout) replaces the old hamburger drawer; safe-area support (`viewport-fit=
+cover`, `env(safe-area-inset-*)`) added; mobile header simplified. Committed `7794d9d`. Phase 2:
+global ~44px touch-target fix across `Input`/`Select`/`Button`/`Checkbox`/`Switch` primitives
+(mobile only, desktop density unchanged at `md:`); 2 real bugs found+fixed (a bare-`grid-cols-2`
+dialog row in `ProductsServicesSettings.jsx`, missing `type="tel"` on 2 phone inputs). Committed
+`a8f665d`. Both phases: `npm run lint`/`typecheck` clean, `npm test` 76/76, `npm run build`
+clean. Not pushed/deployed (not requested). **This is a large, explicitly multi-phase
+initiative — Phases 1–2 of ~8 are done.** Remaining: modal/drawer→bottom-sheet conversion,
+table→card transformation, detail-page redesign, dashboard mobile pass, full per-page
+responsive sweep (320–1024px), desktop regression re-check after each phase. Full plan:
+`ROADMAP.md`'s matching entry. Not live-clicked (no browser tool this session).
 
 ---
 
