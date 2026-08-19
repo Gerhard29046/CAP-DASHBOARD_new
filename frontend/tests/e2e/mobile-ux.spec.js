@@ -15,6 +15,8 @@
 //     the same button is absent (filter bar shown inline instead) on tablet/iPad width
 //   - opening/closing the filter sheet does not change the list's scroll position
 //   - basic timing (DOMContentLoaded / load) as a coarse performance signal
+//   - no page is left with `document.body` scroll-locked when no dialog is actually open
+//     (regression test for a real user-reported bug, see the test's own comment below)
 //
 // NOT covered (disclosed gap, not silently skipped): visual diffing against Figma mockups --
 // no such baseline exists in this repo; true CLS (Cumulative Layout Shift) via the
@@ -120,8 +122,13 @@ test("Clients: Filters button behind an icon on phones, inline bar on tablets; o
     await expect(inlineBar).toBeHidden();
 
     // Scroll the client list down first, to prove the sheet doesn't reset scroll position.
-    await page.mouse.wheel(0, 400);
+    // Deliberately a SMALL amount (the Filters button sits near the top of the page and isn't
+    // sticky) -- scrolling far enough to push the button itself off-screen would make Playwright
+    // (and a real user) auto-scroll back up just to reach it before clicking, which isn't this
+    // test's concern and would make the assertion meaningless either way.
+    await page.mouse.wheel(0, 100);
     const scrollBefore = await page.evaluate(() => window.scrollY);
+    expect(scrollBefore, "Precondition: the page must have actually scrolled before this assertion means anything").toBeGreaterThan(0);
 
     await filterButton.click();
     await expect(page.getByText(/filter clients/i)).toBeVisible();
@@ -145,4 +152,32 @@ test("Clients: Filters button behind an icon on phones, inline bar on tablets; o
 
   expect(pageErrors).toEqual([]);
   expect(consoleErrors).toEqual([]);
+});
+
+// Permanent regression test for a real, user-reported bug (2026-08-19): "this page and might
+// be any page cant scroll." Root cause: the Dialog scroll-lock (see dialog.jsx) used to key off
+// DialogContent's own mount lifecycle, which is wrong -- DialogContent mounts as soon as it
+// appears in a parent's JSX regardless of `open`. Any page that always renders a `<Dialog>` in
+// its JSX (ServiceRecords.jsx via the always-mounted PhotoLightbox; Clients.jsx's filter sheet)
+// locked `document.body` in place on first render and never unlocked, since Radix never
+// actually unmounts DialogContent, it just hides it. Fixed by driving the lock off the real
+// `open` prop via a thin wrapper around DialogPrimitive.Root instead. This test loads every
+// page known to always-render a Dialog (plus a couple that don't, as a control) and confirms
+// `body` is never left in a locked state and the page can actually be scrolled.
+test("No page leaves body scroll-locked without an open dialog (regression: 'any page cant scroll')", async ({ page }) => {
+  await login(page);
+  for (const path of [
+    "/service-records",
+    "/service-records?id=99105c57-be3d-454a-9ba7-35314f60aa4b",
+    "/clients",
+    "/jobs",
+    "/",
+  ]) {
+    await page.goto(path);
+    await page.waitForLoadState("networkidle");
+    const bodyStyle = (await page.evaluate(() => document.body.getAttribute("style"))) || "";
+    expect(bodyStyle, `${path}: body should not be scroll-locked when no dialog is open`).not.toMatch(/position:\s*fixed/);
+    const dialogsOpen = await page.evaluate(() => document.querySelectorAll('[role="dialog"]').length);
+    expect(dialogsOpen, `${path}: no dialog should be open on initial load`).toBe(0);
+  }
 });

@@ -6,7 +6,47 @@ import { X } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 
-const Dialog = DialogPrimitive.Root
+// REAL BUG FIX (user-reported, 2026-08-19, "this page and might be any page cant scroll"):
+// the scroll-lock hook used to live inside `DialogContent` (below), keyed to ITS OWN mount/
+// unmount. That's wrong -- `DialogContent` mounts as a plain React component the instant it
+// appears in a parent's JSX (e.g. `<Dialog open={Boolean(url)}><DialogContent>...`),
+// REGARDLESS of whether `open` is true or false; only Radix's own internal Presence decides
+// whether to actually render/portal it. Any page that always renders `<Dialog><DialogContent>`
+// in its JSX -- `ServiceRecords.jsx` (via the always-mounted `PhotoLightbox`), `Clients.jsx`
+// (the filter sheet) -- locked `body` in place on first render and NEVER unlocked, since
+// `DialogContent` never actually unmounts on those pages; the whole site outside those two
+// pages was unaffected only because nothing else there renders an always-mounted Dialog.
+// Fixed at the real source of truth: `open` is a prop every call site in this app already
+// passes explicitly (never an uncontrolled/`defaultOpen` dialog) -- drive the lock directly
+// off that, via a thin wrapper around `DialogPrimitive.Root`, so it only locks while the
+// dialog is ACTUALLY open and reliably unlocks the instant `open` goes false, independent of
+// whether `DialogContent` itself ever unmounts.
+function useDialogScrollLock(open) {
+  React.useEffect(() => {
+    if (!open) return undefined;
+    const scrollY = window.scrollY;
+    const body = document.body;
+    const prev = { position: body.style.position, top: body.style.top, left: body.style.left, right: body.style.right, width: body.style.width };
+    body.style.position = "fixed";
+    body.style.top = `-${scrollY}px`;
+    body.style.left = "0";
+    body.style.right = "0";
+    body.style.width = "100%";
+    return () => {
+      body.style.position = prev.position;
+      body.style.top = prev.top;
+      body.style.left = prev.left;
+      body.style.right = prev.right;
+      body.style.width = prev.width;
+      window.scrollTo(0, scrollY);
+    };
+  }, [open]);
+}
+
+function Dialog({ open, ...props }) {
+  useDialogScrollLock(open);
+  return <DialogPrimitive.Root open={open} {...props} />;
+}
 
 const DialogTrigger = DialogPrimitive.Trigger
 
@@ -36,40 +76,7 @@ DialogOverlay.displayName = DialogPrimitive.Overlay.displayName
 // buttons (spec section 30); call sites that already set their own max-h/overflow (e.g.
 // `max-h-[90vh] overflow-y-auto` on the edit-client/edit-machine dialogs) simply override this
 // default via `cn()`, so nothing double-applies.
-// REAL BUG FIX (found via automated Playwright testing, 2026-08-19): with every Dialog now
-// capable of being a `position: fixed` bottom sheet on phones, opening ANY dialog in the app
-// (not just the new Clients filter sheet) silently reset `window.scrollY` to 0 -- confirmed via
-// instrumented tracing to come from Radix's internal focus-guard bootstrapping, which happens
-// before Radix's own public `onOpenAutoFocus` callback even fires, so intercepting/preventing
-// that specific event is structurally too late to matter. The robust fix doesn't chase Radix's
-// internal timing at all: freeze `body` in place (`position: fixed`, offset by the current
-// scroll) for as long as the dialog is mounted, so nothing CAN scroll the real document while
-// it's open, then restore the exact original scroll position the instant it unmounts. This is
-// the same technique most production apps use for modal scroll-locking.
-function useDialogScrollLock() {
-  React.useEffect(() => {
-    const scrollY = window.scrollY;
-    const body = document.body;
-    const prev = { position: body.style.position, top: body.style.top, left: body.style.left, right: body.style.right, width: body.style.width };
-    body.style.position = "fixed";
-    body.style.top = `-${scrollY}px`;
-    body.style.left = "0";
-    body.style.right = "0";
-    body.style.width = "100%";
-    return () => {
-      body.style.position = prev.position;
-      body.style.top = prev.top;
-      body.style.left = prev.left;
-      body.style.right = prev.right;
-      body.style.width = prev.width;
-      window.scrollTo(0, scrollY);
-    };
-  }, []);
-}
-
-const DialogContent = React.forwardRef(({ className, children, ...props }, ref) => {
-  useDialogScrollLock();
-  return (
+const DialogContent = React.forwardRef(({ className, children, ...props }, ref) => (
   <DialogPortal>
     <DialogOverlay />
     <DialogPrimitive.Content
@@ -95,8 +102,7 @@ const DialogContent = React.forwardRef(({ className, children, ...props }, ref) 
       </DialogPrimitive.Close>
     </DialogPrimitive.Content>
   </DialogPortal>
-  );
-})
+))
 DialogContent.displayName = DialogPrimitive.Content.displayName
 
 const DialogHeader = ({
