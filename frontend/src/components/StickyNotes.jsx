@@ -284,10 +284,15 @@ function StickyNoteCard({ note, client, canManage, onChange, onDelete }) {
   return (
     <div className={`group relative rounded-lg border p-3 min-h-[120px] flex flex-col gap-2 transition-shadow duration-200 hover:shadow-md ${COLORS[note.color] || COLORS.yellow}`}>
       {canManage && (
+        // BUG FIX (found during Detail pages mobile pass, same root cause as
+        // ClientDetail.jsx's Team Notes delete button): opacity-0 group-hover:opacity-100
+        // made this unreachable on touch devices (no hover state) -- always visible below
+        // md:, hover-reveal kept only at md:+ desktop. tap-target expands the hit area to
+        // ~44px without growing the visible icon.
         <button
           onClick={onDelete}
           aria-label="Delete note"
-          className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-black/10 transition-opacity duration-150"
+          className="tap-target absolute top-1.5 right-1.5 w-6 h-6 md:w-5 md:h-5 rounded-full flex items-center justify-center opacity-100 md:opacity-0 md:group-hover:opacity-100 hover:bg-black/10 transition-opacity duration-150"
         >
           <X className="w-3 h-3" />
         </button>

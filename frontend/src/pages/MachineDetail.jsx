@@ -313,12 +313,12 @@ export default function MachineDetail() {
                         </div>
                       </div>
                       <div className="flex gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
-                        <Button variant="ghost" size="icon" onClick={() => setEditService(s)} className="h-8 w-8 text-muted-foreground hover:text-foreground">
+                        <Button variant="ghost" size="icon" onClick={() => setEditService(s)} className="md:h-8 md:w-8 text-muted-foreground hover:text-foreground">
                           <Pencil className="w-3.5 h-3.5" />
                         </Button>
                         <AlertDialog>
                           <AlertDialogTrigger asChild>
-                            <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive">
+                            <Button variant="ghost" size="icon" className="md:h-8 md:w-8 text-muted-foreground hover:text-destructive">
                               <Trash2 className="w-3.5 h-3.5" />
                             </Button>
                           </AlertDialogTrigger>

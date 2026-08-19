@@ -445,7 +445,7 @@ export default function JobCardDetail() {
       `}</style>
 
       <div className="w-full max-w-4xl mx-auto">
-        <div className="flex items-center justify-between mb-5 no-print">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5 no-print">
           <button
             onClick={() => navigate(-1)}
             className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
@@ -454,7 +454,7 @@ export default function JobCardDetail() {
             Back
           </button>
 
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             {!editing ? (
               <>
                 <Button variant="outline" size="sm" className="rounded-xl gap-2" onClick={handlePrint}>
@@ -578,7 +578,7 @@ export default function JobCardDetail() {
                         key={status}
                         disabled={updatingStatus || jobCard.status === status}
                         onClick={() => handleStatusChange(status)}
-                        className={`text-xs px-3 py-1.5 rounded-lg border transition-colors duration-150 ${
+                        className={`text-xs px-3 py-2.5 md:py-1.5 rounded-lg border transition-colors duration-150 ${
                           jobCard.status === status
                             ? "border-primary bg-primary/10 text-primary font-medium"
                             : "border-border text-muted-foreground hover:border-primary/40 hover:text-foreground"
@@ -829,14 +829,14 @@ export default function JobCardDetail() {
 
                       <div className="no-print flex items-center gap-1 shrink-0">
                         <button
-                          className="text-muted-foreground hover:text-foreground transition-colors p-1"
+                          className="tap-target text-muted-foreground hover:text-foreground transition-colors p-1"
                           onClick={() => setEditingLineId(line.id)}
                           aria-label="Edit line item"
                         >
                           <Pencil className="w-4 h-4" />
                         </button>
                         <button
-                          className="text-muted-foreground hover:text-destructive transition-colors p-1"
+                          className="tap-target text-muted-foreground hover:text-destructive transition-colors p-1"
                           onClick={() => handleDeleteLine(line.id)}
                           aria-label="Delete line item"
                         >

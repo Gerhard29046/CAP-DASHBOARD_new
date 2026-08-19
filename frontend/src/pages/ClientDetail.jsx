@@ -448,10 +448,14 @@ export default function ClientDetail() {
                       {note.content}
                     </NoteRecord>
                     {(user?.id === note.created_by || user?.role === "admin") && (
+                      /* BUG FIX (Detail pages mobile pass): opacity-0 group-hover:opacity-100
+                         made this unreachable on touch devices (no hover state) -- always
+                         visible below md:, hover-reveal kept only at md:+ desktop. tap-target
+                         expands the hit area to ~44px without growing the visible icon. */
                       <button
                         onClick={() => deleteClientNote(note.id)}
                         aria-label="Delete note"
-                        className="absolute top-3 right-0 w-5 h-5 rounded-full flex items-center justify-center text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-destructive transition-opacity duration-150"
+                        className="tap-target absolute top-3 right-0 w-6 h-6 md:w-5 md:h-5 rounded-full flex items-center justify-center text-muted-foreground opacity-100 md:opacity-0 md:group-hover:opacity-100 hover:text-destructive transition-opacity duration-150"
                       >
                         <X className="w-3.5 h-3.5" />
                       </button>
