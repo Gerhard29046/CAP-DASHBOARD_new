@@ -210,3 +210,57 @@
 .sidebar-navigation:hover::-webkit-scrollbar-thumb {
   background: hsl(var(--sidebar-primary) / 0.68);
 }
+
+/* ==========================================================================
+   Mobile-first pass (2026-08-19): safe-area support + bottom-navigation
+   sizing tokens. `viewport-fit=cover` in index.html makes the env() values
+   below non-zero on notched/gesture-nav devices; they resolve to 0 on
+   desktop/older devices, so these rules are always safe to apply globally.
+   ========================================================================== */
+:root {
+  --mobile-header-height: 3.5rem;
+  --mobile-bottom-nav-height: 4rem;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+}
+
+.safe-area-top {
+  padding-top: var(--safe-top);
+}
+
+.safe-area-bottom {
+  padding-bottom: var(--safe-bottom);
+}
+
+.safe-area-x {
+  padding-left: var(--safe-left);
+  padding-right: var(--safe-right);
+}
+
+/* Comfortable minimum touch target (~44px) for icon-only/compact controls,
+   without changing visual size -- expands the hit area via a pseudo-element
+   so tightly-spaced icon rows don't need extra visual padding. */
+.tap-target {
+  position: relative;
+}
+.tap-target::after {
+  content: "";
+  position: absolute;
+  inset: 50%;
+  width: max(100%, 44px);
+  height: max(100%, 44px);
+  transform: translate(-50%, -50%);
+}
+
+/* Reserve room for the fixed mobile bottom nav so page content never sits
+   underneath it; not needed once the bottom nav is hidden at md+. */
+.mobile-content-bottom-padding {
+  padding-bottom: calc(var(--mobile-bottom-nav-height) + var(--safe-bottom) + 1.5rem);
+}
+@media (min-width: 768px) {
+  .mobile-content-bottom-padding {
+    padding-bottom: 2rem;
+  }
+}

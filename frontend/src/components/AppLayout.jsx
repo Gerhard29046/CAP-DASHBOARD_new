@@ -4,8 +4,6 @@ import {
   LayoutDashboard,
   Users,
   CalendarClock,
-  Menu,
-  X,
   LogOut,
   User2,
   ClipboardList,
@@ -19,6 +17,7 @@ import {
 import { useAuth } from "@/lib/AuthContext";
 import { apiClient } from "@/api/apiClient";
 import capLogo from "@/assets/cap-logo.png";
+import MobileBottomNav from "@/components/MobileBottomNav";
 
 // Job card statuses that mean "billable but not yet invoiced" -- must match
 // InvoiceQueue.jsx's own `billable`/`pending` filter exactly (see that page's
@@ -26,7 +25,7 @@ import capLogo from "@/assets/cap-logo.png";
 const PENDING_INVOICE_STATUSES = ["Completed", "Ready to Invoice", "Ready for Invoice"];
 
 const ALL_NAV_ITEMS = [
-  { label: "Dashboard", path: "/", icon: LayoutDashboard, permission: "dashboard.view" },
+  { label: "Dashboard", shortLabel: "Home", path: "/", icon: LayoutDashboard, permission: "dashboard.view" },
   { label: "Clients", path: "/clients", icon: Users, permission: "clients.view" },
   { label: "Upcoming Services", path: "/upcoming-services", icon: CalendarClock, permission: "upcoming_services.view" },
   { label: "Calendar", path: "/calendar", icon: CalendarDays, permission: "calendar.view" },
@@ -40,7 +39,6 @@ const ALL_NAV_ITEMS = [
 ];
 
 export default function AppLayout() {
-  const [mobileOpen, setMobileOpen] = useState(false);
   const [pendingInvoices, setPendingInvoices] = useState(0);
   const location = useLocation();
   const { user, logout, hasPermission, hasAnyPermission } = useAuth();
@@ -73,76 +71,28 @@ export default function AppLayout() {
 
   return (
     <div className="min-h-screen bg-background">
-      <header className="sticky top-0 z-50 flex items-center justify-between px-4 py-3 bg-card/80 backdrop-blur-xl border-b border-border md:hidden">
-        <div className="flex items-center gap-2">
-          <img src={capLogo} alt="" className="w-7 h-7 rounded-md object-cover" />
-          <span className="font-heading font-bold text-lg text-foreground">
+      {/* Compact mobile header (mobile-first pass, 2026-08-19): no hamburger/
+          drawer anymore -- every destination is reachable from the bottom
+          nav + its "More" sheet below, so a second full nav menu here was
+          redundant clutter (spec section 6: "avoid putting five or six
+          controls into one row"). Keeps just brand identity + a one-tap
+          link to the signed-in user's own account. */}
+      <header className="sticky top-0 z-30 flex items-center justify-between px-4 bg-card/80 backdrop-blur-xl border-b border-border md:hidden safe-area-top safe-area-x" style={{ height: "var(--mobile-header-height)" }}>
+        <div className="flex items-center gap-2 min-w-0">
+          <img src={capLogo} alt="" className="w-7 h-7 rounded-md object-cover shrink-0" />
+          <span className="font-heading font-bold text-lg text-foreground truncate">
             CAP Database
           </span>
         </div>
 
-        <button
-          onClick={() => setMobileOpen(!mobileOpen)}
-          className="p-2 rounded-lg hover:bg-secondary transition-colors"
+        <Link
+          to="/account"
+          aria-label="Account"
+          className="tap-target flex items-center justify-center w-9 h-9 rounded-full bg-primary/15 shrink-0"
         >
-          {mobileOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-        </button>
+          <User2 className="w-4 h-4 text-primary" />
+        </Link>
       </header>
-
-      {mobileOpen && (
-        <div
-          className="fixed inset-0 z-40 md:hidden"
-          onClick={() => setMobileOpen(false)}
-        >
-          <div className="absolute inset-0 bg-black/60" />
-
-          <nav
-            className="absolute left-0 top-0 bottom-0 w-64 bg-card border-r border-border p-4 pt-16 flex flex-col gap-1 overflow-hidden"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <UserCard userName={userName} role={role} />
-
-            <div className="sidebar-navigation flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto overflow-x-hidden">
-            {navItems.map((item) => {
-              const Icon = item.icon;
-              const active = location.pathname === item.path;
-              const count = item.badgeKey ? badgeCounts[item.badgeKey] : 0;
-
-              return (
-                <Link
-                  key={item.path}
-                  to={item.path}
-                  onClick={() => setMobileOpen(false)}
-                  className={`flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-medium transition-colors ${
-                    active
-                      ? "bg-primary/15 text-primary"
-                      : "text-muted-foreground hover:bg-secondary hover:text-foreground"
-                  }`}
-                >
-                  <Icon className="w-5 h-5" />
-                  <span className="flex-1">{item.label}</span>
-                  {count > 0 && (
-                    <span className="min-w-[20px] h-5 px-1.5 rounded-full bg-primary text-primary-foreground text-[11px] font-semibold flex items-center justify-center shrink-0">
-                      {count > 99 ? "99+" : count}
-                    </span>
-                  )}
-                </Link>
-              );
-            })}
-            </div>
-
-            <div className="mt-auto pt-4 border-t border-border">
-              <button
-                onClick={handleLogout}
-                className="flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-medium text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors w-full"
-              >
-                <LogOut className="w-5 h-5" />
-                Logout
-              </button>
-            </div>
-          </nav>
-        </div>
-      )}
 
       <div className="flex">
         <aside className="hidden md:flex flex-col w-60 min-h-screen border-r border-border bg-sidebar p-4 sticky top-0 h-screen">
@@ -195,11 +145,19 @@ export default function AppLayout() {
         </aside>
 
         <main className="flex-1 min-h-screen">
-      <div className="w-full px-4 py-6 md:px-8 md:py-8">            
-  <Outlet />
+          <div className="w-full px-4 py-6 md:px-8 md:py-8 safe-area-x mobile-content-bottom-padding">
+            <Outlet />
           </div>
         </main>
       </div>
+
+      <MobileBottomNav
+        navItems={navItems}
+        badgeCounts={badgeCounts}
+        userName={userName}
+        role={role}
+        onLogout={handleLogout}
+      />
     </div>
   );
 }
