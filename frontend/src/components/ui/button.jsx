@@ -20,11 +20,15 @@ const buttonVariants = cva(
         ghost: "hover:bg-accent hover:text-accent-foreground",
         link: "text-primary underline-offset-4 hover:underline",
       },
+      // Mobile-first pass (2026-08-19): every size steps up to a ~44px minimum touch target on
+      // phone widths, back to the original desktop density at md: -- one primitive fix instead
+      // of editing every button call site individually (spec section 4: "generous touch
+      // targets... approximately 44px or larger").
       size: {
-        default: "h-9 px-4 py-2",
-        sm: "h-8 rounded-md px-3 text-xs",
-        lg: "h-10 rounded-md px-8",
-        icon: "h-9 w-9",
+        default: "h-11 md:h-9 px-4 py-2",
+        sm: "h-10 md:h-8 rounded-md px-3 text-xs",
+        lg: "h-12 md:h-10 rounded-md px-8",
+        icon: "h-11 w-11 md:h-9 md:w-9",
       },
     },
     defaultVariants: {

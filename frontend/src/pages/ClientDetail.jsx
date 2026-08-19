@@ -57,7 +57,7 @@ function EditClientForm({ initial, onSubmit, onCancel, loading }) {
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
           <Label>Phone</Label>
-          <Input value={form.phone || ""} onChange={e => set("phone", e.target.value)} className="mt-1.5 h-10" />
+          <Input type="tel" value={form.phone || ""} onChange={e => set("phone", e.target.value)} className="mt-1.5 h-10" />
         </div>
         <div>
           <Label>Email</Label>

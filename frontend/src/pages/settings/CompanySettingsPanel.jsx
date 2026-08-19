@@ -95,6 +95,7 @@ export default function CompanySettingsPanel() {
         <div>
           <Label className="text-xs">Phone</Label>
           <Input
+            type="tel"
             value={settings.phone || ""}
             onChange={(e) => set("phone", e.target.value)}
             className="mt-1.5 h-10 rounded-lg text-sm max-w-[220px]"

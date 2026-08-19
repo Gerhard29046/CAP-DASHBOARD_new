@@ -189,7 +189,10 @@ export default function ProductsServicesSettings() {
             <DialogTitle>{editingId ? "Edit Item" : "New Product / Service"}</DialogTitle>
           </DialogHeader>
           <form onSubmit={submit} className="space-y-4">
-            <div className="grid grid-cols-2 gap-3">
+            {/* Mobile-first pass (2026-08-19): same 375px-cramped-dialog bug class as the
+                Category/Unit/Price row below (already fixed 2026-08-13) -- this row was missed
+                then. Stacks on mobile, 2-across from sm: up. */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <Label className="text-xs">Type</Label>
                 <Select value={form.type} onValueChange={(v) => set("type", v)}>
