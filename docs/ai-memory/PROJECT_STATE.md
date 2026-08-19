@@ -1,6 +1,17 @@
 # Project State
-_Last verified: 2026-08-19 (latest, later still — real Playwright validation of the Dashboard/
-Clients mobile redesign found and fixed 3 genuine bugs; NOT yet deployed). User asked to install
+_Last verified: 2026-08-19 (latest, now pushed + deployed live). Commits `f84e322`/`9665845`
+pushed to `origin/main` (`7883863..9665845`). `wrangler whoami` reconfirmed the correct account
+first. `wrangler deploy` succeeded with no stale-asset flap this time — 8 consecutive
+`Cache-Control: no-cache` requests agreed immediately. **Verified live, byte-identical**
+(`cmp`, zero diff) to the local `dist/` build for both JS/CSS, zero "firebase" strings, `HTTP
+200`. Final version `318ed445-9c1e-47f4-92b2-cf0f99a1fa00`, 100% traffic. **All 3 bugs below
+are now live and fixed** — the safe-area-x padding bug, the flex/grid horizontal-overflow bug,
+and the dialog scroll-reset bug no longer affect production.
+
+---
+
+_Last verified before that: 2026-08-19 (real Playwright validation of the Dashboard/
+Clients mobile redesign found and fixed 3 genuine bugs; not yet deployed at the time). User asked to install
 Playwright + a GitHub "mobile app UI design" resource and use both to validate/polish the
 redesign with real automated testing, not manual click-through claims.
 
