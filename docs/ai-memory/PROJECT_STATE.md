@@ -1,5 +1,61 @@
 # Project State
-_Last verified: 2026-08-19 (latest, later — user-reported Dashboard/Clients mobile UX fix,
+_Last verified: 2026-08-19 (latest, later still — real Playwright validation of the Dashboard/
+Clients mobile redesign found and fixed 3 genuine bugs; NOT yet deployed). User asked to install
+Playwright + a GitHub "mobile app UI design" resource and use both to validate/polish the
+redesign with real automated testing, not manual click-through claims.
+
+**What was actually installed/used**: `@playwright/test` as a real `frontend/` devDependency
+(Chromium binary only — WebKit wasn't installed, disclosed gap), NOT an MCP server (`code
+--add-mcp` targets VS Code's own CLI, doesn't apply to this Claude Code session and wouldn't
+have added a tool mid-session even if run). `ceorkm/mobile-app-ui-design` was fetched via the
+GitHub API and confirmed to be a Claude Code "Skill" (`SKILL.md`/`references/`, markdown design
+guidance only, no executable code/package) before using it — its principles (rounded-2xl cards,
+resting shadows, 8pt spacing) were applied selectively to `StatCard.jsx`/`Dashboard.jsx`/
+`Clients.jsx`, mobile-only, desktop unchanged.
+
+**Real, committed test suite**: `frontend/playwright.config.js` + `frontend/tests/e2e/
+mobile-ux.spec.js` (4 device profiles × 3 test cases = 12 checks: no console/page errors, no
+horizontal overflow, stat-strip scroll/snap behavior, Clients filter-sheet visibility/behavior/
+scroll-position-preservation). Run via `npx playwright test` from `frontend/`, against a local
+`vite preview` server serving the exact production `dist/` bundle, logged in through the real
+UI with a throwaway Supabase Auth QA account (`supabase/scripts/qa-test-user.mjs` — created,
+used, deleted, verified gone, same pattern as every prior scripted-QA session).
+
+**3 real bugs found and fixed by this exact process (not hypothetical — first run failed)**:
+1. `.safe-area-x` (a plain, non-`@layer` CSS rule in `index.css`) has identical specificity to
+   `px-4`/`md:px-8` and compiles later, so it silently zeroed real horizontal padding sitewide
+   on every phone without a physical notch — `AppLayout.jsx`'s mobile header and every page's
+   main content wrapper had content flush against the screen edges. **Pre-existing since the
+   2026-08-19 Phase 1 mobile-first pass, not introduced this session** — never caught before
+   because no real browser had run against it until now. Fixed with `pl-/pr-[max(<base>,
+   var(--safe-*))]` (composes instead of silently overriding); `.safe-area-x` itself now has a
+   loud warning comment documenting the pitfall for future call sites.
+2. Real horizontal overflow (`document.scrollWidth` 740px at 393px viewport, reproduced with
+   real production data — 647 clients, real service descriptions): flex/grid items default to
+   `min-width: auto`, so an unbreakable string (long greeting/email, or a `truncate`d long
+   service description) forced its whole row/column wider than the viewport. Fixed with
+   `min-w-0` on `AppLayout.jsx`'s `<main>` and `Dashboard.jsx`'s two grid panel `<section>`s.
+3. Every `Dialog` in the app (not just the new Clients filter sheet) reset `window.scrollY` to
+   0 the instant it opened — traced via instrumented tracing to Radix's internal focus-guard
+   bootstrapping, which runs *before* Radix's own public `onOpenAutoFocus` callback fires (so
+   intercepting that callback is structurally too late, confirmed empirically). Fixed with a
+   standard modal scroll-lock in the shared `dialog.jsx` (`useDialogScrollLock`: freeze `body`
+   in place while any dialog is mounted, restore exact scroll position on unmount) — sidesteps
+   Radix's internal timing entirely rather than chasing it.
+
+**Verified**: `npm run lint`/`typecheck` clean, `npm test` 76/76 (unchanged), `npm run build`
+clean, **12/12 Playwright checks pass across all 4 device profiles** after the fixes (failed
+before them). Full report: `docs/testing/mobile-ux-2026-08-19-report.md` (includes disclosed
+gaps: no Figma baseline exists so no visual-diff was possible, no real WebKit run, no true CLS
+score, tested against local build not the live URL).
+
+**Committed (`f84e322`), NOT pushed or deployed this session** — the live Cloudflare deployment
+from earlier today (`1712424c-...`) still has all 3 bugs above; ask before deploying this fix.
+QA cleanup independently reconfirmed (throwaway auth user + profile row both gone).
+
+---
+
+_Last verified before that: 2026-08-19 (earlier — user-reported Dashboard/Clients mobile UX fix,
 pushed + deployed live). User explicit feedback: "not happy with the mobile ui ux design on
 the dashboard, clients page needs to be redesigned... make it feel more mobile." Real, targeted
 changes (Queen Bee directly — no frontend worker bee exists in this repo):

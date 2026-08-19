@@ -1,6 +1,45 @@
 # Session Log
 
-## 2026-08-19 (latest, later) — Dashboard/Clients mobile UX fix, user-reported, pushed+deployed
+## 2026-08-19 (latest, later still) — Real Playwright validation found + fixed 3 mobile bugs
+
+**Objective**: user asked to install Playwright and a GitHub "mobile app UI design" resource,
+then use both to validate/redesign the Dashboard/Clients mobile UX with real automated testing
+(not manual click-through claims) — detailed spec covering swipe gestures, filter behavior,
+layout stability, console/network health, and a test report deliverable.
+
+**Two requests handled with care rather than literally**:
+- `code --add-mcp '...'` targets VS Code's CLI, not this Claude Code session — explained, and
+  real browser automation obtained instead via `npm install -D @playwright/test` (Chromium
+  binary via `npx playwright install chromium`).
+- `ceorkm/mobile-app-ui-design` was inspected via the GitHub API (repo metadata + file listing +
+  `SKILL.md` contents) BEFORE "installing" anything — confirmed to be a Claude Code Skill
+  (markdown design guidance, no executable code) — safe to read and apply directly, nothing to
+  actually install.
+
+**Test suite built**: `frontend/playwright.config.js` + `frontend/tests/e2e/mobile-ux.spec.js`,
+run against a local `vite preview` server (exact production `dist/` bundle), logged in via the
+real UI with a throwaway Supabase Auth QA account (created/deleted via the existing
+`supabase/scripts/qa-test-user.mjs`, confirmed gone after).
+
+**First run failed — 3 real bugs found, root-caused, and fixed** (full detail in
+`PROJECT_STATE.md`'s matching entry and `docs/testing/mobile-ux-2026-08-19-report.md`):
+1. `.safe-area-x` vs `px-4`/`md:px-8` cascade bug zeroing real horizontal padding sitewide on
+   phones (pre-existing since Phase 1, never caught before this session's real browser run).
+2. Real horizontal overflow from flex/grid items' default `min-width: auto`, reproduced with
+   real production data (647 clients, real service descriptions).
+3. Every `Dialog` resetting scroll position on open, traced to Radix's internal focus-guard
+   timing (runs before Radix's own public callback) — fixed with a standard body scroll-lock.
+
+Also applied a small "feel like an app" polish pass (rounded-2xl cards, mobile-only) informed by
+the Skill's principles.
+
+**Verified**: lint/typecheck clean, `npm test` 76/76, `npm run build` clean, **12/12 Playwright
+checks pass across 4 device profiles** (failed before the fixes). Committed `f84e322`. **Not
+pushed or deployed** — the live site still has all 3 bugs from earlier today's deploy.
+
+---
+
+## 2026-08-19 (earlier) — Dashboard/Clients mobile UX fix, user-reported, pushed+deployed
 
 **Objective**: user reported they weren't happy with the mobile UI/UX on Dashboard and asked
 for the Clients page to be redesigned to "feel more mobile," then asked to deploy and push.
