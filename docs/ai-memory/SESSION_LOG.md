@@ -1,6 +1,38 @@
 # Session Log
 
-## 2026-08-19 (latest) — Mobile-first UI/UX transformation Phase 3 (modals → bottom sheets) done
+## 2026-08-19 (latest) — Mobile-first UI/UX transformation Phase 4 (tables/lists) done
+
+**Objective**: continue directly from Phase 3 (user: "continue with phase 4"). Audited every
+page using the shared `Table` component or a raw `<table>` before changing anything.
+
+**Findings, `e4cf9e3`**:
+- `Clients.jsx`, `Jobs.jsx`, `ServiceRecords.jsx` already dual-render a real desktop table +
+  a genuine mobile card list — built during the 2026-08-13 redesign, exactly what this phase
+  asks for. Nothing to change on any of them.
+- `UserAdmin.jsx` is already card-based, no table at all.
+- `InvoiceQueue.jsx` is already fully card-based (`InvoiceCard`); its one remaining nested
+  `<table>` (an expanded line-items breakdown: Type/Description/Qty/Unit/Total) is genuinely
+  tabular financial data with proper `overflow-x-auto` already (fixed 2026-08-13) — converting
+  5 numeric columns to stacked cards would hurt scanability, not help it. Left alone, matching
+  spec section 14's own explicit allowance for "genuinely appropriate" horizontal scroll.
+- `settings/ImportCustomers.jsx`'s CSV-preview table (admin-only, rare, per-row inline Action
+  `<select>` controls) is the same call — already has a sticky header + proper x/y scroll (fixed
+  2026-08-13). Rewriting a low-traffic batch-review admin tool's interactive per-row controls
+  into cards would be high-risk for little real benefit; left as-is.
+- **Real fix made**: `ServiceRecords.jsx`'s photo-preview overlay was a bespoke fixed-inset
+  `<div>` (no focus trap, no Escape-key handling, no safe-area awareness for its close button)
+  instead of the shared `PhotoLightbox` component `MachineDetail.jsx`/`JobCardDetail.jsx`
+  already use. Swapped in `PhotoLightbox` so photo viewing behaves identically everywhere in the
+  app; removed the now-unused `lucide-react` `X` import as a result.
+
+**Verified**: `npm run lint`/`typecheck` clean, `npm test` 76/76 (unchanged — pure UI), `npm run
+build` clean (fresh `dist/` artifacts). Not live-clicked — no browser tool this session.
+
+**Not started this pass** (per `ROADMAP.md`'s table): detail-page redesign, dashboard mobile
+pass, full per-page 320–1024px sweep. Phase 4 is committed locally only, not yet
+pushed/deployed (matching Phase 3's state — the last deploy only covered Phases 1-2).
+
+## 2026-08-19 (same day, earlier) — Mobile-first UI/UX transformation Phase 3 (modals → bottom sheets) done
 
 **Objective**: continue directly from the Phase 1/2 deploy (same day, user: "deploy this so long
 then continue with phase 3"). Same primitive-first strategy that worked for Phase 2: fix the

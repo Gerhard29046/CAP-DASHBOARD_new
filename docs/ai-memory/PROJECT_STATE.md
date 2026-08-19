@@ -1,14 +1,24 @@
 # Project State
-_Last verified: 2026-08-19 (latest) — Mobile-first UI/UX transformation Phase 3 (modals) done and
-verified: `Dialog` now renders as a bottom sheet on phone widths (bottom-anchored, rounded top,
+_Last verified: 2026-08-19 (latest) — Mobile-first UI/UX transformation Phase 4 (tables/lists)
+done and verified. Audit found the app's main tables (`Clients.jsx`/`Jobs.jsx`/
+`ServiceRecords.jsx`) already dual-render desktop table + mobile card list from the 2026-08-13
+redesign — nothing to change. `InvoiceQueue.jsx`/`ImportCustomers.jsx`'s remaining raw tables
+are genuinely tabular (financial line items; admin CSV batch review) with proper scroll already
+— left as a reasoned "appropriate to scroll" call. Real fix made: `ServiceRecords.jsx`'s bespoke
+photo overlay (no focus trap/Escape/safe-area) replaced with the shared `PhotoLightbox`
+component already used elsewhere. Committed `e4cf9e3`. `npm run lint`/`typecheck` clean, `npm
+test` 76/76, `npm run build` clean. **Not yet pushed/deployed** (same as Phase 3 — only Phases
+1-2 are live; Phases 3-4 are local-only, pending the next explicit deploy instruction).
+
+---
+
+_Last verified before that: 2026-08-19 (same day, earlier) — Phase 3 (modals) done and verified:
+`Dialog` now renders as a bottom sheet on phone widths (bottom-anchored, rounded top,
 safe-area-aware, built-in overflow safety net), unchanged centered card at `sm:`+/desktop.
 Fixed a real side-effect bug (`ProductsServicesSettings.jsx`'s dialog had no `max-h`/scroll of
 its own — could render off-screen). `AlertDialog`/`PhotoLightbox.jsx` deliberately kept/opted
 out of the sheet treatment (short confirmations; full-screen photo viewer), each for a reasoned,
-disclosed reason. Committed `bace0dc`. `npm run lint`/`typecheck` clean, `npm test` 76/76,
-`npm run build` clean. **Not yet pushed/deployed this pass** (Phases 1-2 were; Phase 3 is local-
-only as of this entry, pending the next explicit deploy instruction). Phases 1-2 recap below,
-unchanged from before, both already live in production.
+disclosed reason. Committed `bace0dc`.
 
 ---
 
